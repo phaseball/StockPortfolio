@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>US Stock Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0b0f19; --surface: #131a2b; --surface2: #1b2540; --surface3: #243054;
+  --border: #2d3a5c; --text: #e2e8f4; --text2: #7b8bb5; --text3: #4e5f8a;
+  --accent: #4a8eff; --accent2: #3672d9; --accentBg: rgba(74,142,255,.08);
+  --samsung: #2962ff; --samsungBg: rgba(41,98,255,.1);
+  --kiwoom: #e63962; --kiwoomBg: rgba(230,57,98,.1);
+  --buy: #00c853; --buyBg: rgba(0,200,83,.1);
+  --sell: #ff5252; --sellBg: rgba(255,82,82,.1);
+  --warn: #ffc107; --radius: 12px;
+  --shadow: 0 2px 12px rgba(0,0,0,.3);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Noto Sans KR',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+.mono { font-family:'JetBrains Mono',monospace; }
+
+/* Layout */
+.app { max-width:960px; margin:0 auto; padding:12px; }
+.header { display:flex; align-items:center; gap:12px; padding:16px 4px 12px; }
+.logo { width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--samsung),var(--kiwoom));display:flex;align-items:center;justify-content:center;font-size:18px; }
+.header h1 { font-size:18px; font-weight:700; letter-spacing:-.3px; }
+.header .sub { font-size:11px; color:var(--text2); }
+
+/* Nav */
+nav { display:flex; gap:3px; background:var(--surface); border-radius:var(--radius); padding:3px; margin-bottom:16px; overflow-x:auto; }
+nav button { flex:0 0 auto; padding:9px 16px; border:none; background:none; color:var(--text2); border-radius:9px; cursor:pointer; font:500 13px/1 'Noto Sans KR',sans-serif; white-space:nowrap; transition:all .15s; }
+nav button.on { background:var(--accent); color:#fff; }
+nav button:hover:not(.on) { background:var(--surface2); color:var(--text); }
+nav .badge { display:inline-block; min-width:18px; height:18px; line-height:18px; text-align:center; border-radius:9px; background:var(--accent); color:#fff; font-size:10px; margin-left:4px; font-weight:700; }
+
+/* Panels */
+.panel { display:none; } .panel.on { display:block; }
+
+/* Card */
+.card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-bottom:14px; }
+.card-hdr { font-size:13px; font-weight:600; margin-bottom:10px; display:flex; align-items:center; gap:7px; }
+.card-hdr .ico { font-size:16px; }
+
+/* Inputs */
+input[type=text],input[type=password],input[type=number],select,textarea {
+  width:100%; padding:9px 12px; background:var(--surface2); border:1px solid var(--border);
+  border-radius:8px; color:var(--text); font:13px/1.4 'Noto Sans KR',sans-serif; transition:border .15s;
+}
+input:focus,select:focus,textarea:focus { outline:none; border-color:var(--accent); }
+textarea { resize:vertical; min-height:80px; font-family:'JetBrains Mono',monospace; font-size:11px; }
+label.f { display:block; margin-bottom:10px; }
+label.f > span { display:block; font-size:11px; color:var(--text2); margin-bottom:3px; font-weight:500; }
+.g2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.g3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+.g4 { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:10px; }
+
+/* Buttons */
+.btn { display:inline-flex; align-items:center; gap:5px; padding:10px 18px; border-radius:8px; border:none; font:500 13px/1 'Noto Sans KR',sans-serif; cursor:pointer; transition:all .12s; }
+.btn-p { background:var(--accent); color:#fff; } .btn-p:hover { background:var(--accent2); }
+.btn-p:disabled { opacity:.35; cursor:not-allowed; }
+.btn-s { background:var(--surface2); color:var(--text); border:1px solid var(--border); } .btn-s:hover { border-color:var(--accent); }
+.btn-d { background:#c62828; color:#fff; } .btn-d:hover { background:#b71c1c; }
+.btn-sm { padding:7px 12px; font-size:12px; }
+.btn-full { width:100%; justify-content:center; }
+.btn-row { display:flex; gap:8px; flex-wrap:wrap; }
+
+/* Upload */
+.drop { border:2px dashed var(--border); border-radius:var(--radius); padding:28px; text-align:center; cursor:pointer; transition:all .2s; }
+.drop:hover,.drop.over { border-color:var(--accent); background:var(--accentBg); }
+.drop input { display:none; }
+.drop .ico { font-size:32px; margin-bottom:6px; }
+.drop p { color:var(--text2); font-size:12px; }
+.thumbs { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+.thumb { position:relative; width:64px; height:64px; border-radius:8px; overflow:hidden; border:2px solid var(--border); }
+.thumb img { width:100%; height:100%; object-fit:cover; }
+.thumb .x { position:absolute; top:1px; right:1px; width:18px; height:18px; border-radius:50%; background:rgba(0,0,0,.75); color:#fff; border:none; cursor:pointer; font-size:11px; line-height:18px; text-align:center; }
+.thumb .tag { position:absolute; bottom:1px; left:1px; padding:1px 5px; border-radius:3px; font-size:8px; font-weight:700; color:#fff; }
+.tag.ss { background:var(--samsung); } .tag.kw { background:var(--kiwoom); }
+
+/* Table */
+.tbl-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+table.t { width:100%; border-collapse:collapse; font:12px/1.3 'JetBrains Mono',monospace; }
+table.t th { background:var(--surface2); padding:7px 8px; text-align:left; font-weight:500; color:var(--text2); border-bottom:1px solid var(--border); white-space:nowrap; position:sticky; top:0; z-index:1; }
+table.t td { padding:6px 8px; border-bottom:1px solid var(--border); white-space:nowrap; }
+table.t tr:hover td { background:var(--accentBg); }
+.c-buy { color:var(--buy); } .c-sell { color:var(--sell); }
+.c-ss { color:var(--samsung); } .c-kw { color:var(--kiwoom); }
+
+/* Date group */
+.dg { background:var(--surface2); padding:8px 12px; border-radius:8px; margin:12px 0 6px; display:flex; align-items:center; justify-content:space-between; }
+.dg .l { font-weight:600; font-size:13px; } .dg .r { font-size:11px; color:var(--text2); }
+
+/* Progress & Log */
+.prog { height:3px; background:var(--surface2); border-radius:2px; overflow:hidden; margin:10px 0; }
+.prog .bar { height:100%; background:var(--accent); border-radius:2px; transition:width .3s; width:0; }
+.log { max-height:130px; overflow-y:auto; background:var(--surface2); border-radius:8px; padding:8px; margin-top:8px; font:11px/1.5 'JetBrains Mono',monospace; color:var(--text2); }
+.log .ok { color:var(--buy); } .log .err { color:var(--sell); } .log .warn { color:var(--warn); }
+
+/* Status */
+.status { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:6px; font-size:11px; font-weight:500; }
+.status.ok { background:rgba(0,200,83,.1); color:var(--buy); }
+.status.no { background:rgba(255,82,82,.1); color:var(--sell); }
+.status.wait { background:rgba(255,193,7,.1); color:var(--warn); }
+
+/* Toast */
+.toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); padding:10px 18px; border-radius:8px; font-size:12px; font-weight:500; z-index:999; opacity:0; transition:opacity .25s; pointer-events:none; }
+.toast.show { opacity:1; } .toast.ok { background:#1b5e20; color:#a5d6a7; } .toast.err { background:#b71c1c; color:#ef9a9a; }
+
+/* Setup steps */
+.step { counter-increment:step; padding-left:32px; position:relative; margin-bottom:16px; }
+.step::before { content:counter(step); position:absolute; left:0; top:0; width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff; font-size:11px; font-weight:700; line-height:22px; text-align:center; }
+.step h3 { font-size:13px; font-weight:600; margin-bottom:4px; }
+.step p { font-size:12px; color:var(--text2); line-height:1.5; }
+.step code { background:var(--surface2); padding:1px 5px; border-radius:3px; font-size:11px; font-family:'JetBrains Mono',monospace; }
+.steps { counter-reset:step; }
+
+/* Broker card */
+.bk-card { border-left:3px solid; padding-left:12px; }
+.bk-card.ss { border-color:var(--samsung); } .bk-card.kw { border-color:var(--kiwoom); }
+
+@media(max-width:640px) {
+  .g2,.g3,.g4 { grid-template-columns:1fr; }
+  table.t { font-size:11px; }
+  table.t th,table.t td { padding:5px 5px; }
+  nav button { padding:8px 12px; font-size:12px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div class="logo">📊</div>
+    <div><h1>US Stock Tracker</h1><div class="sub">삼성 / 키움 → Google Sheets</div></div>
+  </div>
+
+  <nav id="nav">
+    <button class="on" data-p="setup">⚙️ 설정</button>
+    <button data-p="extract">📸 추출</button>
+    <button data-p="manual">✏️ 입력</button>
+    <button data-p="data">📋 데이터 <span class="badge" id="badge" style="display:none">0</span></button>
+  </nav>
+
+  <!-- ==================== SETUP ==================== -->
+  <div id="p-setup" class="panel on">
+    <div class="card">
+      <div class="card-hdr"><span class="ico">📡</span> 연결 상태</div>
+      <div class="g3" style="margin-bottom:12px">
+        <div>Google Sheets: <span class="status no" id="st-gs">미연결</span></div>
+        <div>Claude API: <span class="status no" id="st-ai">미연결</span></div>
+        <div>Sheet ID: <span class="status no" id="st-sid">없음</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-hdr"><span class="ico">📘</span> Google Sheets 설정 가이드</div>
+      <div class="steps">
+        <div class="step">
+          <h3>Google Cloud 프로젝트 생성</h3>
+          <p><a href="https://console.cloud.google.com/projectcreate" target="_blank" style="color:var(--accent)">console.cloud.google.com</a> → 새 프로젝트 생성 (이름: 아무거나)</p>
+        </div>
+        <div class="step">
+          <h3>Google Sheets API 활성화</h3>
+          <p><a href="https://console.cloud.google.com/apis/library/sheets.googleapis.com" target="_blank" style="color:var(--accent)">Sheets API 페이지</a> → "사용" 클릭</p>
+        </div>
+        <div class="step">
+          <h3>서비스 계정 생성</h3>
+          <p><a href="https://console.cloud.google.com/iam-admin/serviceaccounts/create" target="_blank" style="color:var(--accent)">서비스 계정 생성</a> → 이름 입력 → "완료".<br>
+          생성된 계정 클릭 → "키" 탭 → "키 추가" → "JSON" → 파일 다운로드</p>
+        </div>
+        <div class="step">
+          <h3>Google Sheet 준비</h3>
+          <p>새 Google Sheet 생성 → 시트 이름을 <code>삼성</code>, <code>키움</code>으로 변경.<br>
+          각 시트 1행: (빈칸) | (빈칸) | (빈칸) | (빈칸) | tax | total | split | seq<br>
+          Sheet URL에서 ID 복사 (docs.google.com/spreadsheets/d/<b style="color:var(--accent)">[이 부분]</b>/edit)</p>
+        </div>
+        <div class="step">
+          <h3>시트 공유</h3>
+          <p>다운받은 JSON에서 <code>client_email</code> 값 복사 → Sheet "공유" → 해당 이메일에 "편집자" 권한 부여</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-hdr"><span class="ico">🔑</span> 서비스 계정 키 (JSON)</div>
+      <textarea id="saKey" placeholder='다운로드한 JSON 파일의 전체 내용을 붙여넣기...'></textarea>
+      <div style="margin-top:8px">
+        <button class="btn btn-p btn-sm" onclick="saveSA()">저장</button>
+        <span style="font-size:11px;color:var(--text2);margin-left:8px">로컬 브라우저에만 저장됩니다</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-hdr"><span class="ico">📄</span> Google Sheet ID</div>
+      <div class="g2">
+        <label class="f"><span>Sheet ID</span>
+          <input type="text" id="sheetId" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms" />
+        </label>
+        <div style="display:flex;align-items:flex-end;gap:6px">
+          <button class="btn btn-p btn-sm" onclick="saveSheetId()">저장</button>
+          <button class="btn btn-s btn-sm" onclick="testConnection()">연결 테스트</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-hdr"><span class="ico">🤖</span> Claude API Key</div>
+      <div style="display:flex;gap:8px">
+        <input type="password" id="claudeKey" placeholder="sk-ant-api03-..." />
+        <button class="btn btn-s btn-sm" onclick="toggleVis('claudeKey')">표시</button>
+        <button class="btn btn-p btn-sm" onclick="saveClaudeKey()">저장</button>
+      </div>
+      <p style="font-size:11px;color:var(--text2);margin-top:6px">PNG → AI 추출에 필요. 수동 입력만 할 경우 불필요.</p>
+    </div>
+  </div>
+
+  <!-- ==================== EXTRACT ==================== -->
+  <div id="p-extract" class="panel">
+    <div class="card">
+      <div class="card-hdr"><span class="ico">📸</span> 스크린샷 업로드</div>
+      <div class="drop" id="drop">
+        <input type="file" id="fileIn" accept="image/*" multiple />
+        <div class="ico">📱</div>
+        <p>클릭 또는 드래그하여 스크린샷 업로드</p>
+        <p style="font-size:10px;margin-top:2px">당일체결/전체 또는 일별주문내역 캡쳐</p>
+      </div>
+      <div class="thumbs" id="thumbs"></div>
+    </div>
+    <button class="btn btn-p btn-full" id="extBtn" onclick="doExtract()" disabled>🚀 AI 추출 → Google Sheets 저장</button>
+    <div id="extProg" style="display:none">
+      <div class="prog"><div class="bar" id="extBar"></div></div>
+      <div class="log" id="extLog"></div>
+    </div>
+  </div>
+
+  <!-- ==================== MANUAL ==================== -->
+  <div id="p-manual" class="panel">
+    <div class="card">
+      <div class="card-hdr"><span class="ico">✏️</span> 수동 거래 입력</div>
+      <div class="g2">
+        <label class="f"><span>증권사</span><select id="mBk"><option value="삼성">삼성 (0.03%)</option><option value="키움">키움 (0.07%)</option></select></label>
+        <label class="f"><span>날짜 (YYMMDD)</span><input type="text" id="mDt" placeholder="260212" maxlength="6"/></label>
+      </div>
+      <div class="g4">
+        <label class="f"><span>종목</span><input type="text" id="mTk" placeholder="AAPL" style="text-transform:uppercase"/></label>
+        <label class="f"><span>매매</span><select id="mSd"><option value="buy">매수</option><option value="sell">매도</option></select></label>
+        <label class="f"><span>수량</span><input type="number" id="mQt" placeholder="1" min="1"/></label>
+        <label class="f"><span>체결단가</span><input type="number" id="mPr" placeholder="150.00" step="0.0001"/></label>
+      </div>
+      <button class="btn btn-p btn-full" onclick="addManual()">➕ 추가 → Google Sheets 저장</button>
+    </div>
+  </div>
+
+  <!-- ==================== DATA ==================== -->
+  <div id="p-data" class="panel">
+    <div class="btn-row" style="margin-bottom:12px">
+      <button class="btn btn-s btn-sm" onclick="loadFromSheet()">🔄 시트에서 불러오기</button>
+      <button class="btn btn-s btn-sm" onclick="downloadXlsx()">📥 xlsx 다운로드</button>
+      <button class="btn btn-d btn-sm" onclick="clearLocal()">🗑 로컬 초기화</button>
+    </div>
+    <div id="dataView"><p style="color:var(--text2);text-align:center;padding:32px">데이터를 불러오려면 "시트에서 불러오기"를 클릭하세요</p></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Google Auth via jsrsasign for JWT signing -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsrsasign/11.1.0/jsrsasign-all-min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+// ================ CONFIG ================
+const TAX = { '삼성': 0.0003, '키움': 0.0007 };
+const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
+let SA_KEY = null;   // service account JSON
+let SHEET_ID = '';
+let CLAUDE_KEY = '';
+let gToken = null;
+let gTokenExp = 0;
+let files = [];
+let localTx = { '삼성': [], '키움': [] };
+
+// ================ INIT ================
+document.addEventListener('DOMContentLoaded', () => {
+  // Nav
+  document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach(x => x.classList.remove('on'));
+    document.querySelectorAll('.panel').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    document.getElementById('p-' + b.dataset.p).classList.add('on');
+  }));
+  // Drop zone
+  const drop = document.getElementById('drop');
+  drop.addEventListener('click', () => document.getElementById('fileIn').click());
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); handleFiles(e.dataTransfer.files); });
+  document.getElementById('fileIn').addEventListener('change', e => handleFiles(e.target.files));
+  // Load saved config
+  loadConfig();
+});
+
+// ================ CONFIG PERSISTENCE ================
+function loadConfig() {
+  try {
+    const sa = localStorage.getItem('sa_key');
+    if (sa) { SA_KEY = JSON.parse(sa); document.getElementById('saKey').value = sa; updateStatus('st-gs', 'ok', '키 저장됨'); }
+    const sid = localStorage.getItem('sheet_id');
+    if (sid) { SHEET_ID = sid; document.getElementById('sheetId').value = sid; updateStatus('st-sid', 'ok', sid.slice(0,8)+'...'); }
+    const ck = localStorage.getItem('claude_key');
+    if (ck) { CLAUDE_KEY = ck; document.getElementById('claudeKey').value = ck; updateStatus('st-ai', 'ok', '저장됨'); }
+  } catch(e) {}
+}
+function saveSA() {
+  try {
+    const raw = document.getElementById('saKey').value.trim();
+    SA_KEY = JSON.parse(raw);
+    localStorage.setItem('sa_key', raw);
+    updateStatus('st-gs', 'ok', '키 저장됨');
+    toast('서비스 계정 키 저장 완료', 'ok');
+  } catch(e) { toast('JSON 형식이 올바르지 않습니다', 'err'); }
+}
+function saveSheetId() {
+  SHEET_ID = document.getElementById('sheetId').value.trim();
+  localStorage.setItem('sheet_id', SHEET_ID);
+  updateStatus('st-sid', 'ok', SHEET_ID.slice(0,8)+'...');
+  toast('Sheet ID 저장 완료', 'ok');
+}
+function saveClaudeKey() {
+  CLAUDE_KEY = document.getElementById('claudeKey').value.trim();
+  localStorage.setItem('claude_key', CLAUDE_KEY);
+  updateStatus('st-ai', 'ok', '저장됨');
+  toast('Claude API Key 저장 완료', 'ok');
+}
+function toggleVis(id) { const el = document.getElementById(id); el.type = el.type === 'password' ? 'text' : 'password'; }
+function updateStatus(id, cls, txt) {
+  const el = document.getElementById(id);
+  el.className = 'status ' + cls;
+  el.textContent = txt;
+}
+
+// ================ GOOGLE AUTH (JWT) ================
+async function getAccessToken() {
+  if (gToken && Date.now() / 1000 < gTokenExp - 60) return gToken;
+  if (!SA_KEY) throw new Error('서비스 계정 키가 없습니다');
+
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + 3600;
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    iss: SA_KEY.client_email,
+    scope: SCOPES,
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: exp
+  };
+
+  const sHeader = JSON.stringify(header);
+  const sPayload = JSON.stringify(payload);
+  const sJWT = KJUR.jws.JWS.sign('RS256', sHeader, sPayload, SA_KEY.private_key);
+
+  const resp = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${sJWT}`
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error('Google Auth 실패: ' + (err.error_description || resp.status));
+  }
+
+  const data = await resp.json();
+  gToken = data.access_token;
+  gTokenExp = exp;
+  return gToken;
+}
+
+// ================ SHEETS API ================
+async function sheetsGet(range) {
+  const token = await getAccessToken();
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}`;
+  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!resp.ok) throw new Error('시트 읽기 실패: ' + resp.status);
+  return resp.json();
+}
+
+async function sheetsAppend(sheet, values) {
+  const token = await getAccessToken();
+  const range = `${sheet}!A:H`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ range, majorDimension: 'ROWS', values })
+  });
+  if (!resp.ok) throw new Error('시트 쓰기 실패: ' + resp.status);
+  return resp.json();
+}
+
+async function sheetsInsertAtTop(sheet, values) {
+  // Strategy: read all, prepend, clear, write back
+  const token = await getAccessToken();
+  const range = `${sheet}!A:H`;
+
+  // Read existing
+  let existing = [];
+  try {
+    const data = await sheetsGet(`${sheet}!A:H`);
+    existing = data.values || [];
+  } catch(e) {}
+
+  // Header is row 0, data starts row 1
+  const header = existing.length > 0 ? existing[0] : ['', '', '', '', 'tax', 'total', 'split', 'seq'];
+  const oldData = existing.slice(1);
+
+  const newAll = [header, ...values, ...oldData];
+
+  // Clear and write
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:clear`;
+  await fetch(clearUrl, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+
+  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+  const resp = await fetch(writeUrl, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ range, majorDimension: 'ROWS', values: newAll })
+  });
+  if (!resp.ok) throw new Error('시트 쓰기 실패: ' + resp.status);
+  return resp.json();
+}
+
+async function testConnection() {
+  try {
+    updateStatus('st-gs', 'wait', '테스트 중...');
+    const data = await sheetsGet('삼성!A1:H1');
+    updateStatus('st-gs', 'ok', '연결 성공 ✓');
+    toast('Google Sheets 연결 성공!', 'ok');
+  } catch(e) {
+    updateStatus('st-gs', 'no', '실패');
+    toast(e.message, 'err');
+  }
+}
+
+// ================ FILE HANDLING ================
+function handleFiles(fileList) {
+  for (const f of fileList) {
+    if (!f.type.startsWith('image/')) continue;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      files.push({ file: f, dataUrl: ev.target.result, broker: null });
+      renderThumbs();
+      document.getElementById('extBtn').disabled = false;
+    };
+    reader.readAsDataURL(f);
+  }
+}
+
+function renderThumbs() {
+  document.getElementById('thumbs').innerHTML = files.map((f, i) => `
+    <div class="thumb">
+      <img src="${f.dataUrl}"/>
+      <button class="x" onclick="files.splice(${i},1);renderThumbs();document.getElementById('extBtn').disabled=!files.length">×</button>
+      ${f.broker ? `<span class="tag ${f.broker==='삼성'?'ss':'kw'}">${f.broker}</span>` : ''}
+    </div>`).join('');
+}
+
+// ================ AI EXTRACTION ================
+async function doExtract() {
+  if (!CLAUDE_KEY) { toast('Claude API Key를 설정하세요', 'err'); return; }
+  if (!SHEET_ID || !SA_KEY) { toast('Google Sheets 설정을 완료하세요', 'err'); return; }
+
+  const btn = document.getElementById('extBtn');
+  btn.disabled = true; btn.textContent = '⏳ 추출 중...';
+  const prog = document.getElementById('extProg'); prog.style.display = 'block';
+  const logEl = document.getElementById('extLog'); logEl.innerHTML = '';
+  const bar = document.getElementById('extBar'); bar.style.width = '0';
+
+  // Collect all extracted transactions grouped by broker+date
+  const allTx = {};
+  let done = 0;
+
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    addLog(logEl, `처리 중 (${i+1}/${files.length}): ${f.file.name}...`);
+
+    try {
+      const base64 = f.dataUrl.split(',')[1];
+      const result = await callClaude(base64, f.file.type || 'image/png');
+      f.broker = result.broker;
+
+      const key = `${result.broker}_${result.date}`;
+      if (!allTx[key]) allTx[key] = { broker: result.broker, date: result.date, items: [] };
+
+      for (const tx of result.transactions) {
+        // Dedup
+        const isDup = allTx[key].items.some(e =>
+          e.ticker === tx.ticker && e.qty === tx.qty && e.price === tx.price &&
+          ((result.broker === '삼성' && e.time && tx.time && e.time === tx.time) ||
+           (result.broker === '키움' && e.order_number && tx.order_number && e.order_number === tx.order_number))
+        );
+        if (!isDup) allTx[key].items.push(tx);
+      }
+
+      addLog(logEl, `✅ ${result.broker} ${result.date}: ${result.transactions.length}건 감지`, 'ok');
+    } catch(e) {
+      addLog(logEl, `❌ ${f.file.name}: ${e.message}`, 'err');
+    }
+    done++;
+    bar.style.width = (done / files.length * 100) + '%';
+  }
+
+  // Write to sheets
+  for (const [key, group] of Object.entries(allTx)) {
+    const { broker, date, items } = group;
+    const rate = TAX[broker];
+
+    // Assign seq by display order
+    const rows = items.map((tx, i) => {
+      const qty = tx.side === 'sell' ? -Math.abs(tx.qty) : Math.abs(tx.qty);
+      const tax = rd(Math.abs(qty) * tx.price * rate);
+      const total = rd(Math.abs(qty) * tx.price + tax);
+      return [i === 0 ? parseInt(date) : '', tx.ticker, qty, tx.price, tax, total, '', i + 1];
+    });
+
+    try {
+      await sheetsInsertAtTop(broker, rows);
+      addLog(logEl, `📝 ${broker} ${date}: ${rows.length}건 저장 완료`, 'ok');
+    } catch(e) {
+      addLog(logEl, `❌ ${broker} 저장 실패: ${e.message}`, 'err');
+    }
+  }
+
+  renderThumbs();
+  btn.textContent = '🚀 AI 추출 → Google Sheets 저장';
+  btn.disabled = !files.length;
+  updateBadge();
+  toast('추출 완료!', 'ok');
+}
+
+async function callClaude(base64, mediaType) {
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': CLAUDE_KEY,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+        { type: 'text', text: `Korean stock brokerage screenshot. Extract ALL visible transactions.
+
+Brokerage ID: Dark blue/navy top = "삼성", White/light top = "키움"
+Date format: YYMMDD (e.g. 260212 for 2026-02-12)
+
+For each transaction extract:
+- ticker: stock symbol (e.g. AAPL, not AAPL.OQ)
+- side: "buy" if 매수/정정(매수), "sell" if 매도/정정(매도)
+- qty: executed quantity (체결수량)
+- price: executed price (체결단가)
+- time: order time if visible (주문시간, format HH:MM:SS)
+- order_number: 주문번호 if visible
+
+IMPORTANT: List transactions in EXACT order shown on screen (top to bottom). This order IS the sequence.
+
+Respond ONLY with JSON, no other text:
+{"broker":"삼성","date":"260212","transactions":[{"ticker":"XXX","side":"buy","qty":1,"price":123.45,"time":"22:27:01","order_number":""}]}` }
+      ]}]
+    })
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || `HTTP ${resp.status}`);
+  }
+
+  const data = await resp.json();
+  const text = data.content.map(c => c.text || '').join('');
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error('JSON 파싱 실패');
+  return JSON.parse(m[0]);
+}
+
+// ================ MANUAL ENTRY ================
+async function addManual() {
+  const broker = document.getElementById('mBk').value;
+  const date = document.getElementById('mDt').value.trim();
+  const ticker = document.getElementById('mTk').value.trim().toUpperCase();
+  const side = document.getElementById('mSd').value;
+  const qtyRaw = parseInt(document.getElementById('mQt').value);
+  const price = parseFloat(document.getElementById('mPr').value);
+
+  if (!date || !ticker || !qtyRaw || !price) { toast('모든 항목을 입력하세요', 'err'); return; }
+  if (!SHEET_ID || !SA_KEY) { toast('Google Sheets 설정을 완료하세요', 'err'); return; }
+
+  const qty = side === 'sell' ? -Math.abs(qtyRaw) : Math.abs(qtyRaw);
+  const rate = TAX[broker];
+  const tax = rd(Math.abs(qty) * price * rate);
+  const total = rd(Math.abs(qty) * price + tax);
+
+  // Read existing to determine seq
+  try {
+    const data = await sheetsGet(`${broker}!A:H`);
+    const rows = data.values || [];
+    let seq = 1;
+    // Find if same date exists
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]) === date || (rows[i][0] === '' && i > 0)) {
+        // Same date group - find max seq
+        const s = parseInt(rows[i][7]) || 0;
+        if (s >= seq) seq = s + 1;
+        if (rows[i][0] === date) continue;
+        if (rows[i][0] !== '' && rows[i][0] !== date) break;
+      }
+    }
+
+    const row = [parseInt(date), ticker, qty, price, tax, total, '', seq];
+
+    // Check if this date already exists at top
+    const firstDate = rows.length > 1 ? String(rows[1][0]) : '';
+    if (firstDate === date || firstDate === '') {
+      // Append to existing date group (need smarter insertion)
+      // For simplicity, insert at top
+      row[0] = ''; // not first of date
+    }
+
+    await sheetsInsertAtTop(broker, [row]);
+    toast(`${ticker} ${side === 'buy' ? '매수' : '매도'} 저장 완료`, 'ok');
+
+    document.getElementById('mTk').value = '';
+    document.getElementById('mQt').value = '';
+    document.getElementById('mPr').value = '';
+  } catch(e) {
+    toast('저장 실패: ' + e.message, 'err');
+  }
+}
+
+// ================ DATA VIEW ================
+async function loadFromSheet() {
+  if (!SHEET_ID || !SA_KEY) { toast('Google Sheets 설정을 완료하세요', 'err'); return; }
+
+  try {
+    const view = document.getElementById('dataView');
+    view.innerHTML = '<p style="color:var(--text2);text-align:center;padding:16px">불러오는 중...</p>';
+
+    let html = '';
+    for (const broker of ['삼성', '키움']) {
+      const data = await sheetsGet(`${broker}!A:H`);
+      const rows = data.values || [];
+      if (rows.length <= 1) continue;
+
+      const bClass = broker === '삼성' ? 'ss' : 'kw';
+      html += `<div class="card bk-card ${bClass}">`;
+      html += `<div class="card-hdr"><span class="ico">${broker === '삼성' ? '🔵' : '🔴'}</span>${broker} (${rows.length - 1}건)</div>`;
+
+      // Group by date
+      let currentDate = '';
+      let dateRows = [];
+
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        if (r[0] && r[0] !== '') currentDate = r[0];
+        dateRows.push({ date: currentDate, row: r });
+      }
+
+      // Get unique dates
+      const dates = [...new Set(dateRows.map(d => d.date))];
+
+      for (const date of dates.slice(0, 20)) { // Show latest 20 dates
+        const drs = dateRows.filter(d => d.date === date);
+        const buys = drs.filter(d => parseFloat(d.row[2]) > 0).length;
+        const sells = drs.filter(d => parseFloat(d.row[2]) < 0).length;
+
+        html += `<div class="dg"><span class="l">${fmtDate(date)}</span><span class="r">매수 ${buys} / 매도 ${sells} / ${drs.length}건</span></div>`;
+        html += `<div class="tbl-wrap"><table class="t"><tr><th>seq</th><th>종목</th><th>수량</th><th>단가</th><th>tax</th><th>total</th></tr>`;
+
+        for (const d of drs) {
+          const r = d.row;
+          const qty = parseFloat(r[2]) || 0;
+          const cls = qty > 0 ? 'c-buy' : 'c-sell';
+          html += `<tr><td>${r[7]||''}</td><td><b>${r[1]||''}</b></td><td class="${cls}">${qty > 0 ? '+' : ''}${qty}</td><td>${parseFloat(r[3])?.toFixed(4)||''}</td><td>${r[4]||''}</td><td>${r[5]||''}</td></tr>`;
+        }
+        html += '</table></div>';
+      }
+
+      if (dates.length > 20) html += `<p style="color:var(--text2);font-size:11px;margin-top:8px">... 외 ${dates.length - 20}일 더</p>`;
+      html += '</div>';
+    }
+
+    view.innerHTML = html || '<p style="color:var(--text2);text-align:center;padding:32px">시트에 데이터가 없습니다</p>';
+    updateBadge();
+  } catch(e) {
+    toast('불러오기 실패: ' + e.message, 'err');
+  }
+}
+
+async function downloadXlsx() {
+  if (!SHEET_ID || !SA_KEY) { toast('Google Sheets 설정을 완료하세요', 'err'); return; }
+
+  try {
+    const wb = XLSX.utils.book_new();
+    for (const broker of ['삼성', '키움']) {
+      const data = await sheetsGet(`${broker}!A:H`);
+      const rows = data.values || [];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, broker);
+    }
+    const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
+    XLSX.writeFile(wb, `미국주식내역_${today}.xlsx`);
+    toast('xlsx 다운로드 완료', 'ok');
+  } catch(e) { toast('다운로드 실패: ' + e.message, 'err'); }
+}
+
+function clearLocal() {
+  if (!confirm('로컬 저장 데이터를 모두 삭제하시겠습니까?\n(Google Sheet 데이터는 유지됩니다)')) return;
+  localStorage.clear();
+  SA_KEY = null; SHEET_ID = ''; CLAUDE_KEY = ''; gToken = null;
+  document.getElementById('saKey').value = '';
+  document.getElementById('sheetId').value = '';
+  document.getElementById('claudeKey').value = '';
+  updateStatus('st-gs', 'no', '미연결');
+  updateStatus('st-ai', 'no', '미연결');
+  updateStatus('st-sid', 'no', '없음');
+  toast('로컬 데이터 초기화 완료', 'ok');
+}
+
+// ================ HELPERS ================
+function rd(n) { return Math.round(n * 100) / 100; }
+function fmtDate(d) {
+  d = String(d);
+  if (d.length === 6) return `20${d.slice(0,2)}-${d.slice(2,4)}-${d.slice(4,6)}`;
+  return d;
+}
+function addLog(el, msg, cls='') {
+  const d = document.createElement('div');
+  d.className = cls;
+  d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+function toast(msg, type='ok') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast ${type} show`;
+  setTimeout(() => el.classList.remove('show'), 2800);
+}
+async function updateBadge() {
+  try {
+    let total = 0;
+    for (const b of ['삼성', '키움']) {
+      const d = await sheetsGet(`${b}!A:A`);
+      total += (d.values?.length || 1) - 1;
+    }
+    const badge = document.getElementById('badge');
+    if (total > 0) { badge.style.display = ''; badge.textContent = total; }
+    else badge.style.display = 'none';
+  } catch(e) {}
+}
+</script>
+</body>
+</html>
