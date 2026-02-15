@@ -255,11 +255,13 @@ CLS,1,282.5800,2"></textarea>
     </div>
     <div class="card">
       <div class="card-hdr"><span class="ico">🔑</span> 서비스 계정 키 (JSON)</div>
+      <p style="font-size:11px;color:var(--text2);margin-bottom:8px">Google Cloud Console → IAM & Admin → 서비스 계정 → 키 탭 → JSON 다운로드한 파일의 전체 내용을 붙여넣으세요.</p>
       <textarea id="saKey" placeholder='JSON 전체 붙여넣기...'></textarea>
       <div style="margin-top:8px"><button class="btn btn-p btn-sm" onclick="saveSA()">저장</button><span style="font-size:11px;color:var(--text2);margin-left:8px">로컬 브라우저에만 저장</span></div>
     </div>
     <div class="card">
       <div class="card-hdr"><span class="ico">📄</span> Google Sheet ID</div>
+      <p style="font-size:11px;color:var(--text2);margin-bottom:8px">Google Sheet URL에서 <code>/d/</code>와 <code>/edit</code> 사이의 긴 문자열입니다. 예: https://docs.google.com/spreadsheets/d/<b style="color:var(--accent)">1aBcDeFgHiJkLmNoPqRsTuVwXyZ</b>/edit</p>
       <div style="display:flex;gap:8px">
         <input type="text" id="sheetId" placeholder="Sheet ID (URL의 /d/.../ 부분)"/>
         <button class="btn btn-p btn-sm" onclick="saveSheetId()">저장</button>
@@ -275,6 +277,15 @@ CLS,1,282.5800,2"></textarea>
       <button class="btn btn-p btn-sm" onclick="saveInitCash()">저장 → Sheet</button>
       <p style="font-size:11px;color:var(--text2);margin-top:6px">config 탭 형식: A1=initial_cash_삼성, B1=금액, A2=initial_cash_키움, B2=금액</p>
     </div>
+    <div class="card">
+      <div class="card-hdr"><span class="ico">📊</span> FMP API Key (Financial Modeling Prep)</div>
+      <p style="font-size:11px;color:var(--text2);margin-bottom:8px"><a href="https://site.financialmodelingprep.com/developer/docs" target="_blank" style="color:var(--accent)">financialmodelingprep.com</a> → 회원가입 → Dashboard → API Key 복사. P/E, EPS 등 재무 데이터에 사용됩니다.</p>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="fmpKey" placeholder="FMP API Key"/>
+        <button class="btn btn-p btn-sm" onclick="saveFmpKey()">저장</button>
+      </div>
+      <p style="font-size:11px;color:var(--text2);margin-top:6px">무료 플랜: 일 250회 요청. 로컬 브라우저에만 저장됩니다.</p>
+    </div>
   </div>
 </div>
 
@@ -284,7 +295,7 @@ CLS,1,282.5800,2"></textarea>
 // ================ CONFIG ================
 const TAX={삼성:0.0003,키움:0.0007};
 const SCOPES='https://www.googleapis.com/auth/spreadsheets';
-let SA_KEY=null,SHEET_ID='',gToken=null,gTokenExp=0;
+let SA_KEY=null,SHEET_ID='',FMP_KEY='',gToken=null,gTokenExp=0;
 let allTransactions=[];
 let initialCashSS=0,initialCashKW=0;
 let cachedPrices={};
@@ -358,10 +369,13 @@ function loadConfig(){
     if(sa){SA_KEY=JSON.parse(sa);document.getElementById('saKey').value=sa;updateSt('st-gs','ok','키 저장됨')}
     const sid=localStorage.getItem('sheet_id');
     if(sid){SHEET_ID=sid;document.getElementById('sheetId').value=sid;updateSt('st-sid','ok',sid.slice(0,8)+'...')}
+    const fk=localStorage.getItem('fmp_key');
+    if(fk){FMP_KEY=fk;document.getElementById('fmpKey').value=fk}
   }catch(e){}
 }
 function saveSA(){try{const r=document.getElementById('saKey').value.trim();SA_KEY=JSON.parse(r);localStorage.setItem('sa_key',r);updateSt('st-gs','ok','키 저장됨');toast('저장 완료','ok')}catch(e){toast('JSON 형식 오류','err')}}
 function saveSheetId(){SHEET_ID=document.getElementById('sheetId').value.trim();localStorage.setItem('sheet_id',SHEET_ID);updateSt('st-sid','ok',SHEET_ID.slice(0,8)+'...');toast('저장 완료','ok')}
+function saveFmpKey(){FMP_KEY=document.getElementById('fmpKey').value.trim();localStorage.setItem('fmp_key',FMP_KEY);toast('FMP API Key 저장 완료','ok')}
 function updateSt(id,cls,txt){const el=document.getElementById(id);el.className='status '+cls;el.textContent=txt}
 async function saveInitCash(){
   const ss=parseFloat(document.getElementById('initCashSS').value);
@@ -571,10 +585,20 @@ async function fetchPrices(tickers){
         const r=await fetch(mkProxy(yahooUrl),{signal:AbortSignal.timeout(8000)});
         if(!r.ok)continue;
         const d=await r.json();
-        const meta=d.chart?.result?.[0]?.meta;
-        if(meta){
-          const prevClose=meta.chartPreviousClose||meta.previousClose||0;
+        const result=d.chart?.result?.[0];
+        if(result){
+          const meta=result.meta;
           const curPrice=meta.regularMarketPrice||0;
+          // Get previous close from the chart close prices (second-to-last closing price)
+          const closes=result.indicators?.quote?.[0]?.close;
+          let prevClose=meta.previousClose||meta.chartPreviousClose||0;
+          if(closes&&closes.length>=2){
+            // Find last two valid close prices
+            const validCloses=closes.filter(c=>c!=null);
+            if(validCloses.length>=2){
+              prevClose=validCloses[validCloses.length-2];
+            }
+          }
           const chg=prevClose?((curPrice-prevClose)/prevClose*100):0;
           prices[tk]={current:curPrice,prevClose,chg};
           break;
