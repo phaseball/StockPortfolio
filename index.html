@@ -579,7 +579,7 @@ async function fetchPrices(tickers){
     u=>`https://corsproxy.io/?${encodeURIComponent(u)}`,
   ];
   await Promise.all(tickers.map(async tk=>{
-    const yahooUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?interval=1d&range=5d`;
+    const yahooUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?interval=1d&range=10d`;
     for(const mkProxy of proxies){
       try{
         const r=await fetch(mkProxy(yahooUrl),{signal:AbortSignal.timeout(8000)});
@@ -589,18 +589,15 @@ async function fetchPrices(tickers){
         if(result){
           const meta=result.meta;
           const curPrice=meta.regularMarketPrice||0;
-          // Get previous close from the chart close prices (second-to-last closing price)
           const closes=result.indicators?.quote?.[0]?.close;
-          let prevClose=meta.previousClose||meta.chartPreviousClose||0;
-          if(closes&&closes.length>=2){
-            // Find last two valid close prices
-            const validCloses=closes.filter(c=>c!=null);
-            if(validCloses.length>=2){
-              prevClose=validCloses[validCloses.length-2];
-            }
-          }
-          const chg=prevClose?((curPrice-prevClose)/prevClose*100):0;
-          prices[tk]={current:curPrice,prevClose,chg};
+          const validCloses=closes?closes.filter(c=>c!=null):[];
+          // Daily: previous trading day close
+          const prevClose=validCloses.length>=2?validCloses[validCloses.length-2]:(meta.previousClose||0);
+          // Weekly: close from ~5 trading days ago
+          const weekClose=validCloses.length>=6?validCloses[validCloses.length-6]:(validCloses.length>0?validCloses[0]:0);
+          const chgDay=prevClose?((curPrice-prevClose)/prevClose*100):0;
+          const chgWeek=weekClose?((curPrice-weekClose)/weekClose*100):0;
+          prices[tk]={current:curPrice,prevClose,chgDay,chgWeek};
           break;
         }
       }catch(e){continue}
@@ -662,7 +659,8 @@ function computeOverview(){
   for(const h of allHoldings){
     const p=cachedPrices[h.ticker];
     h.currentPrice=p?p.current:0;
-    h.chg=p?p.chg:0;
+    h.chgDay=p?p.chgDay:0;
+    h.chgWeek=p?p.chgWeek:0;
     h.marketValue=h.qty*h.currentPrice;
     h.unrealizedPL=h.marketValue-h.purchasedAmt;
   }
@@ -789,7 +787,7 @@ function renderOverview(){
     // Merge same ticker across brokers
     const merged={};
     for(const h of allHoldings){
-      if(!merged[h.ticker])merged[h.ticker]={ticker:h.ticker,qty:0,purchasedAmt:0,marketValue:0,unrealizedPL:0,currentPrice:h.currentPrice,chg:h.chg,parts:[]};
+      if(!merged[h.ticker])merged[h.ticker]={ticker:h.ticker,qty:0,purchasedAmt:0,marketValue:0,unrealizedPL:0,currentPrice:h.currentPrice,chgDay:h.chgDay,chgWeek:h.chgWeek,parts:[]};
       const m=merged[h.ticker];
       m.qty+=h.qty;m.purchasedAmt+=h.purchasedAmt;m.marketValue+=h.marketValue;m.unrealizedPL+=h.unrealizedPL;
       m.parts.push({broker:h.broker,qty:h.qty});
@@ -803,15 +801,10 @@ function renderOverview(){
       html+=holdingsHeader();
       for(const m of mergedList){
         const avgPrice=m.qty>0?m.purchasedAmt/m.qty:0;
-        const chgCls=m.chg>0?'c-up':m.chg<0?'c-dn':'c-flat';
         const plCls=m.unrealizedPL>=0?'c-up':'c-dn';
-        const chgTri=m.chg>0?'▲':m.chg<0?'▼':'';
-        const chgStr=`${chgTri}${m.chg>=0?'+':''}${m.chg.toFixed(2)}%`;
-        // Realized P/L for this ticker across all brokers
         let realPL=0,realPLYtd=0;
         for(const hv of Object.values(holdMap)){if(hv.ticker===m.ticker){realPL+=hv.realizedPL;realPLYtd+=hv.realizedPLThisYear}}
         const realCls=realPL>=0?'c-up':'c-dn';const realYtdCls=realPLYtd>=0?'c-up':'c-dn';
-        // Qty display
         let qtyStr;
         if(m.parts.length>1){
           const ps=m.parts.map(p=>`${p.qty}(${p.broker})`).join('+');
@@ -819,7 +812,7 @@ function renderOverview(){
         }else{
           qtyStr=`${m.qty}주 · ${m.parts[0].broker==='삼성'?'🔵':'🔴'} ${m.parts[0].broker}`;
         }
-        html+=renderHoldCard(m.ticker,qtyStr,avgPrice,m.currentPrice,chgStr,chgCls,m.unrealizedPL,plCls,m.marketValue,m.purchasedAmt,realPL,realCls,realPLYtd,realYtdCls);
+        html+=renderHoldCard(m.ticker,qtyStr,avgPrice,m.currentPrice,m.chgDay,m.chgWeek,m.unrealizedPL,plCls,m.marketValue,m.purchasedAmt,realPL,realCls,realPLYtd,realYtdCls);
       }
     }
   }else{
@@ -830,7 +823,6 @@ function renderOverview(){
       html+=`<div style="font-size:13px;font-weight:600;margin-bottom:8px">보유 종목 (${holdings.length})</div>`;
       html+=holdingsHeader();
       for(const h of holdings){
-        const chgCls=h.chg>0?'c-up':h.chg<0?'c-dn':'c-flat';
         const plCls=h.unrealizedPL>=0?'c-up':'c-dn';
         const key=`${h.broker}|${h.ticker}`;
         const hm=holdMap[key];
@@ -838,10 +830,8 @@ function renderOverview(){
         const realPLYtd=hm?hm.realizedPLThisYear:0;
         const realCls=realPL>=0?'c-up':'c-dn';
         const realYtdCls=realPLYtd>=0?'c-up':'c-dn';
-        const chgTri=h.chg>0?'▲':h.chg<0?'▼':'';
-        const chgStr=`${chgTri}${h.chg>=0?'+':''}${h.chg.toFixed(2)}%`;
         const qtyStr=`${h.qty}주 · ${h.broker==='삼성'?'🔵':'🔴'} ${h.broker}`;
-        html+=renderHoldCard(h.ticker,qtyStr,h.avgPrice,h.currentPrice,chgStr,chgCls,h.unrealizedPL,plCls,h.marketValue,h.purchasedAmt,realPL,realCls,realPLYtd,realYtdCls);
+        html+=renderHoldCard(h.ticker,qtyStr,h.avgPrice,h.currentPrice,h.chgDay,h.chgWeek,h.unrealizedPL,plCls,h.marketValue,h.purchasedAmt,realPL,realCls,realPLYtd,realYtdCls);
       }
     }
   }
@@ -851,16 +841,21 @@ function renderOverview(){
 
 function holdingsHeader(){
   return`<div class="hold-hdr">
-    <div><span>평균 / 현재가 (전일대비)</span><span>평가손익</span></div>
+    <div><span>평균 / 현재가 (전일대비; 전주대비)</span><span>평가손익</span></div>
     <div><span>평가금액</span><span>매입금액</span></div>
     <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
     <div><span>P/E (12m fwd)</span><span>EPS est Δ1w</span></div>
   </div>`;
 }
 
-function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgStr,chgCls,unrealizedPL,plCls,marketValue,purchasedAmt,realPL,realCls,realPLYtd,realYtdCls){
+function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrealizedPL,plCls,marketValue,purchasedAmt,realPL,realCls,realPLYtd,realYtdCls){
   const plPct=purchasedAmt>0?((unrealizedPL/purchasedAmt)*100):0;
   const plPctStr=`(${plPct>=0?'+':''}${plPct.toFixed(1)}%)`;
+  function fmtChg(v){
+    const tri=v>0?'▲':v<0?'▼':'';
+    const cls=v>0?'c-up':v<0?'c-dn':'c-flat';
+    return`<span class="${cls}">${tri}${v>=0?'+':''}${v.toFixed(2)}%</span>`;
+  }
   return`<div class="hold-row" onclick="showHistory('${ticker}')">
     <div class="hold-top">
       <span class="hold-ticker" style="color:var(--text2)">${ticker}</span>
@@ -868,7 +863,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgStr,chgCls,unreal
     </div>
     <div class="hold-grid">
       <div>
-        <div class="val">${avgPrice.toFixed(2)} / ${currentPrice.toFixed(2)} <span class="${chgCls}">(${chgStr})</span></div>
+        <div class="val">${avgPrice.toFixed(2)} / ${currentPrice.toFixed(2)} (${fmtChg(chgDay)}; ${fmtChg(chgWeek)})</div>
         <div class="val ${plCls}">${fmtUSD(unrealizedPL)} <span style="font-size:10px">${plPctStr}</span></div>
       </div>
       <div>
