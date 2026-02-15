@@ -502,12 +502,15 @@ async function refreshPrices(){
 
 // Leveraged ETF → underlying ticker mapping for fundamentals
 // null = skip (no fundamentals available, e.g. index ETFs)
-// Tickers not in this map: fetch their own fundamentals directly
+// Tickers not in this map AND not in FUND_TICKERS: skip fundamentals
 const UNDERLYING_MAP={AMDL:'AMD',NVDL:'NVDA',TQQQ:null,SOXL:null,SQQQ:null,GGLL:null};
+// Explicit list of tickers to fetch fundamentals for
+const FUND_TICKERS=new Set(['AMD','CLS','MU']);
 
 function getFundTicker(ticker){
   if(ticker in UNDERLYING_MAP)return UNDERLYING_MAP[ticker];
-  return ticker; // Individual stocks use their own ticker
+  if(FUND_TICKERS.has(ticker))return ticker;
+  return null; // Skip fundamentals for unlisted tickers
 }
 
 async function fmpGet(endpoint){
@@ -529,7 +532,6 @@ async function refreshFundamentals(){
   toast('📊 Fundamentals 불러오는 중...','ok');
   try{
     const held=getHeldTickers();
-    // Only fetch for tickers that have a valid underlying (skip null-mapped leveraged ETFs)
     const fundTickers=[...new Set(held.map(t=>getFundTicker(t)).filter(t=>t!==null))];
     console.log('Fund tickers to fetch:',fundTickers);
     if(!fundTickers.length){toast('펀더멘탈 데이터 대상 종목 없음','err');return}
@@ -537,43 +539,48 @@ async function refreshFundamentals(){
     const newFund={};
     for(const tk of fundTickers){
       console.log(`=== Fetching FMP data for ${tk} ===`);
-      // Fetch each endpoint independently — null if fails
-      const [annual, quarterly, ptConsensus, gradesData]=await Promise.all([
+      // 3 calls per ticker: annual estimates, price target, grades
+      const [annual, ptConsensus, gradesData]=await Promise.all([
         fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
-        fmpGet(`analyst-estimates?symbol=${tk}&period=quarter&limit=16`),
         fmpGet(`price-target-consensus?symbol=${tk}`),
         fmpGet(`grades-consensus?symbol=${tk}`)
       ]);
       console.log(`${tk} annual:`,annual);
-      console.log(`${tk} quarterly:`,quarterly);
       console.log(`${tk} priceTarget:`,ptConsensus);
       console.log(`${tk} grades:`,gradesData);
 
       const price=cachedPrices[tk]?cachedPrices[tk].current:0;
 
-      // --- 12-month forward EPS & Revenue from quarterly ---
-      let eps12m=null,rev12m=null,pe12m=null,epsYoy12m=null,revYoy12m=null;
-      let numAnalystsEps=null,numAnalystsRev=null,epsPrev12m=null,revPrev12m=null;
-      let next4Q=[];
-      if(Array.isArray(quarterly)&&quarterly.length>0){
-        const now=new Date();
-        const sortedQ=quarterly.slice().sort((a,b)=>a.date.localeCompare(b.date));
-        const futureQ=sortedQ.filter(q=>new Date(q.date)>=now);
-        next4Q=futureQ.slice(0,4);
-        if(next4Q.length===4){
-          eps12m=next4Q.reduce((s,q)=>s+(q.epsAvg||0),0);
-          rev12m=next4Q.reduce((s,q)=>s+(q.revenueAvg||0),0);
-          numAnalystsEps=Math.round(next4Q.reduce((s,q)=>s+(q.numAnalystsEps||0),0)/4);
-          numAnalystsRev=Math.round(next4Q.reduce((s,q)=>s+(q.numAnalystsRevenue||0),0)/4);
+      // --- Forward P/E from annual estimates ---
+      // Use the nearest future fiscal year as "forward"
+      let epsFwd=null,epsPrev=null,revFwd=null,revPrev=null;
+      let fwdYear=null,prevYear=null;
+      let numAnalystsEps=null,numAnalystsRev=null;
+      let pe12m=null,epsYoy12m=null,revYoy12m=null;
+
+      if(Array.isArray(annual)&&annual.length>0){
+        const sorted=annual.slice().sort((a,b)=>a.date.localeCompare(b.date));
+        const nowYear=new Date().getFullYear();
+        // Forward = first fiscal year ending in current year or later
+        const fwd=sorted.find(e=>{const y=parseInt(e.date);return y>=nowYear});
+        if(fwd){
+          fwdYear=fwd.date.slice(0,4);
+          epsFwd=fwd.epsAvg||null;
+          revFwd=fwd.revenueAvg||null;
+          numAnalystsEps=fwd.numAnalystsEps||null;
+          numAnalystsRev=fwd.numAnalystsRevenue||null;
+          // Previous year
+          const prevIdx=sorted.indexOf(fwd)-1;
+          if(prevIdx>=0){
+            const prev=sorted[prevIdx];
+            prevYear=prev.date.slice(0,4);
+            epsPrev=prev.epsAvg||null;
+            revPrev=prev.revenueAvg||null;
+          }
+          pe12m=(epsFwd&&epsFwd>0&&price)?price/epsFwd:null;
+          epsYoy12m=(epsPrev&&epsFwd&&epsPrev!==0)?((epsFwd-epsPrev)/Math.abs(epsPrev)*100):null;
+          revYoy12m=(revPrev&&revFwd&&revPrev!==0)?((revFwd-revPrev)/Math.abs(revPrev)*100):null;
         }
-        const prev4Q=sortedQ.filter(q=>new Date(q.date)<now).slice(-4);
-        if(prev4Q.length===4){
-          epsPrev12m=prev4Q.reduce((s,q)=>s+(q.epsAvg||0),0);
-          revPrev12m=prev4Q.reduce((s,q)=>s+(q.revenueAvg||0),0);
-        }
-        pe12m=(eps12m&&eps12m>0&&price)?price/eps12m:null;
-        epsYoy12m=(epsPrev12m&&eps12m&&epsPrev12m!==0)?((eps12m-epsPrev12m)/Math.abs(epsPrev12m)*100):null;
-        revYoy12m=(revPrev12m&&rev12m&&revPrev12m!==0)?((rev12m-revPrev12m)/Math.abs(revPrev12m)*100):null;
       }
 
       // --- Price target ---
@@ -594,15 +601,13 @@ async function refreshFundamentals(){
       const consensus=gr.consensus||null;
 
       newFund[tk]={
-        price,
-        eps12m, rev12m, pe12m,
-        epsYoy12m, revYoy12m,
+        price, fwdYear, prevYear,
+        epsFwd, epsPrev, revFwd, revPrev,
+        pe12m, epsYoy12m, revYoy12m,
         numAnalystsEps, numAnalystsRev,
-        epsPrev12m, revPrev12m,
-        next4Q:next4Q.map(q=>({date:q.date,epsAvg:q.epsAvg,revAvg:q.revenueAvg})),
         targetPrice, targetHigh, targetLow,
         strongBuy, buy, hold, sell, strongSell, consensus,
-        annual:annual||[], quarterly:quarterly||[],
+        annual:annual||[],
         fetchDate:new Date().toISOString().slice(0,10)
       };
       console.log(`${tk} RESULT:`,newFund[tk]);
@@ -639,25 +644,19 @@ async function saveFundamentalsToSheet(fundData){
     const today=new Date().toISOString().slice(0,10);
     const rows=[];
     for(const[tk,d]of Object.entries(fundData)){
-      // Summary row with 12m forward data
-      rows.push([today,tk,'12m_fwd','',
-        d.eps12m?d.eps12m.toFixed(3):'',
+      rows.push([today,tk,
+        d.fwdYear||'',
+        d.epsFwd?d.epsFwd.toFixed(3):'',
         d.numAnalystsEps||'',
         d.pe12m?d.pe12m.toFixed(2):'',
         d.epsYoy12m?d.epsYoy12m.toFixed(2)+'%':'',
-        d.rev12m?Math.round(d.rev12m):'',
+        d.revFwd?Math.round(d.revFwd):'',
         d.revYoy12m?d.revYoy12m.toFixed(2)+'%':'',
         d.targetPrice||'',
-        `${d.strongBuy||0}/${d.buy||0}/${d.hold||0}/${d.sell||0}/${d.strongSell||0}`
+        `${d.strongBuy||0}/${d.buy||0}/${d.hold||0}/${d.sell||0}/${d.strongSell||0}`,
+        d.consensus||''
       ]);
-      // Quarterly rows
-      if(d.next4Q){
-        for(const q of d.next4Q){
-          rows.push([today,tk,'quarter',q.date,q.epsAvg||'','','','',q.revAvg?Math.round(q.revAvg):'','','','']);
-        }
-      }
     }
-    // Append to fundamentals tab
     const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fundamentals!A:L:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
     await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
       body:JSON.stringify({values:rows})});
@@ -1035,9 +1034,10 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   let targetStr=dash, gradeStr=dash;
 
   if(fund){
-    // -- Col4: P/E 12m forward --
+    // -- Col4: P/E forward (fiscal year) --
     if(fund.pe12m!=null){
-      peStr=`${fund.pe12m.toFixed(1)}${levTag}`;
+      const yrLabel=fund.fwdYear?`FY${fund.fwdYear.slice(2)}`:'fwd';
+      peStr=`${fund.pe12m.toFixed(1)} <span style="font-size:9px;color:var(--text3)">${yrLabel}</span>${levTag}`;
     }
     // EPS estimate change: placeholder until we have history
     epsChgStr=`<span style="color:var(--text3);font-size:10px">tracking...</span>`;
