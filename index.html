@@ -5,126 +5,119 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>US Stock Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsrsasign/11.1.0/jsrsasign-all-min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root {
-  --bg: #0b0f19; --surface: #131a2b; --surface2: #1b2540; --surface3: #243054;
-  --border: #2d3a5c; --text: #e2e8f4; --text2: #7b8bb5; --text3: #4e5f8a;
-  --accent: #4a8eff; --accent2: #3672d9; --accentBg: rgba(74,142,255,.08);
-  --samsung: #2962ff; --samsungBg: rgba(41,98,255,.1);
-  --kiwoom: #e63962; --kiwoomBg: rgba(230,57,98,.1);
-  --buy: #00c853; --buyBg: rgba(0,200,83,.1);
-  --sell: #ff5252; --sellBg: rgba(255,82,82,.1);
-  --warn: #ffc107; --radius: 12px;
-  --shadow: 0 2px 12px rgba(0,0,0,.3);
+  --bg:#0b0f19;--surface:#131a2b;--surface2:#1b2540;--surface3:#243054;
+  --border:#2d3a5c;--text:#e2e8f4;--text2:#7b8bb5;--text3:#4e5f8a;
+  --accent:#4a8eff;--accent2:#3672d9;--accentBg:rgba(74,142,255,.08);
+  --samsung:#2962ff;--kiwoom:#e63962;
+  --buy:#00c853;--buyBg:rgba(0,200,83,.1);
+  --sell:#ff5252;--sellBg:rgba(255,82,82,.1);
+  --warn:#ffc107;--radius:12px;
 }
-* { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:'Noto Sans KR',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
-.mono { font-family:'JetBrains Mono',monospace; }
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.app{max-width:960px;margin:0 auto;padding:12px}
+.header{display:flex;align-items:center;gap:12px;padding:16px 4px 12px}
+.logo{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--samsung),var(--kiwoom));display:flex;align-items:center;justify-content:center;font-size:18px}
+.header h1{font-size:18px;font-weight:700;letter-spacing:-.3px}
+.header .sub{font-size:11px;color:var(--text2)}
+nav{display:flex;gap:3px;background:var(--surface);border-radius:var(--radius);padding:3px;margin-bottom:16px;overflow-x:auto}
+nav button{flex:0 0 auto;padding:9px 16px;border:none;background:none;color:var(--text2);border-radius:9px;cursor:pointer;font:500 13px/1 'Noto Sans KR',sans-serif;white-space:nowrap;transition:all .15s}
+nav button.on{background:var(--accent);color:#fff}
+nav button:hover:not(.on){background:var(--surface2);color:var(--text)}
+.panel{display:none}.panel.on{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px}
+.card-hdr{font-size:13px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:7px}
+.card-hdr .ico{font-size:16px}
+input[type=text],input[type=password],input[type=number],select,textarea{width:100%;padding:9px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font:13px/1.4 'Noto Sans KR',sans-serif;transition:border .15s}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+textarea{resize:vertical;min-height:80px;font-family:'JetBrains Mono',monospace;font-size:11px}
+label.f{display:block;margin-bottom:10px}
+label.f>span{display:block;font-size:11px;color:var(--text2);margin-bottom:3px;font-weight:500}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.g4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:10px 18px;border-radius:8px;border:none;font:500 13px/1 'Noto Sans KR',sans-serif;cursor:pointer;transition:all .12s}
+.btn-p{background:var(--accent);color:#fff}.btn-p:hover{background:var(--accent2)}
+.btn-p:disabled{opacity:.35;cursor:not-allowed}
+.btn-s{background:var(--surface2);color:var(--text);border:1px solid var(--border)}.btn-s:hover{border-color:var(--accent)}
+.btn-d{background:#c62828;color:#fff}
+.btn-sm{padding:7px 12px;font-size:12px}
+.btn-full{width:100%;justify-content:center}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap}
+.drop{border:2px dashed var(--border);border-radius:var(--radius);padding:28px;text-align:center;cursor:pointer;transition:all .2s}
+.drop:hover,.drop.over{border-color:var(--accent);background:var(--accentBg)}
+.drop input{display:none}
+.drop .ico{font-size:32px;margin-bottom:6px}
+.drop p{color:var(--text2);font-size:12px}
+.thumbs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.thumb{position:relative;width:64px;height:64px;border-radius:8px;overflow:hidden;border:2px solid var(--border)}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.thumb .x{position:absolute;top:1px;right:1px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,.75);color:#fff;border:none;cursor:pointer;font-size:11px;line-height:18px;text-align:center}
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table.t{width:100%;border-collapse:collapse;font:12px/1.3 'JetBrains Mono',monospace}
+table.t th{background:var(--surface2);padding:7px 8px;text-align:left;font-weight:500;color:var(--text2);border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;z-index:1}
+table.t td{padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+table.t tr:hover td{background:var(--accentBg)}
+.c-buy{color:var(--buy)}.c-sell{color:var(--sell)}
+.c-up{color:var(--buy)}.c-dn{color:var(--sell)}.c-flat{color:var(--text2)}
+.dg{background:var(--surface2);padding:8px 12px;border-radius:8px;margin:12px 0 6px;display:flex;align-items:center;justify-content:space-between}
+.dg .l{font-weight:600;font-size:13px}.dg .r{font-size:11px;color:var(--text2)}
+.prog{height:3px;background:var(--surface2);border-radius:2px;overflow:hidden;margin:10px 0}
+.prog .bar{height:100%;background:var(--accent);border-radius:2px;transition:width .3s;width:0}
+.log{max-height:130px;overflow-y:auto;background:var(--surface2);border-radius:8px;padding:8px;margin-top:8px;font:11px/1.5 'JetBrains Mono',monospace;color:var(--text2)}
+.log .ok{color:var(--buy)}.log .err{color:var(--sell)}.log .warn{color:var(--warn)}
+.status{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:500}
+.status.ok{background:rgba(0,200,83,.1);color:var(--buy)}
+.status.no{background:rgba(255,82,82,.1);color:var(--sell)}
+.status.wait{background:rgba(255,193,7,.1);color:var(--warn)}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);padding:10px 18px;border-radius:8px;font-size:12px;font-weight:500;z-index:999;opacity:0;transition:opacity .25s;pointer-events:none}
+.toast.show{opacity:1}.toast.ok{background:#1b5e20;color:#a5d6a7}.toast.err{background:#b71c1c;color:#ef9a9a}
+.steps{counter-reset:step}
+.step{counter-increment:step;padding-left:32px;position:relative;margin-bottom:16px}
+.step::before{content:counter(step);position:absolute;left:0;top:0;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;font-size:11px;font-weight:700;line-height:22px;text-align:center}
+.step h3{font-size:13px;font-weight:600;margin-bottom:4px}
+.step p{font-size:12px;color:var(--text2);line-height:1.5}
+.step code{background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:11px;font-family:'JetBrains Mono',monospace}
+.bk-card{border-left:3px solid;padding-left:12px}
+.bk-card.ss{border-color:var(--samsung)}.bk-card.kw{border-color:var(--kiwoom)}
 
-/* Layout */
-.app { max-width:960px; margin:0 auto; padding:12px; }
-.header { display:flex; align-items:center; gap:12px; padding:16px 4px 12px; }
-.logo { width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--samsung),var(--kiwoom));display:flex;align-items:center;justify-content:center;font-size:18px; }
-.header h1 { font-size:18px; font-weight:700; letter-spacing:-.3px; }
-.header .sub { font-size:11px; color:var(--text2); }
+/* Overview cards */
+.summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.sum-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.sum-card .label{font-size:11px;color:var(--text2);margin-bottom:4px}
+.sum-card .value{font-size:20px;font-weight:700;font-family:'JetBrains Mono',monospace}
+.sum-card .sub{font-size:11px;color:var(--text2);margin-top:2px;font-family:'JetBrains Mono',monospace}
+.sum-card .value.up{color:var(--buy)}.sum-card .value.dn{color:var(--sell)}
 
-/* Nav */
-nav { display:flex; gap:3px; background:var(--surface); border-radius:var(--radius); padding:3px; margin-bottom:16px; overflow-x:auto; }
-nav button { flex:0 0 auto; padding:9px 16px; border:none; background:none; color:var(--text2); border-radius:9px; cursor:pointer; font:500 13px/1 'Noto Sans KR',sans-serif; white-space:nowrap; transition:all .15s; }
-nav button.on { background:var(--accent); color:#fff; }
-nav button:hover:not(.on) { background:var(--surface2); color:var(--text); }
-nav .badge { display:inline-block; min-width:18px; height:18px; line-height:18px; text-align:center; border-radius:9px; background:var(--accent); color:#fff; font-size:10px; margin-left:4px; font-weight:700; }
+/* Holdings table */
+.hold-row{display:grid;grid-template-columns:1fr;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
+.hold-row:hover{border-color:var(--accent)}
+.hold-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.hold-ticker{font-size:15px;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace}
+.hold-qty{font-size:12px;color:var(--text2)}
+.hold-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:11px}
+.hold-grid .lbl{color:var(--text3);font-size:10px}
+.hold-grid .val{font-family:'JetBrains Mono',monospace;font-size:12px}
 
-/* Panels */
-.panel { display:none; } .panel.on { display:block; }
+/* Back button */
+.back-btn{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border:none;background:var(--surface2);color:var(--text2);border-radius:6px;cursor:pointer;font:12px 'Noto Sans KR',sans-serif;margin-bottom:12px}
+.back-btn:hover{color:var(--text);background:var(--surface3)}
 
-/* Card */
-.card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-bottom:14px; }
-.card-hdr { font-size:13px; font-weight:600; margin-bottom:10px; display:flex; align-items:center; gap:7px; }
-.card-hdr .ico { font-size:16px; }
+/* Loading spinner */
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
-/* Inputs */
-input[type=text],input[type=password],input[type=number],select,textarea {
-  width:100%; padding:9px 12px; background:var(--surface2); border:1px solid var(--border);
-  border-radius:8px; color:var(--text); font:13px/1.4 'Noto Sans KR',sans-serif; transition:border .15s;
-}
-input:focus,select:focus,textarea:focus { outline:none; border-color:var(--accent); }
-textarea { resize:vertical; min-height:80px; font-family:'JetBrains Mono',monospace; font-size:11px; }
-label.f { display:block; margin-bottom:10px; }
-label.f > span { display:block; font-size:11px; color:var(--text2); margin-bottom:3px; font-weight:500; }
-.g2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.g3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
-.g4 { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:10px; }
-
-/* Buttons */
-.btn { display:inline-flex; align-items:center; gap:5px; padding:10px 18px; border-radius:8px; border:none; font:500 13px/1 'Noto Sans KR',sans-serif; cursor:pointer; transition:all .12s; }
-.btn-p { background:var(--accent); color:#fff; } .btn-p:hover { background:var(--accent2); }
-.btn-p:disabled { opacity:.35; cursor:not-allowed; }
-.btn-s { background:var(--surface2); color:var(--text); border:1px solid var(--border); } .btn-s:hover { border-color:var(--accent); }
-.btn-d { background:#c62828; color:#fff; } .btn-d:hover { background:#b71c1c; }
-.btn-sm { padding:7px 12px; font-size:12px; }
-.btn-full { width:100%; justify-content:center; }
-.btn-row { display:flex; gap:8px; flex-wrap:wrap; }
-
-/* Upload */
-.drop { border:2px dashed var(--border); border-radius:var(--radius); padding:28px; text-align:center; cursor:pointer; transition:all .2s; }
-.drop:hover,.drop.over { border-color:var(--accent); background:var(--accentBg); }
-.drop input { display:none; }
-.drop .ico { font-size:32px; margin-bottom:6px; }
-.drop p { color:var(--text2); font-size:12px; }
-.thumbs { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
-.thumb { position:relative; width:64px; height:64px; border-radius:8px; overflow:hidden; border:2px solid var(--border); }
-.thumb img { width:100%; height:100%; object-fit:cover; }
-.thumb .x { position:absolute; top:1px; right:1px; width:18px; height:18px; border-radius:50%; background:rgba(0,0,0,.75); color:#fff; border:none; cursor:pointer; font-size:11px; line-height:18px; text-align:center; }
-.thumb .tag { position:absolute; bottom:1px; left:1px; padding:1px 5px; border-radius:3px; font-size:8px; font-weight:700; color:#fff; }
-.tag.ss { background:var(--samsung); } .tag.kw { background:var(--kiwoom); }
-
-/* Table */
-.tbl-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-table.t { width:100%; border-collapse:collapse; font:12px/1.3 'JetBrains Mono',monospace; }
-table.t th { background:var(--surface2); padding:7px 8px; text-align:left; font-weight:500; color:var(--text2); border-bottom:1px solid var(--border); white-space:nowrap; position:sticky; top:0; z-index:1; }
-table.t td { padding:6px 8px; border-bottom:1px solid var(--border); white-space:nowrap; }
-table.t tr:hover td { background:var(--accentBg); }
-.c-buy { color:var(--buy); } .c-sell { color:var(--sell); }
-.c-ss { color:var(--samsung); } .c-kw { color:var(--kiwoom); }
-
-/* Date group */
-.dg { background:var(--surface2); padding:8px 12px; border-radius:8px; margin:12px 0 6px; display:flex; align-items:center; justify-content:space-between; }
-.dg .l { font-weight:600; font-size:13px; } .dg .r { font-size:11px; color:var(--text2); }
-
-/* Progress & Log */
-.prog { height:3px; background:var(--surface2); border-radius:2px; overflow:hidden; margin:10px 0; }
-.prog .bar { height:100%; background:var(--accent); border-radius:2px; transition:width .3s; width:0; }
-.log { max-height:130px; overflow-y:auto; background:var(--surface2); border-radius:8px; padding:8px; margin-top:8px; font:11px/1.5 'JetBrains Mono',monospace; color:var(--text2); }
-.log .ok { color:var(--buy); } .log .err { color:var(--sell); } .log .warn { color:var(--warn); }
-
-/* Status */
-.status { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:6px; font-size:11px; font-weight:500; }
-.status.ok { background:rgba(0,200,83,.1); color:var(--buy); }
-.status.no { background:rgba(255,82,82,.1); color:var(--sell); }
-.status.wait { background:rgba(255,193,7,.1); color:var(--warn); }
-
-/* Toast */
-.toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); padding:10px 18px; border-radius:8px; font-size:12px; font-weight:500; z-index:999; opacity:0; transition:opacity .25s; pointer-events:none; }
-.toast.show { opacity:1; } .toast.ok { background:#1b5e20; color:#a5d6a7; } .toast.err { background:#b71c1c; color:#ef9a9a; }
-
-/* Setup steps */
-.step { counter-increment:step; padding-left:32px; position:relative; margin-bottom:16px; }
-.step::before { content:counter(step); position:absolute; left:0; top:0; width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff; font-size:11px; font-weight:700; line-height:22px; text-align:center; }
-.step h3 { font-size:13px; font-weight:600; margin-bottom:4px; }
-.step p { font-size:12px; color:var(--text2); line-height:1.5; }
-.step code { background:var(--surface2); padding:1px 5px; border-radius:3px; font-size:11px; font-family:'JetBrains Mono',monospace; }
-.steps { counter-reset:step; }
-
-/* Broker card */
-.bk-card { border-left:3px solid; padding-left:12px; }
-.bk-card.ss { border-color:var(--samsung); } .bk-card.kw { border-color:var(--kiwoom); }
-
-@media(max-width:640px) {
-  .g2,.g3,.g4 { grid-template-columns:1fr; }
-  table.t { font-size:11px; }
-  table.t th,table.t td { padding:5px 5px; }
-  nav button { padding:8px 12px; font-size:12px; }
+@media(max-width:640px){
+  .g2,.g3,.g4{grid-template-columns:1fr}
+  .summary-grid{grid-template-columns:1fr}
+  table.t{font-size:11px}
+  table.t th,table.t td{padding:5px 5px}
+  nav button{padding:8px 10px;font-size:11px}
+  .hold-grid{grid-template-columns:repeat(2,1fr)}
 }
 </style>
 </head>
@@ -136,84 +129,27 @@ table.t tr:hover td { background:var(--accentBg); }
   </div>
 
   <nav id="nav">
-    <button class="on" data-p="setup">⚙️ 설정</button>
+    <button class="on" data-p="overview">📊 Overview</button>
+    <button data-p="history" id="navHistory" style="display:none">📜 History</button>
     <button data-p="import">📥 +File</button>
-    <button data-p="extract">📸 추출</button>
     <button data-p="manual">✏️ 입력</button>
-    <button data-p="data">📋 데이터 <span class="badge" id="badge" style="display:none">0</span></button>
+    <button data-p="data">📋 데이터</button>
+    <button data-p="setup">⚙️ 설정</button>
   </nav>
 
-  <!-- ==================== SETUP ==================== -->
-  <div id="p-setup" class="panel on">
-    <div class="card">
-      <div class="card-hdr"><span class="ico">📡</span> 연결 상태</div>
-      <div class="g3" style="margin-bottom:12px">
-        <div>Google Sheets: <span class="status no" id="st-gs">미연결</span></div>
-        <div>Claude API: <span class="status no" id="st-ai">미연결</span></div>
-        <div>Sheet ID: <span class="status no" id="st-sid">없음</span></div>
-      </div>
+  <!-- ==================== OVERVIEW ==================== -->
+  <div id="p-overview" class="panel on">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span style="font-size:14px;font-weight:600">Portfolio Overview</span>
+      <button class="btn btn-s btn-sm" onclick="loadOverview()">🔄 새로고침</button>
     </div>
+    <div id="overviewContent"><p style="color:var(--text2);text-align:center;padding:32px">🔄 클릭하여 포트폴리오를 불러오세요</p></div>
+  </div>
 
-    <div class="card">
-      <div class="card-hdr"><span class="ico">📘</span> Google Sheets 설정 가이드</div>
-      <div class="steps">
-        <div class="step">
-          <h3>Google Cloud 프로젝트 생성</h3>
-          <p><a href="https://console.cloud.google.com/projectcreate" target="_blank" style="color:var(--accent)">console.cloud.google.com</a> → 새 프로젝트 생성 (이름: 아무거나)</p>
-        </div>
-        <div class="step">
-          <h3>Google Sheets API 활성화</h3>
-          <p><a href="https://console.cloud.google.com/apis/library/sheets.googleapis.com" target="_blank" style="color:var(--accent)">Sheets API 페이지</a> → "사용" 클릭</p>
-        </div>
-        <div class="step">
-          <h3>서비스 계정 생성</h3>
-          <p><a href="https://console.cloud.google.com/iam-admin/serviceaccounts/create" target="_blank" style="color:var(--accent)">서비스 계정 생성</a> → 이름 입력 → "완료".<br>
-          생성된 계정 클릭 → "키" 탭 → "키 추가" → "JSON" → 파일 다운로드</p>
-        </div>
-        <div class="step">
-          <h3>Google Sheet 준비</h3>
-          <p>새 Google Sheet 생성 → 시트 이름을 <code>삼성</code>, <code>키움</code>으로 변경.<br>
-          각 시트 1행: (빈칸) | (빈칸) | (빈칸) | (빈칸) | tax | total | split | seq<br>
-          Sheet URL에서 ID 복사 (docs.google.com/spreadsheets/d/<b style="color:var(--accent)">[이 부분]</b>/edit)</p>
-        </div>
-        <div class="step">
-          <h3>시트 공유</h3>
-          <p>다운받은 JSON에서 <code>client_email</code> 값 복사 → Sheet "공유" → 해당 이메일에 "편집자" 권한 부여</p>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-hdr"><span class="ico">🔑</span> 서비스 계정 키 (JSON)</div>
-      <textarea id="saKey" placeholder='다운로드한 JSON 파일의 전체 내용을 붙여넣기...'></textarea>
-      <div style="margin-top:8px">
-        <button class="btn btn-p btn-sm" onclick="saveSA()">저장</button>
-        <span style="font-size:11px;color:var(--text2);margin-left:8px">로컬 브라우저에만 저장됩니다</span>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-hdr"><span class="ico">📄</span> Google Sheet ID</div>
-      <div class="g2">
-        <label class="f"><span>Sheet ID</span>
-          <input type="text" id="sheetId" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms" />
-        </label>
-        <div style="display:flex;align-items:flex-end;gap:6px">
-          <button class="btn btn-p btn-sm" onclick="saveSheetId()">저장</button>
-          <button class="btn btn-s btn-sm" onclick="testConnection()">연결 테스트</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-hdr"><span class="ico">🤖</span> Claude API Key</div>
-      <div style="display:flex;gap:8px">
-        <input type="password" id="claudeKey" placeholder="sk-ant-api03-..." />
-        <button class="btn btn-s btn-sm" onclick="toggleVis('claudeKey')">표시</button>
-        <button class="btn btn-p btn-sm" onclick="saveClaudeKey()">저장</button>
-      </div>
-      <p style="font-size:11px;color:var(--text2);margin-top:6px">PNG → AI 추출에 필요. 수동 입력만 할 경우 불필요.</p>
-    </div>
+  <!-- ==================== TICKER HISTORY ==================== -->
+  <div id="p-history" class="panel">
+    <button class="back-btn" onclick="switchTab('overview')">← Overview</button>
+    <div id="historyContent"></div>
   </div>
 
   <!-- ==================== IMPORT ==================== -->
@@ -225,12 +161,11 @@ table.t tr:hover td { background:var(--accentBg); }
 CAT,1,773.3300,1
 SOXL,7,70.3600,2
 ASTS,-4,85.5650,3
-UGE,15,21.9600,4
 
 #키움 260212
 CLS,1,287.0000,1
 CLS,1,282.5800,2"></textarea>
-      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
         <button class="btn btn-p" onclick="doImport()">📥 가져오기 → Google Sheets</button>
         <button class="btn btn-s btn-sm" onclick="previewImport()">👁 미리보기</button>
         <button class="btn btn-s btn-sm" onclick="document.getElementById('impText').value='';document.getElementById('impPreview').innerHTML=''">지우기</button>
@@ -238,33 +173,13 @@ CLS,1,282.5800,2"></textarea>
       <div id="impPreview" style="margin-top:12px"></div>
       <div id="impLog" style="margin-top:8px"></div>
     </div>
-
     <div class="card">
-      <div class="card-hdr"><span class="ico">📖</span> 텍스트 형식 설명</div>
+      <div class="card-hdr"><span class="ico">📖</span> 텍스트 형식</div>
       <div style="font-size:12px;color:var(--text2);line-height:1.7">
         <p><code style="background:var(--surface2);padding:2px 6px;border-radius:3px;font-size:11px">#증권사 날짜(YYMMDD)</code> 로 그룹 시작</p>
         <p><code style="background:var(--surface2);padding:2px 6px;border-radius:3px;font-size:11px">종목,수량(매도=-),체결단가,순서</code> 로 각 거래</p>
-        <p>빈 줄로 그룹 구분. tax와 total은 자동 계산 (삼성 0.03%, 키움 0.07%)</p>
+        <p>빈 줄로 그룹 구분. tax/total 자동 계산 (삼성 0.03%, 키움 0.07%)</p>
       </div>
-    </div>
-  </div>
-
-  <!-- ==================== EXTRACT ==================== -->
-  <div id="p-extract" class="panel">
-    <div class="card">
-      <div class="card-hdr"><span class="ico">📸</span> 스크린샷 업로드</div>
-      <div class="drop" id="drop">
-        <input type="file" id="fileIn" accept="image/*" multiple />
-        <div class="ico">📱</div>
-        <p>클릭 또는 드래그하여 스크린샷 업로드</p>
-        <p style="font-size:10px;margin-top:2px">당일체결/전체 또는 일별주문내역 캡쳐</p>
-      </div>
-      <div class="thumbs" id="thumbs"></div>
-    </div>
-    <button class="btn btn-p btn-full" id="extBtn" onclick="doExtract()" disabled>🚀 AI 추출 → Google Sheets 저장</button>
-    <div id="extProg" style="display:none">
-      <div class="prog"><div class="bar" id="extBar"></div></div>
-      <div class="log" id="extLog"></div>
     </div>
   </div>
 
@@ -291,606 +206,464 @@ CLS,1,282.5800,2"></textarea>
     <div class="btn-row" style="margin-bottom:12px">
       <button class="btn btn-s btn-sm" onclick="loadFromSheet()">🔄 시트에서 불러오기</button>
       <button class="btn btn-s btn-sm" onclick="downloadXlsx()">📥 xlsx 다운로드</button>
-      <button class="btn btn-d btn-sm" onclick="clearLocal()">🗑 로컬 초기화</button>
     </div>
     <div id="dataView"><p style="color:var(--text2);text-align:center;padding:32px">데이터를 불러오려면 "시트에서 불러오기"를 클릭하세요</p></div>
+  </div>
+
+  <!-- ==================== SETUP ==================== -->
+  <div id="p-setup" class="panel">
+    <div class="card">
+      <div class="card-hdr"><span class="ico">📡</span> 연결 상태</div>
+      <div class="g2" style="margin-bottom:12px">
+        <div>Google Sheets: <span class="status no" id="st-gs">미연결</span></div>
+        <div>Sheet ID: <span class="status no" id="st-sid">없음</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hdr"><span class="ico">📘</span> Google Sheets 설정 가이드</div>
+      <div class="steps">
+        <div class="step"><h3>Google Cloud 프로젝트 생성</h3><p><a href="https://console.cloud.google.com/projectcreate" target="_blank" style="color:var(--accent)">console.cloud.google.com</a> → 새 프로젝트</p></div>
+        <div class="step"><h3>Google Sheets API 활성화</h3><p><a href="https://console.cloud.google.com/apis/library/sheets.googleapis.com" target="_blank" style="color:var(--accent)">Sheets API</a> → "사용" 클릭</p></div>
+        <div class="step"><h3>서비스 계정 생성</h3><p><a href="https://console.cloud.google.com/iam-admin/serviceaccounts/create" target="_blank" style="color:var(--accent)">서비스 계정</a> → 생성 → "키" 탭 → JSON 다운로드</p></div>
+        <div class="step"><h3>Google Sheet 준비</h3><p>새 Sheet → 탭 이름: <code>삼성</code>, <code>키움</code>, <code>config</code>. config 탭에 initial_cash 값 입력 (A1: initial_cash, B1: 금액)</p></div>
+        <div class="step"><h3>시트 공유</h3><p>JSON의 <code>client_email</code> → Sheet "공유" → 편집자 권한</p></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hdr"><span class="ico">🔑</span> 서비스 계정 키 (JSON)</div>
+      <textarea id="saKey" placeholder='JSON 전체 붙여넣기...'></textarea>
+      <div style="margin-top:8px"><button class="btn btn-p btn-sm" onclick="saveSA()">저장</button><span style="font-size:11px;color:var(--text2);margin-left:8px">로컬 브라우저에만 저장</span></div>
+    </div>
+    <div class="card">
+      <div class="card-hdr"><span class="ico">📄</span> Google Sheet ID</div>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="sheetId" placeholder="Sheet ID (URL의 /d/.../ 부분)"/>
+        <button class="btn btn-p btn-sm" onclick="saveSheetId()">저장</button>
+        <button class="btn btn-s btn-sm" onclick="testConnection()">테스트</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hdr"><span class="ico">💰</span> Initial Cash (초기 투자금)</div>
+      <div style="display:flex;gap:8px">
+        <input type="number" id="initCash" placeholder="50000" step="100"/>
+        <button class="btn btn-p btn-sm" onclick="saveInitCash()">저장 → Sheet</button>
+      </div>
+      <p style="font-size:11px;color:var(--text2);margin-top:6px">Google Sheet의 config 탭에 저장됩니다</p>
+    </div>
   </div>
 </div>
 
 <div class="toast" id="toast"></div>
 
-<!-- Google Auth via jsrsasign for JWT signing -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsrsasign/11.1.0/jsrsasign-all-min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 // ================ CONFIG ================
-const TAX = { '삼성': 0.0003, '키움': 0.0007 };
-const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
-let SA_KEY = null;   // service account JSON
-let SHEET_ID = '';
-let CLAUDE_KEY = '';
-let gToken = null;
-let gTokenExp = 0;
-let files = [];
-let localTx = { '삼성': [], '키움': [] };
+const TAX={삼성:0.0003,키움:0.0007};
+const SCOPES='https://www.googleapis.com/auth/spreadsheets';
+let SA_KEY=null,SHEET_ID='',gToken=null,gTokenExp=0;
+let allTransactions=[];  // parsed from sheets
+let initialCash=0;
 
 // ================ INIT ================
-document.addEventListener('DOMContentLoaded', () => {
-  // Nav
-  document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
-    document.querySelectorAll('nav button').forEach(x => x.classList.remove('on'));
-    document.querySelectorAll('.panel').forEach(x => x.classList.remove('on'));
-    b.classList.add('on');
-    document.getElementById('p-' + b.dataset.p).classList.add('on');
-  }));
-  // Drop zone
-  const drop = document.getElementById('drop');
-  drop.addEventListener('click', () => document.getElementById('fileIn').click());
-  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
-  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
-  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); handleFiles(e.dataTransfer.files); });
-  document.getElementById('fileIn').addEventListener('change', e => handleFiles(e.target.files));
-  // Load saved config
+document.addEventListener('DOMContentLoaded',()=>{
+  document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.p)));
+  const drop=document.getElementById('drop');
   loadConfig();
 });
 
-// ================ CONFIG PERSISTENCE ================
-function loadConfig() {
-  try {
-    const sa = localStorage.getItem('sa_key');
-    if (sa) { SA_KEY = JSON.parse(sa); document.getElementById('saKey').value = sa; updateStatus('st-gs', 'ok', '키 저장됨'); }
-    const sid = localStorage.getItem('sheet_id');
-    if (sid) { SHEET_ID = sid; document.getElementById('sheetId').value = sid; updateStatus('st-sid', 'ok', sid.slice(0,8)+'...'); }
-    const ck = localStorage.getItem('claude_key');
-    if (ck) { CLAUDE_KEY = ck; document.getElementById('claudeKey').value = ck; updateStatus('st-ai', 'ok', '저장됨'); }
-  } catch(e) {}
-}
-function saveSA() {
-  try {
-    const raw = document.getElementById('saKey').value.trim();
-    SA_KEY = JSON.parse(raw);
-    localStorage.setItem('sa_key', raw);
-    updateStatus('st-gs', 'ok', '키 저장됨');
-    toast('서비스 계정 키 저장 완료', 'ok');
-  } catch(e) { toast('JSON 형식이 올바르지 않습니다', 'err'); }
-}
-function saveSheetId() {
-  SHEET_ID = document.getElementById('sheetId').value.trim();
-  localStorage.setItem('sheet_id', SHEET_ID);
-  updateStatus('st-sid', 'ok', SHEET_ID.slice(0,8)+'...');
-  toast('Sheet ID 저장 완료', 'ok');
-}
-function saveClaudeKey() {
-  CLAUDE_KEY = document.getElementById('claudeKey').value.trim();
-  localStorage.setItem('claude_key', CLAUDE_KEY);
-  updateStatus('st-ai', 'ok', '저장됨');
-  toast('Claude API Key 저장 완료', 'ok');
-}
-function toggleVis(id) { const el = document.getElementById(id); el.type = el.type === 'password' ? 'text' : 'password'; }
-function updateStatus(id, cls, txt) {
-  const el = document.getElementById(id);
-  el.className = 'status ' + cls;
-  el.textContent = txt;
+function switchTab(p){
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x.dataset.p===p));
+  document.querySelectorAll('.panel').forEach(x=>x.classList.remove('on'));
+  document.getElementById('p-'+p).classList.add('on');
+  if(p==='history')document.getElementById('navHistory').style.display='';
 }
 
-// ================ GOOGLE AUTH (JWT) ================
-async function getAccessToken() {
-  if (gToken && Date.now() / 1000 < gTokenExp - 60) return gToken;
-  if (!SA_KEY) throw new Error('서비스 계정 키가 없습니다');
+// ================ CONFIG ================
+function loadConfig(){
+  try{
+    const sa=localStorage.getItem('sa_key');
+    if(sa){SA_KEY=JSON.parse(sa);document.getElementById('saKey').value=sa;updateSt('st-gs','ok','키 저장됨')}
+    const sid=localStorage.getItem('sheet_id');
+    if(sid){SHEET_ID=sid;document.getElementById('sheetId').value=sid;updateSt('st-sid','ok',sid.slice(0,8)+'...')}
+  }catch(e){}
+}
+function saveSA(){try{const r=document.getElementById('saKey').value.trim();SA_KEY=JSON.parse(r);localStorage.setItem('sa_key',r);updateSt('st-gs','ok','키 저장됨');toast('저장 완료','ok')}catch(e){toast('JSON 형식 오류','err')}}
+function saveSheetId(){SHEET_ID=document.getElementById('sheetId').value.trim();localStorage.setItem('sheet_id',SHEET_ID);updateSt('st-sid','ok',SHEET_ID.slice(0,8)+'...');toast('저장 완료','ok')}
+function updateSt(id,cls,txt){const el=document.getElementById(id);el.className='status '+cls;el.textContent=txt}
+async function saveInitCash(){
+  const v=parseFloat(document.getElementById('initCash').value);
+  if(!v||!SHEET_ID||!SA_KEY){toast('금액과 Sheet 설정을 확인하세요','err');return}
+  try{
+    const token=await getAccessToken();
+    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A1:B1?valueInputOption=USER_ENTERED`;
+    await fetch(url,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({range:'config!A1:B1',values:[['initial_cash',v]]})});
+    toast('Initial cash 저장 완료','ok');
+  }catch(e){toast('저장 실패: '+e.message,'err')}
+}
 
-  const now = Math.floor(Date.now() / 1000);
-  const exp = now + 3600;
-  const header = { alg: 'RS256', typ: 'JWT' };
-  const payload = {
-    iss: SA_KEY.client_email,
-    scope: SCOPES,
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: exp
-  };
-
-  const sHeader = JSON.stringify(header);
-  const sPayload = JSON.stringify(payload);
-  const sJWT = KJUR.jws.JWS.sign('RS256', sHeader, sPayload, SA_KEY.private_key);
-
-  const resp = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${sJWT}`
-  });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error('Google Auth 실패: ' + (err.error_description || resp.status));
-  }
-
-  const data = await resp.json();
-  gToken = data.access_token;
-  gTokenExp = exp;
-  return gToken;
+// ================ GOOGLE AUTH ================
+async function getAccessToken(){
+  if(gToken&&Date.now()/1000<gTokenExp-60)return gToken;
+  if(!SA_KEY)throw new Error('서비스 계정 키 없음');
+  const now=Math.floor(Date.now()/1000),exp=now+3600;
+  const sJWT=KJUR.jws.JWS.sign('RS256',JSON.stringify({alg:'RS256',typ:'JWT'}),
+    JSON.stringify({iss:SA_KEY.client_email,scope:SCOPES,aud:'https://oauth2.googleapis.com/token',iat:now,exp}),SA_KEY.private_key);
+  const resp=await fetch('https://oauth2.googleapis.com/token',{method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${sJWT}`});
+  if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error('Auth 실패: '+(e.error_description||resp.status))}
+  const d=await resp.json();gToken=d.access_token;gTokenExp=exp;return gToken;
 }
 
 // ================ SHEETS API ================
-async function sheetsGet(range) {
-  const token = await getAccessToken();
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}`;
-  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!resp.ok) throw new Error('시트 읽기 실패: ' + resp.status);
-  return resp.json();
+async function sheetsGet(range){
+  const token=await getAccessToken();
+  const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}`,{headers:{Authorization:`Bearer ${token}`}});
+  if(!r.ok)throw new Error('시트 읽기 실패: '+r.status);return r.json();
+}
+async function sheetsInsertAtTop(sheet,values){
+  const token=await getAccessToken();const range=`${sheet}!A:H`;
+  let existing=[];try{const d=await sheetsGet(`${sheet}!A:H`);existing=d.values||[]}catch(e){}
+  const header=existing.length>0?existing[0]:['','','','','tax','total','split','seq'];
+  const newAll=[header,...values,...existing.slice(1)];
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:clear`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});
+  const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,{
+    method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+    body:JSON.stringify({range,majorDimension:'ROWS',values:newAll})});
+  if(!r.ok)throw new Error('시트 쓰기 실패: '+r.status);return r.json();
+}
+async function testConnection(){
+  try{updateSt('st-gs','wait','테스트...');await sheetsGet('삼성!A1:H1');updateSt('st-gs','ok','연결 성공 ✓');toast('연결 성공!','ok')}
+  catch(e){updateSt('st-gs','no','실패');toast(e.message,'err')}
 }
 
-async function sheetsAppend(sheet, values) {
-  const token = await getAccessToken();
-  const range = `${sheet}!A:H`;
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ range, majorDimension: 'ROWS', values })
-  });
-  if (!resp.ok) throw new Error('시트 쓰기 실패: ' + resp.status);
-  return resp.json();
-}
-
-async function sheetsInsertAtTop(sheet, values) {
-  // Strategy: read all, prepend, clear, write back
-  const token = await getAccessToken();
-  const range = `${sheet}!A:H`;
-
-  // Read existing
-  let existing = [];
-  try {
-    const data = await sheetsGet(`${sheet}!A:H`);
-    existing = data.values || [];
-  } catch(e) {}
-
-  // Header is row 0, data starts row 1
-  const header = existing.length > 0 ? existing[0] : ['', '', '', '', 'tax', 'total', 'split', 'seq'];
-  const oldData = existing.slice(1);
-
-  const newAll = [header, ...values, ...oldData];
-
-  // Clear and write
-  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:clear`;
-  await fetch(clearUrl, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-
-  const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
-  const resp = await fetch(writeUrl, {
-    method: 'PUT',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ range, majorDimension: 'ROWS', values: newAll })
-  });
-  if (!resp.ok) throw new Error('시트 쓰기 실패: ' + resp.status);
-  return resp.json();
-}
-
-async function testConnection() {
-  try {
-    updateStatus('st-gs', 'wait', '테스트 중...');
-    const data = await sheetsGet('삼성!A1:H1');
-    updateStatus('st-gs', 'ok', '연결 성공 ✓');
-    toast('Google Sheets 연결 성공!', 'ok');
-  } catch(e) {
-    updateStatus('st-gs', 'no', '실패');
-    toast(e.message, 'err');
+// ================ LOAD ALL TRANSACTIONS ================
+async function loadAllTransactions(){
+  allTransactions=[];
+  for(const broker of['삼성','키움']){
+    try{
+      const d=await sheetsGet(`${broker}!A:H`);
+      const rows=d.values||[];let curDate='';
+      for(let i=1;i<rows.length;i++){
+        const r=rows[i];
+        if(r[0]&&r[0]!=='')curDate=String(r[0]);
+        allTransactions.push({
+          broker,date:curDate,ticker:r[1]||'',qty:parseFloat(r[2])||0,
+          price:parseFloat(r[3])||0,tax:parseFloat(r[4])||0,total:parseFloat(r[5])||0,
+          split:r[6]||'',seq:r[7]||''
+        });
+      }
+    }catch(e){}
   }
+  // Load initial cash
+  try{const d=await sheetsGet('config!A1:B1');if(d.values&&d.values[0]&&d.values[0][1])initialCash=parseFloat(d.values[0][1])}catch(e){}
 }
 
-// ================ IMPORT TEXT ================
-function parseImportText(text) {
-  const lines = text.trim().split('\n');
-  const groups = []; // {broker, date, rows: [{ticker,qty,price,seq}]}
-  let current = null;
-
-  for (let line of lines) {
-    line = line.trim();
-    if (!line) continue;
-
-    if (line.startsWith('#')) {
-      const m = line.match(/^#\s*(삼성|키움)\s+(\d{6})/);
-      if (m) {
-        current = { broker: m[1], date: m[2], rows: [] };
-        groups.push(current);
-      }
-      continue;
+// ================ PRICE FETCH ================
+async function fetchPrices(tickers){
+  const prices={};
+  const proxies=[
+    u=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u=>`https://corsproxy.io/?${encodeURIComponent(u)}`,
+  ];
+  await Promise.all(tickers.map(async tk=>{
+    const yahooUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?interval=1d&range=5d`;
+    for(const mkProxy of proxies){
+      try{
+        const r=await fetch(mkProxy(yahooUrl),{signal:AbortSignal.timeout(8000)});
+        if(!r.ok)continue;
+        const d=await r.json();
+        const meta=d.chart?.result?.[0]?.meta;
+        if(meta){
+          const prevClose=meta.chartPreviousClose||meta.previousClose||0;
+          const curPrice=meta.regularMarketPrice||0;
+          const chg=prevClose?((curPrice-prevClose)/prevClose*100):0;
+          prices[tk]={current:curPrice,prevClose,chg};
+          break;
+        }
+      }catch(e){continue}
     }
+  }));
+  return prices;
+}
 
-    if (!current) continue;
+// ================ OVERVIEW ================
+async function loadOverview(){
+  if(!SHEET_ID||!SA_KEY){toast('Google Sheets 설정을 완료하세요','err');return}
+  const el=document.getElementById('overviewContent');
+  el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 불러오는 중...</p>';
 
-    const parts = line.split(',').map(s => s.trim());
-    if (parts.length >= 3) {
-      const ticker = parts[0].toUpperCase();
-      const qty = parseInt(parts[1]);
-      const price = parseFloat(parts[2]);
-      const seq = parts[3] ? parseInt(parts[3]) : current.rows.length + 1;
-      if (ticker && !isNaN(qty) && !isNaN(price)) {
-        current.rows.push({ ticker, qty, price, seq });
+  await loadAllTransactions();
+
+  // Sort chronologically (oldest first) for correct FIFO
+  const chronoTx=[...allTransactions].reverse();
+
+  // Compute holdings using FIFO
+  const holdMap={};
+  for(const tx of chronoTx){
+    if(!tx.ticker)continue;
+    if(!holdMap[tx.ticker])holdMap[tx.ticker]={totalQty:0,totalCost:0,realizedPL:0,realizedPLThisYear:0,lots:[],brokers:new Set()};
+    const h=holdMap[tx.ticker];
+    h.brokers.add(tx.broker);
+    if(tx.qty>0){
+      h.lots.push({qty:tx.qty,price:tx.price,date:tx.date});
+      h.totalQty+=tx.qty;
+      h.totalCost+=tx.qty*tx.price+tx.tax;
+    }else{
+      let sellQty=Math.abs(tx.qty);
+      const sellPrice=tx.price;
+      const sellTax=tx.tax;
+      let costBasis=0;
+      while(sellQty>0&&h.lots.length>0){
+        const lot=h.lots[0];
+        const used=Math.min(lot.qty,sellQty);
+        costBasis+=used*lot.price;
+        lot.qty-=used;
+        sellQty-=used;
+        if(lot.qty<=0)h.lots.shift();
       }
+      const pl=Math.abs(tx.qty)*sellPrice-costBasis-sellTax;
+      h.realizedPL+=pl;
+      if(tx.date.startsWith('26'))h.realizedPLThisYear+=pl;
+      h.totalQty-=Math.abs(tx.qty);
+      h.totalCost-=costBasis;
     }
+  }
+
+  // Current holdings (qty > 0)
+  const holdings=Object.entries(holdMap).filter(([,h])=>h.totalQty>0).map(([ticker,h])=>({
+    ticker,qty:h.totalQty,avgPrice:h.totalQty>0?h.totalCost/h.totalQty:0,
+    purchasedAmt:h.totalCost,broker:[...h.brokers].join('/')
+  }));
+
+  // Fetch current prices
+  const tickers=holdings.map(h=>h.ticker);
+  const prices=tickers.length>0?await fetchPrices(tickers):{};
+
+  // Compute totals
+  let totalMarketValue=0,totalPurchased=0,totalUnrealizedPL=0;
+  let totalRealizedPL=0,totalRealizedPLThisYear=0;
+  for(const[tk,h]of Object.entries(holdMap)){
+    totalRealizedPL+=h.realizedPL;
+    totalRealizedPLThisYear+=h.realizedPLThisYear;
+  }
+  for(const h of holdings){
+    const p=prices[h.ticker];
+    h.currentPrice=p?p.current:0;
+    h.chg=p?p.chg:0;
+    h.marketValue=h.qty*h.currentPrice;
+    h.unrealizedPL=h.marketValue-h.purchasedAmt;
+    totalMarketValue+=h.marketValue;
+    totalPurchased+=h.purchasedAmt;
+    totalUnrealizedPL+=h.unrealizedPL;
+  }
+
+  // Compute cash: initial_cash - sum of all net purchases + sum of all net sales proceeds
+  let cashFlow=0;
+  for(const tx of allTransactions){
+    // total includes tax. Buy: cash goes out. Sell: cash comes in.
+    if(tx.qty>0)cashFlow-=tx.total; // buy: spend
+    else cashFlow+=Math.abs(tx.qty)*tx.price-tx.tax; // sell: receive (price*qty - tax)
+  }
+  const cash=initialCash+cashFlow;
+  const totalEarning=cash+totalMarketValue-initialCash;
+
+  // Sort holdings by market value descending
+  holdings.sort((a,b)=>b.marketValue-a.marketValue);
+
+  // Render
+  let html='';
+
+  // Summary cards
+  html+=`<div class="summary-grid">`;
+  html+=sumCard('💵 Cash',fmtUSD(cash),'');
+  html+=sumCard('📈 Market Value',fmtUSD(totalMarketValue),`매입: ${fmtUSD(totalPurchased)}`);
+  html+=sumCard('💰 Total Earning',fmtUSD(totalEarning),
+    `${initialCash>0?((totalEarning/initialCash*100).toFixed(1)+'%'):''}`,totalEarning>=0?'up':'dn');
+  html+=sumCard('📊 Realized P/L',fmtUSD(totalRealizedPL),
+    `올해: ${fmtUSD(totalRealizedPLThisYear)}`,totalRealizedPL>=0?'up':'dn');
+  html+=`</div>`;
+
+  // Holdings
+  if(holdings.length===0){
+    html+='<p style="color:var(--text2);text-align:center;padding:24px">보유 종목이 없습니다</p>';
+  }else{
+    html+=`<div style="font-size:13px;font-weight:600;margin-bottom:8px">보유 종목 (${holdings.length})</div>`;
+    for(const h of holdings){
+      const chgCls=h.chg>0?'c-up':h.chg<0?'c-dn':'c-flat';
+      const plCls=h.unrealizedPL>=0?'c-up':'c-dn';
+      const realPL=holdMap[h.ticker].realizedPL;
+      const realCls=realPL>=0?'c-up':'c-dn';
+      html+=`<div class="hold-row" onclick="showHistory('${h.ticker}')">
+        <div class="hold-top">
+          <span class="hold-ticker">${h.ticker}</span>
+          <span class="hold-qty">${h.qty}주 · ${h.broker}</span>
+        </div>
+        <div class="hold-grid">
+          <div><div class="lbl">평균 / 현재가</div><div class="val">${h.avgPrice.toFixed(2)} / ${h.currentPrice.toFixed(2)}</div></div>
+          <div><div class="lbl">전일 대비</div><div class="val ${chgCls}">${h.chg>=0?'+':''}${h.chg.toFixed(2)}%</div></div>
+          <div><div class="lbl">평가손익</div><div class="val ${plCls}">${fmtUSD(h.unrealizedPL)}</div></div>
+          <div><div class="lbl">실현손익</div><div class="val ${realCls}">${fmtUSD(realPL)}</div></div>
+          <div><div class="lbl">평가금액</div><div class="val">${fmtUSD(h.marketValue)}</div></div>
+          <div><div class="lbl">매입금액</div><div class="val">${fmtUSD(h.purchasedAmt)}</div></div>
+          <div><div class="lbl">P/E (fwd)</div><div class="val" style="color:var(--text3)">—</div></div>
+          <div><div class="lbl">EPS est Δ1w</div><div class="val" style="color:var(--text3)">—</div></div>
+        </div>
+      </div>`;
+    }
+  }
+
+  el.innerHTML=html;
+}
+
+function sumCard(label,value,sub,cls=''){
+  return`<div class="sum-card"><div class="label">${label}</div><div class="value ${cls}">${value}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`;
+}
+
+// ================ TICKER HISTORY ================
+function showHistory(ticker){
+  const el=document.getElementById('historyContent');
+  const txs=allTransactions.filter(t=>t.ticker===ticker);
+
+  // Compute summary for this ticker
+  let totalBought=0,totalSold=0,totalBuyCost=0,totalSellProceeds=0;
+  for(const tx of txs){
+    if(tx.qty>0){totalBought+=tx.qty;totalBuyCost+=tx.qty*tx.price+tx.tax}
+    else{totalSold+=Math.abs(tx.qty);totalSellProceeds+=Math.abs(tx.qty)*tx.price-tx.tax}
+  }
+  const netQty=totalBought-totalSold;
+
+  let html=`<div style="font-size:16px;font-weight:700;margin-bottom:4px;font-family:'JetBrains Mono',monospace;color:var(--accent)">${ticker}</div>`;
+  html+=`<div style="font-size:12px;color:var(--text2);margin-bottom:12px">총 매수 ${totalBought}주 / 매도 ${totalSold}주 / 보유 ${netQty}주 · 전체 ${txs.length}건</div>`;
+
+  // Group by date (newest first, same as sheet order)
+  const dateGroups={};
+  for(const tx of txs){
+    if(!dateGroups[tx.date])dateGroups[tx.date]=[];
+    dateGroups[tx.date].push(tx);
+  }
+
+  const dates=Object.keys(dateGroups);
+  for(const date of dates){
+    const dTxs=dateGroups[date];
+    html+=`<div class="dg"><span class="l">${fmtDate(date)}</span><span class="r">${dTxs.length}건</span></div>`;
+    html+=`<div class="tbl-wrap"><table class="t"><tr><th>증권사</th><th>매매</th><th>수량</th><th>단가</th><th>tax</th><th>total</th></tr>`;
+    for(const tx of dTxs){
+      const cls=tx.qty>0?'c-buy':'c-sell';
+      const side=tx.qty>0?'매수':'매도';
+      const bk=tx.broker==='삼성'?'🔵':'🔴';
+      html+=`<tr><td>${bk} ${tx.broker}</td><td class="${cls}">${side}</td><td class="${cls}">${tx.qty>0?'+':''}${tx.qty}</td><td>${tx.price.toFixed(4)}</td><td>${tx.tax.toFixed(2)}</td><td>${tx.total.toFixed(2)}</td></tr>`;
+    }
+    html+=`</table></div>`;
+  }
+
+  el.innerHTML=html;
+  document.getElementById('navHistory').style.display='';
+  switchTab('history');
+}
+
+// ================ IMPORT ================
+function parseImportText(text){
+  const lines=text.trim().split('\n');const groups=[];let cur=null;
+  for(let line of lines){
+    line=line.trim();if(!line)continue;
+    if(line.startsWith('#')){const m=line.match(/^#\s*(삼성|키움)\s+(\d{6})/);if(m){cur={broker:m[1],date:m[2],rows:[]};groups.push(cur)}continue}
+    if(!cur)continue;
+    const p=line.split(',').map(s=>s.trim());
+    if(p.length>=3){const tk=p[0].toUpperCase(),qty=parseInt(p[1]),pr=parseFloat(p[2]),seq=p[3]?parseInt(p[3]):cur.rows.length+1;
+      if(tk&&!isNaN(qty)&&!isNaN(pr))cur.rows.push({ticker:tk,qty,price:pr,seq})}
   }
   return groups;
 }
-
-function previewImport() {
-  const text = document.getElementById('impText').value;
-  const groups = parseImportText(text);
-  const el = document.getElementById('impPreview');
-
-  if (groups.length === 0) {
-    el.innerHTML = '<p style="color:var(--sell);font-size:12px">파싱된 데이터가 없습니다. 형식을 확인하세요.</p>';
-    return;
-  }
-
-  let html = '';
-  for (const g of groups) {
-    const rate = TAX[g.broker];
-    const bClass = g.broker === '삼성' ? 'ss' : 'kw';
-    const buys = g.rows.filter(r => r.qty > 0).length;
-    const sells = g.rows.filter(r => r.qty < 0).length;
-
-    html += `<div class="dg"><span class="l" style="color:var(--${g.broker==='삼성'?'samsung':'kiwoom'})">${g.broker} ${fmtDate(g.date)}</span><span class="r">매수 ${buys} / 매도 ${sells} / ${g.rows.length}건</span></div>`;
-    html += `<div class="tbl-wrap"><table class="t"><tr><th>seq</th><th>종목</th><th>수량</th><th>단가</th><th>tax</th><th>total</th></tr>`;
-
-    for (const r of g.rows) {
-      const tax = rd(Math.abs(r.qty) * r.price * rate);
-      const total = rd(Math.abs(r.qty) * r.price + tax);
-      const cls = r.qty > 0 ? 'c-buy' : 'c-sell';
-      html += `<tr><td>${r.seq}</td><td><b>${r.ticker}</b></td><td class="${cls}">${r.qty > 0 ? '+' : ''}${r.qty}</td><td>${r.price.toFixed(4)}</td><td>${tax.toFixed(2)}</td><td>${total.toFixed(2)}</td></tr>`;
+function previewImport(){
+  const groups=parseImportText(document.getElementById('impText').value);
+  const el=document.getElementById('impPreview');
+  if(!groups.length){el.innerHTML='<p style="color:var(--sell);font-size:12px">파싱 실패. 형식을 확인하세요.</p>';return}
+  let html='';
+  for(const g of groups){
+    const rate=TAX[g.broker];
+    html+=`<div class="dg"><span class="l" style="color:var(--${g.broker==='삼성'?'samsung':'kiwoom'})">${g.broker} ${fmtDate(g.date)}</span><span class="r">${g.rows.length}건</span></div>`;
+    html+=`<div class="tbl-wrap"><table class="t"><tr><th>seq</th><th>종목</th><th>수량</th><th>단가</th><th>tax</th><th>total</th></tr>`;
+    for(const r of g.rows){
+      const tax=rd(Math.abs(r.qty)*r.price*rate),total=rd(Math.abs(r.qty)*r.price+tax),cls=r.qty>0?'c-buy':'c-sell';
+      html+=`<tr><td>${r.seq}</td><td><b>${r.ticker}</b></td><td class="${cls}">${r.qty>0?'+':''}${r.qty}</td><td>${r.price.toFixed(4)}</td><td>${tax.toFixed(2)}</td><td>${total.toFixed(2)}</td></tr>`;
     }
-    html += '</table></div>';
+    html+='</table></div>';
   }
-
-  el.innerHTML = html;
+  el.innerHTML=html;
+}
+async function doImport(){
+  const groups=parseImportText(document.getElementById('impText').value);
+  if(!groups.length){toast('파싱된 데이터 없음','err');return}
+  if(!SHEET_ID||!SA_KEY){toast('Sheets 설정 필요','err');return}
+  const logEl=document.getElementById('impLog');logEl.innerHTML='';
+  for(const g of groups){
+    const rate=TAX[g.broker];
+    const rows=g.rows.map((r,i)=>{const tax=rd(Math.abs(r.qty)*r.price*rate),total=rd(Math.abs(r.qty)*r.price+tax);
+      return[i===0?parseInt(g.date):'',r.ticker,r.qty,r.price,tax,total,'',r.seq]});
+    try{await sheetsInsertAtTop(g.broker,rows);addLog(logEl,`✅ ${g.broker} ${fmtDate(g.date)}: ${rows.length}건 저장`,'ok')}
+    catch(e){addLog(logEl,`❌ ${g.broker} 실패: ${e.message}`,'err')}
+  }
+  toast('가져오기 완료!','ok');
 }
 
-async function doImport() {
-  const text = document.getElementById('impText').value;
-  const groups = parseImportText(text);
-
-  if (groups.length === 0) { toast('파싱된 데이터가 없습니다', 'err'); return; }
-  if (!SHEET_ID || !SA_KEY) { toast('Google Sheets 설정을 완료하세요', 'err'); return; }
-
-  const logEl = document.getElementById('impLog');
-  logEl.innerHTML = '';
-
-  for (const g of groups) {
-    const rate = TAX[g.broker];
-    const sheetRows = g.rows.map((r, i) => {
-      const tax = rd(Math.abs(r.qty) * r.price * rate);
-      const total = rd(Math.abs(r.qty) * r.price + tax);
-      return [i === 0 ? parseInt(g.date) : '', r.ticker, r.qty, r.price, tax, total, '', r.seq];
-    });
-
-    try {
-      await sheetsInsertAtTop(g.broker, sheetRows);
-      addLog(logEl, `✅ ${g.broker} ${fmtDate(g.date)}: ${sheetRows.length}건 저장 완료`, 'ok');
-    } catch(e) {
-      addLog(logEl, `❌ ${g.broker} 저장 실패: ${e.message}`, 'err');
-    }
-  }
-
-  updateBadge();
-  toast('가져오기 완료!', 'ok');
-}
-
-// ================ FILE HANDLING ================
-function handleFiles(fileList) {
-  for (const f of fileList) {
-    if (!f.type.startsWith('image/')) continue;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      files.push({ file: f, dataUrl: ev.target.result, broker: null });
-      renderThumbs();
-      document.getElementById('extBtn').disabled = false;
-    };
-    reader.readAsDataURL(f);
-  }
-}
-
-function renderThumbs() {
-  document.getElementById('thumbs').innerHTML = files.map((f, i) => `
-    <div class="thumb">
-      <img src="${f.dataUrl}"/>
-      <button class="x" onclick="files.splice(${i},1);renderThumbs();document.getElementById('extBtn').disabled=!files.length">×</button>
-      ${f.broker ? `<span class="tag ${f.broker==='삼성'?'ss':'kw'}">${f.broker}</span>` : ''}
-    </div>`).join('');
-}
-
-// ================ AI EXTRACTION ================
-async function doExtract() {
-  if (!CLAUDE_KEY) { toast('Claude API Key를 설정하세요', 'err'); return; }
-  if (!SHEET_ID || !SA_KEY) { toast('Google Sheets 설정을 완료하세요', 'err'); return; }
-
-  const btn = document.getElementById('extBtn');
-  btn.disabled = true; btn.textContent = '⏳ 추출 중...';
-  const prog = document.getElementById('extProg'); prog.style.display = 'block';
-  const logEl = document.getElementById('extLog'); logEl.innerHTML = '';
-  const bar = document.getElementById('extBar'); bar.style.width = '0';
-
-  // Collect all extracted transactions grouped by broker+date
-  const allTx = {};
-  let done = 0;
-
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
-    addLog(logEl, `처리 중 (${i+1}/${files.length}): ${f.file.name}...`);
-
-    try {
-      const base64 = f.dataUrl.split(',')[1];
-      const result = await callClaude(base64, f.file.type || 'image/png');
-      f.broker = result.broker;
-
-      const key = `${result.broker}_${result.date}`;
-      if (!allTx[key]) allTx[key] = { broker: result.broker, date: result.date, items: [] };
-
-      for (const tx of result.transactions) {
-        // Dedup
-        const isDup = allTx[key].items.some(e =>
-          e.ticker === tx.ticker && e.qty === tx.qty && e.price === tx.price &&
-          ((result.broker === '삼성' && e.time && tx.time && e.time === tx.time) ||
-           (result.broker === '키움' && e.order_number && tx.order_number && e.order_number === tx.order_number))
-        );
-        if (!isDup) allTx[key].items.push(tx);
-      }
-
-      addLog(logEl, `✅ ${result.broker} ${result.date}: ${result.transactions.length}건 감지`, 'ok');
-    } catch(e) {
-      addLog(logEl, `❌ ${f.file.name}: ${e.message}`, 'err');
-    }
-    done++;
-    bar.style.width = (done / files.length * 100) + '%';
-  }
-
-  // Write to sheets
-  for (const [key, group] of Object.entries(allTx)) {
-    const { broker, date, items } = group;
-    const rate = TAX[broker];
-
-    // Assign seq by display order
-    const rows = items.map((tx, i) => {
-      const qty = tx.side === 'sell' ? -Math.abs(tx.qty) : Math.abs(tx.qty);
-      const tax = rd(Math.abs(qty) * tx.price * rate);
-      const total = rd(Math.abs(qty) * tx.price + tax);
-      return [i === 0 ? parseInt(date) : '', tx.ticker, qty, tx.price, tax, total, '', i + 1];
-    });
-
-    try {
-      await sheetsInsertAtTop(broker, rows);
-      addLog(logEl, `📝 ${broker} ${date}: ${rows.length}건 저장 완료`, 'ok');
-    } catch(e) {
-      addLog(logEl, `❌ ${broker} 저장 실패: ${e.message}`, 'err');
-    }
-  }
-
-  renderThumbs();
-  btn.textContent = '🚀 AI 추출 → Google Sheets 저장';
-  btn.disabled = !files.length;
-  updateBadge();
-  toast('추출 완료!', 'ok');
-}
-
-async function callClaude(base64, mediaType) {
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': CLAUDE_KEY,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
-      messages: [{ role: 'user', content: [
-        { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-        { type: 'text', text: `Korean stock brokerage screenshot. Extract ALL visible transactions.
-
-Brokerage ID: Dark blue/navy top = "삼성", White/light top = "키움"
-Date format: YYMMDD (e.g. 260212 for 2026-02-12)
-
-For each transaction extract:
-- ticker: stock symbol (e.g. AAPL, not AAPL.OQ)
-- side: "buy" if 매수/정정(매수), "sell" if 매도/정정(매도)
-- qty: executed quantity (체결수량)
-- price: executed price (체결단가)
-- time: order time if visible (주문시간, format HH:MM:SS)
-- order_number: 주문번호 if visible
-
-IMPORTANT: List transactions in EXACT order shown on screen (top to bottom). This order IS the sequence.
-
-Respond ONLY with JSON, no other text:
-{"broker":"삼성","date":"260212","transactions":[{"ticker":"XXX","side":"buy","qty":1,"price":123.45,"time":"22:27:01","order_number":""}]}` }
-      ]}]
-    })
-  });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err.error?.message || `HTTP ${resp.status}`);
-  }
-
-  const data = await resp.json();
-  const text = data.content.map(c => c.text || '').join('');
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error('JSON 파싱 실패');
-  return JSON.parse(m[0]);
-}
-
-// ================ MANUAL ENTRY ================
-async function addManual() {
-  const broker = document.getElementById('mBk').value;
-  const date = document.getElementById('mDt').value.trim();
-  const ticker = document.getElementById('mTk').value.trim().toUpperCase();
-  const side = document.getElementById('mSd').value;
-  const qtyRaw = parseInt(document.getElementById('mQt').value);
-  const price = parseFloat(document.getElementById('mPr').value);
-
-  if (!date || !ticker || !qtyRaw || !price) { toast('모든 항목을 입력하세요', 'err'); return; }
-  if (!SHEET_ID || !SA_KEY) { toast('Google Sheets 설정을 완료하세요', 'err'); return; }
-
-  const qty = side === 'sell' ? -Math.abs(qtyRaw) : Math.abs(qtyRaw);
-  const rate = TAX[broker];
-  const tax = rd(Math.abs(qty) * price * rate);
-  const total = rd(Math.abs(qty) * price + tax);
-
-  // Read existing to determine seq
-  try {
-    const data = await sheetsGet(`${broker}!A:H`);
-    const rows = data.values || [];
-    let seq = 1;
-    // Find if same date exists
-    for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][0]) === date || (rows[i][0] === '' && i > 0)) {
-        // Same date group - find max seq
-        const s = parseInt(rows[i][7]) || 0;
-        if (s >= seq) seq = s + 1;
-        if (rows[i][0] === date) continue;
-        if (rows[i][0] !== '' && rows[i][0] !== date) break;
-      }
-    }
-
-    const row = [parseInt(date), ticker, qty, price, tax, total, '', seq];
-
-    // Check if this date already exists at top
-    const firstDate = rows.length > 1 ? String(rows[1][0]) : '';
-    if (firstDate === date || firstDate === '') {
-      // Append to existing date group (need smarter insertion)
-      // For simplicity, insert at top
-      row[0] = ''; // not first of date
-    }
-
-    await sheetsInsertAtTop(broker, [row]);
-    toast(`${ticker} ${side === 'buy' ? '매수' : '매도'} 저장 완료`, 'ok');
-
-    document.getElementById('mTk').value = '';
-    document.getElementById('mQt').value = '';
-    document.getElementById('mPr').value = '';
-  } catch(e) {
-    toast('저장 실패: ' + e.message, 'err');
-  }
+// ================ MANUAL ================
+async function addManual(){
+  const broker=document.getElementById('mBk').value,date=document.getElementById('mDt').value.trim(),
+    ticker=document.getElementById('mTk').value.trim().toUpperCase(),side=document.getElementById('mSd').value,
+    qtyRaw=parseInt(document.getElementById('mQt').value),price=parseFloat(document.getElementById('mPr').value);
+  if(!date||!ticker||!qtyRaw||!price){toast('모든 항목 입력 필요','err');return}
+  if(!SHEET_ID||!SA_KEY){toast('Sheets 설정 필요','err');return}
+  const qty=side==='sell'?-Math.abs(qtyRaw):Math.abs(qtyRaw);
+  const rate=TAX[broker],tax=rd(Math.abs(qty)*price*rate),total=rd(Math.abs(qty)*price+tax);
+  try{
+    await sheetsInsertAtTop(broker,[[parseInt(date),ticker,qty,price,tax,total,'',1]]);
+    toast(`${ticker} ${side==='buy'?'매수':'매도'} 저장 완료`,'ok');
+    document.getElementById('mTk').value='';document.getElementById('mQt').value='';document.getElementById('mPr').value='';
+  }catch(e){toast('저장 실패: '+e.message,'err')}
 }
 
 // ================ DATA VIEW ================
-async function loadFromSheet() {
-  if (!SHEET_ID || !SA_KEY) { toast('Google Sheets 설정을 완료하세요', 'err'); return; }
-
-  try {
-    const view = document.getElementById('dataView');
-    view.innerHTML = '<p style="color:var(--text2);text-align:center;padding:16px">불러오는 중...</p>';
-
-    let html = '';
-    for (const broker of ['삼성', '키움']) {
-      const data = await sheetsGet(`${broker}!A:H`);
-      const rows = data.values || [];
-      if (rows.length <= 1) continue;
-
-      const bClass = broker === '삼성' ? 'ss' : 'kw';
-      html += `<div class="card bk-card ${bClass}">`;
-      html += `<div class="card-hdr"><span class="ico">${broker === '삼성' ? '🔵' : '🔴'}</span>${broker} (${rows.length - 1}건)</div>`;
-
-      // Group by date
-      let currentDate = '';
-      let dateRows = [];
-
-      for (let i = 1; i < rows.length; i++) {
-        const r = rows[i];
-        if (r[0] && r[0] !== '') currentDate = r[0];
-        dateRows.push({ date: currentDate, row: r });
-      }
-
-      // Get unique dates
-      const dates = [...new Set(dateRows.map(d => d.date))];
-
-      for (const date of dates.slice(0, 20)) { // Show latest 20 dates
-        const drs = dateRows.filter(d => d.date === date);
-        const buys = drs.filter(d => parseFloat(d.row[2]) > 0).length;
-        const sells = drs.filter(d => parseFloat(d.row[2]) < 0).length;
-
-        html += `<div class="dg"><span class="l">${fmtDate(date)}</span><span class="r">매수 ${buys} / 매도 ${sells} / ${drs.length}건</span></div>`;
-        html += `<div class="tbl-wrap"><table class="t"><tr><th>seq</th><th>종목</th><th>수량</th><th>단가</th><th>tax</th><th>total</th></tr>`;
-
-        for (const d of drs) {
-          const r = d.row;
-          const qty = parseFloat(r[2]) || 0;
-          const cls = qty > 0 ? 'c-buy' : 'c-sell';
-          html += `<tr><td>${r[7]||''}</td><td><b>${r[1]||''}</b></td><td class="${cls}">${qty > 0 ? '+' : ''}${qty}</td><td>${parseFloat(r[3])?.toFixed(4)||''}</td><td>${r[4]||''}</td><td>${r[5]||''}</td></tr>`;
-        }
-        html += '</table></div>';
-      }
-
-      if (dates.length > 20) html += `<p style="color:var(--text2);font-size:11px;margin-top:8px">... 외 ${dates.length - 20}일 더</p>`;
-      html += '</div>';
+async function loadFromSheet(){
+  if(!SHEET_ID||!SA_KEY){toast('Sheets 설정 필요','err');return}
+  const view=document.getElementById('dataView');
+  view.innerHTML='<p style="color:var(--text2);text-align:center;padding:16px"><span class="spinner"></span> 불러오는 중...</p>';
+  await loadAllTransactions();
+  let html='';
+  for(const broker of['삼성','키움']){
+    const txs=allTransactions.filter(t=>t.broker===broker);
+    if(!txs.length)continue;
+    html+=`<div class="card bk-card ${broker==='삼성'?'ss':'kw'}">`;
+    html+=`<div class="card-hdr"><span class="ico">${broker==='삼성'?'🔵':'🔴'}</span>${broker} (${txs.length}건)</div>`;
+    const dates=[...new Set(txs.map(t=>t.date))];
+    for(const date of dates.slice(0,20)){
+      const dTxs=txs.filter(t=>t.date===date);
+      const buys=dTxs.filter(t=>t.qty>0).length,sells=dTxs.filter(t=>t.qty<0).length;
+      html+=`<div class="dg"><span class="l">${fmtDate(date)}</span><span class="r">매수${buys}/매도${sells}/${dTxs.length}건</span></div>`;
+      html+=`<div class="tbl-wrap"><table class="t"><tr><th>seq</th><th>종목</th><th>수량</th><th>단가</th><th>tax</th><th>total</th></tr>`;
+      for(const t of dTxs){const cls=t.qty>0?'c-buy':'c-sell';
+        html+=`<tr><td>${t.seq}</td><td><b>${t.ticker}</b></td><td class="${cls}">${t.qty>0?'+':''}${t.qty}</td><td>${t.price.toFixed(4)}</td><td>${t.tax.toFixed(2)}</td><td>${t.total.toFixed(2)}</td></tr>`}
+      html+='</table></div>';
     }
-
-    view.innerHTML = html || '<p style="color:var(--text2);text-align:center;padding:32px">시트에 데이터가 없습니다</p>';
-    updateBadge();
-  } catch(e) {
-    toast('불러오기 실패: ' + e.message, 'err');
+    if(dates.length>20)html+=`<p style="color:var(--text2);font-size:11px;margin-top:8px">...외 ${dates.length-20}일</p>`;
+    html+='</div>';
   }
+  view.innerHTML=html||'<p style="color:var(--text2);text-align:center;padding:32px">데이터 없음</p>';
 }
-
-async function downloadXlsx() {
-  if (!SHEET_ID || !SA_KEY) { toast('Google Sheets 설정을 완료하세요', 'err'); return; }
-
-  try {
-    const wb = XLSX.utils.book_new();
-    for (const broker of ['삼성', '키움']) {
-      const data = await sheetsGet(`${broker}!A:H`);
-      const rows = data.values || [];
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      XLSX.utils.book_append_sheet(wb, ws, broker);
-    }
-    const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
-    XLSX.writeFile(wb, `미국주식내역_${today}.xlsx`);
-    toast('xlsx 다운로드 완료', 'ok');
-  } catch(e) { toast('다운로드 실패: ' + e.message, 'err'); }
-}
-
-function clearLocal() {
-  if (!confirm('로컬 저장 데이터를 모두 삭제하시겠습니까?\n(Google Sheet 데이터는 유지됩니다)')) return;
-  localStorage.clear();
-  SA_KEY = null; SHEET_ID = ''; CLAUDE_KEY = ''; gToken = null;
-  document.getElementById('saKey').value = '';
-  document.getElementById('sheetId').value = '';
-  document.getElementById('claudeKey').value = '';
-  updateStatus('st-gs', 'no', '미연결');
-  updateStatus('st-ai', 'no', '미연결');
-  updateStatus('st-sid', 'no', '없음');
-  toast('로컬 데이터 초기화 완료', 'ok');
+async function downloadXlsx(){
+  if(!SHEET_ID||!SA_KEY){toast('Sheets 설정 필요','err');return}
+  try{const wb=XLSX.utils.book_new();
+    for(const b of['삼성','키움']){const d=await sheetsGet(`${b}!A:H`);const ws=XLSX.utils.aoa_to_sheet(d.values||[]);XLSX.utils.book_append_sheet(wb,ws,b)}
+    XLSX.writeFile(wb,`미국주식내역_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.xlsx`);toast('다운로드 완료','ok');
+  }catch(e){toast('실패: '+e.message,'err')}
 }
 
 // ================ HELPERS ================
-function rd(n) { return Math.round(n * 100) / 100; }
-function fmtDate(d) {
-  d = String(d);
-  if (d.length === 6) return `20${d.slice(0,2)}-${d.slice(2,4)}-${d.slice(4,6)}`;
-  return d;
-}
-function addLog(el, msg, cls='') {
-  const d = document.createElement('div');
-  d.className = cls;
-  d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-  el.appendChild(d);
-  el.scrollTop = el.scrollHeight;
-}
-function toast(msg, type='ok') {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.className = `toast ${type} show`;
-  setTimeout(() => el.classList.remove('show'), 2800);
-}
-async function updateBadge() {
-  try {
-    let total = 0;
-    for (const b of ['삼성', '키움']) {
-      const d = await sheetsGet(`${b}!A:A`);
-      total += (d.values?.length || 1) - 1;
-    }
-    const badge = document.getElementById('badge');
-    if (total > 0) { badge.style.display = ''; badge.textContent = total; }
-    else badge.style.display = 'none';
-  } catch(e) {}
-}
+function rd(n){return Math.round(n*100)/100}
+function fmtDate(d){d=String(d);return d.length===6?`20${d.slice(0,2)}-${d.slice(2,4)}-${d.slice(4,6)}`:d}
+function fmtUSD(n){return(n>=0?'':'-')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+function addLog(el,msg,cls=''){const d=document.createElement('div');d.className=cls;d.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;el.appendChild(d);el.scrollTop=el.scrollHeight}
+function toast(msg,type='ok'){const el=document.getElementById('toast');el.textContent=msg;el.className=`toast ${type} show`;setTimeout(()=>el.classList.remove('show'),2800)}
 </script>
 </body>
 </html>
