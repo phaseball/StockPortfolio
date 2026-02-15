@@ -100,21 +100,21 @@ table.t tr:hover td{background:var(--accentBg)}
 .fbtn:hover:not(.on){background:var(--surface2);color:var(--text)}
 
 /* Holdings header - sticky */
-.hold-hdr{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.2fr 1.2fr 1fr;gap:2px;font-size:10px;color:var(--text3);padding:6px 12px;background:var(--bg);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border);margin-bottom:4px}
+.hold-hdr{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.2fr 1.2fr 0.8fr;gap:2px;font-size:10px;color:var(--text3);padding:6px 12px;background:var(--bg);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border);margin-bottom:4px}
 .hold-hdr div{display:flex;flex-direction:column;gap:2px}
-.hold-hdr div:last-child{margin-left:8px}
+.hold-hdr div:last-child{margin-left:16px}
 
 /* Holdings card v2 */
 .hold-row{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
 .hold-row:hover{border-color:var(--accent)}
-.hold-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.hold-top{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.2fr 1.2fr 0.8fr;gap:2px;align-items:center;margin-bottom:6px}
 .hold-ticker{font-size:15px;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace}
-.hold-qty{font-size:12px;color:var(--text2)}
+.hold-qty{font-size:12px;color:var(--text2);text-align:right;margin-left:16px}
 .hold-fiscal{font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace}
-.hold-grid{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.2fr 1.2fr 1fr;gap:2px;font-size:11px}
+.hold-grid{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.2fr 1.2fr 0.8fr;gap:2px;font-size:11px}
 .hold-grid .lbl{color:var(--text3);font-size:10px}
 .hold-grid .val{font-family:'JetBrains Mono',monospace;font-size:12px}
-.hold-grid>div:last-child{margin-left:8px}
+.hold-grid>div:last-child{margin-left:16px}
 
 /* Back button */
 .back-btn{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border:none;background:var(--surface2);color:var(--text2);border-radius:6px;cursor:pointer;font:12px 'Noto Sans KR',sans-serif;margin-bottom:12px}
@@ -131,6 +131,7 @@ table.t tr:hover td{background:var(--accentBg)}
   table.t th,table.t td{padding:5px 5px}
   nav button{padding:8px 10px;font-size:11px}
   .hold-grid,.hold-hdr{grid-template-columns:repeat(3,1fr)}
+  .hold-top{grid-template-columns:1fr 1fr 1fr;}.hold-top span:nth-child(4),.hold-top span:nth-child(5){display:none}
 }
 </style>
 </head>
@@ -1023,9 +1024,6 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   const dash='<span style="color:var(--text3)">—</span>';
 
   const fund=cachedFundamentals[ticker];
-  const fundTk=getFundTicker(ticker);
-  const isLev=fundTk!==ticker&&fundTk!==null;
-  const levTag=isLev?` (${fundTk})`:'';
 
   // Fiscal label for top row (dark gray)
   let fiscalLabel='';
@@ -1047,7 +1045,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         fiscalMonth=moNames[mo]||'';
       }
       const analStr=fund.numAnalystsEps?` (${fund.numAnalystsEps} anal)`:'';
-      fiscalLabel=`${fiscalMonth} ${fund.fwdYear.slice(2)}${analStr}${levTag}`;
+      fiscalLabel=`${fiscalMonth} ${fund.fwdYear.slice(2)}${analStr}`;
     }
 
     // -- Col3: P/E with YoY + Revenue with YoY --
@@ -1081,6 +1079,10 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   return`<div class="hold-row" onclick="showHistory('${ticker}')">
     <div class="hold-top">
       <span class="hold-ticker">${ticker}</span>
+      <span></span>
+      <span class="hold-fiscal">${fiscalLabel}</span>
+      <span></span>
+      <span></span>
       <span class="hold-qty">${qtyStr}</span>
     </div>
     <div class="hold-grid">
@@ -1093,22 +1095,18 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         <div class="val">${fmtUSD(purchasedAmt)}</div>
       </div>
       <div>
-        <div class="val hold-fiscal">${fiscalLabel}</div>
         <div class="val">${peRow}</div>
         <div class="val">${revRow}</div>
       </div>
       <div>
-        <div class="val">&nbsp;</div>
         <div class="val">${epsChg1w}</div>
         <div class="val">${epsChg1m}</div>
       </div>
       <div>
-        <div class="val">&nbsp;</div>
         <div class="val">${targetStr}</div>
         <div class="val">${ratingStr}</div>
       </div>
       <div>
-        <div class="val">&nbsp;</div>
         <div class="val ${realYtdCls}">${fmtUSD(realPLYtd)}</div>
         <div class="val ${realCls}">${fmtUSD(realPL)}</div>
       </div>
