@@ -156,10 +156,13 @@ table.t tr:hover td{background:var(--accentBg)}
         <button class="fbtn" onclick="setFilter('키움',this)">🔴 키움</button>
         <button class="fbtn" onclick="setFilter('all',this)">Total</button>
       </div>
-      <div style="display:flex;gap:4px">
+      <div style="display:flex;gap:4px;align-items:center">
         <button class="btn btn-s btn-sm" onclick="refreshPrices()" title="현재가 업데이트">🔄 Price</button>
         <button class="btn btn-s btn-sm" onclick="refreshFundamentals()" title="P/E, EPS 업데이트">🔄 Fund.</button>
       </div>
+    </div>
+    <div style="text-align:right;font-size:10px;color:var(--text3);margin-bottom:8px;margin-top:-8px">
+      price: <span id="priceInfo">없음</span> · fund: <span id="fundInfo">없음</span>
     </div>
     <div id="overviewContent"><p style="color:var(--text2);text-align:center;padding:32px">🔄 클릭하여 포트폴리오를 불러오세요</p></div>
   </div>
@@ -299,17 +302,46 @@ document.addEventListener('DOMContentLoaded',()=>{
   loadConfig();
   restoreCache();
   updateDataInfo();
+  updatePriceInfo();
+  updateFundInfo();
 });
 
 function updateVerInfo(){
+  // Try to get last-modified from GitHub
+  fetch(window.location.href,{method:'HEAD',cache:'no-cache'}).then(r=>{
+    const lm=r.headers.get('last-modified');
+    if(lm){
+      const d=new Date(lm);
+      const kst=new Date(d.getTime()+9*60*60*1000);
+      const mm=String(kst.getUTCMonth()+1).padStart(2,'0');
+      const dd=String(kst.getUTCDate()).padStart(2,'0');
+      const hh=String(kst.getUTCHours()).padStart(2,'0');
+      const mi=String(kst.getUTCMinutes()).padStart(2,'0');
+      const ss=String(kst.getUTCSeconds()).padStart(2,'0');
+      document.getElementById('verInfo').textContent=`html-${mm}-${dd}-${hh}:${mi}:${ss}`;
+    }else{
+      document.getElementById('verInfo').textContent='html-unknown';
+    }
+  }).catch(()=>{document.getElementById('verInfo').textContent='html-local'});
+}
+
+function updatePriceInfo(){
+  const ts=localStorage.getItem('cache_priceTimestamp');
+  document.getElementById('priceInfo').textContent=ts||'없음';
+}
+function updateFundInfo(){
+  const ts=localStorage.getItem('cache_fundTimestamp');
+  document.getElementById('fundInfo').textContent=ts||'없음';
+}
+function savePriceTimestamp(){
   const now=new Date();
   const kst=new Date(now.getTime()+9*60*60*1000);
   const mm=String(kst.getUTCMonth()+1).padStart(2,'0');
   const dd=String(kst.getUTCDate()).padStart(2,'0');
   const hh=String(kst.getUTCHours()).padStart(2,'0');
   const mi=String(kst.getUTCMinutes()).padStart(2,'0');
-  const ss=String(kst.getUTCSeconds()).padStart(2,'0');
-  document.getElementById('verInfo').textContent=`v${mm}${dd}-${hh}:${mi}:${ss}`;
+  localStorage.setItem('cache_priceTimestamp',`${mm}-${dd} ${hh}:${mi}`);
+  updatePriceInfo();
 }
 
 function switchTab(p){
@@ -391,11 +423,12 @@ function saveCache(){
   }catch(e){}
 }
 function saveDataTimestamp(){
-  // Use latest transaction date from data
   let latest='';
   for(const tx of allTransactions){if(tx.date>latest)latest=tx.date}
-  const ts=latest?fmtDate(latest):'없음';
-  localStorage.setItem(CACHE_KEY_DATA_TS,ts);
+  if(latest&&latest.length===6){
+    const ts=`${latest.slice(2,4)}-${latest.slice(4,6)}`;
+    localStorage.setItem(CACHE_KEY_DATA_TS,ts);
+  }
   updateDataInfo();
 }
 function updateDataInfo(){
@@ -412,11 +445,16 @@ function restoreCache(){
     if(fd){cachedFundamentals=JSON.parse(fd)}
     const ic=localStorage.getItem(CACHE_KEY_CASH);
     if(ic){const c=JSON.parse(ic);initialCashSS=c.ss||0;initialCashKW=c.kw||0}
+    populateInitCashFields();
     if(allTransactions.length>0){
       computeOverview();
       renderOverview();
     }
   }catch(e){}
+}
+function populateInitCashFields(){
+  if(initialCashSS)document.getElementById('initCashSS').value=initialCashSS;
+  if(initialCashKW)document.getElementById('initCashKW').value=initialCashKW;
 }
 
 // Three separate refresh functions
@@ -426,6 +464,7 @@ async function refreshData(){
   await loadAllTransactions();
   saveCache();
   saveDataTimestamp();
+  populateInitCashFields();
   computeOverview();
   renderOverview();
   toast('✅ 데이터 갱신 완료','ok');
@@ -437,6 +476,7 @@ async function refreshPrices(){
   toast('💲 가격 불러오는 중...','ok');
   cachedPrices=await fetchPrices(tickers);
   saveCache();
+  savePriceTimestamp();
   computeOverview();
   renderOverview();
   toast('✅ 가격 갱신 완료','ok');
@@ -492,6 +532,13 @@ async function loadAllTransactions(){
       }
     }
   }catch(e){}
+
+  // Compute actual cash amounts BEFORE split normalization
+  for(const tx of allTransactions){
+    if(tx.qty>0)tx.cashAmt=-(Math.abs(tx.qty)*tx.price+tx.tax); // buy: cash out (negative)
+    else if(tx.qty<0)tx.cashAmt=Math.abs(tx.qty)*tx.price-tx.tax; // sell: cash in (positive)
+    else tx.cashAmt=0;
+  }
 
   // Normalize splits: only adjust rows that have a split marker
   // split=1/2 on a row means THAT row's qty and price are pre-split
@@ -599,8 +646,7 @@ function computeOverview(){
 
   const cashByBroker={삼성:0,키움:0};
   for(const tx of allTransactions){
-    if(tx.qty>0)cashByBroker[tx.broker]-=tx.total;
-    else cashByBroker[tx.broker]+=Math.abs(tx.qty)*tx.price-tx.tax;
+    cashByBroker[tx.broker]+=(tx.cashAmt||0);
   }
 
   cachedOverviewData={holdMap,allHoldings,cashByBroker};
