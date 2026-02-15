@@ -852,6 +852,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   const plPct=purchasedAmt>0?((unrealizedPL/purchasedAmt)*100):0;
   const plPctStr=`(${plPct>=0?'+':''}${plPct.toFixed(1)}%)`;
   function fmtChg(v){
+    v=v||0;
     const tri=v>0?'▲':v<0?'▼':'';
     const cls=v>0?'c-up':v<0?'c-dn':'c-flat';
     return`<span class="${cls}">${tri}${v>=0?'+':''}${v.toFixed(2)}%</span>`;
