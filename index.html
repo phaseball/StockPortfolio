@@ -537,6 +537,9 @@ async function loadAllTransactions(){
   // split=1/2 on a row means THAT row's qty and price are pre-split
   // -> qty *= 2, price /= 2 to convert to post-split terms
   for(const tx of allTransactions){
+    // Store original qty/price for cash calculation before split adjustment
+    tx.origQty=tx.qty;
+    tx.origPrice=tx.price;
     if(tx.split&&tx.split!==''){
       const parts=tx.split.split('/');
       if(parts.length===2){
@@ -639,8 +642,10 @@ function computeOverview(){
 
   const cashByBroker={삼성:0,키움:0};
   for(const tx of allTransactions){
-    if(tx.qty>0)cashByBroker[tx.broker]-=tx.total; // buy: cash out
-    else if(tx.qty<0)cashByBroker[tx.broker]+=tx.total-2*tx.tax; // sell: cash in (total=|qty|*price+tax, so proceeds=total-2*tax)
+    const q=tx.origQty!==undefined?tx.origQty:tx.qty;
+    const p=tx.origPrice!==undefined?tx.origPrice:tx.price;
+    if(q>0)cashByBroker[tx.broker]-=(Math.abs(q)*p+tx.tax);  // buy: cash out
+    else if(q<0)cashByBroker[tx.broker]+=(Math.abs(q)*p-tx.tax); // sell: cash in
   }
 
   cachedOverviewData={holdMap,allHoldings,cashByBroker};
@@ -700,20 +705,44 @@ function renderOverview(){
   let html='';
 
   // Summary cards
-  const mktPct=totalPurchased>0?((totalMarketValue-totalPurchased)/totalPurchased*100):0;
-  const mktPctCls=mktPct>=0?'c-up':'c-dn';
-  const earnPct=initCash>0?((totalEarning/initCash*100)):0;
-  const earnPctCls=totalEarning>=0?'up':'dn';
-  const realPctCls=totalRealizedPL>=0?'up':'dn';
+  const valueDiff=totalMarketValue-totalPurchased;
+  const valueDiffPct=totalPurchased>0?((valueDiff/totalPurchased)*100):0;
+  const vdCls=valueDiff>=0?'up':'dn';
+  const totalAsset=cash+totalMarketValue;
+  const earnPct=initCash>0?((totalEarning/initCash)*100):0;
+  const earnCls=totalEarning>=0?'up':'dn';
+  const realCls=totalRealizedPL>=0?'up':'dn';
 
   html+=`<div class="summary-grid">`;
+
+  // Top-left: Value Difference
+  html+=`<div class="sum-card">
+    <div class="label">📈 평가손익 (${valueDiffPct>=0?'+':''}${valueDiffPct.toFixed(1)}%)</div>
+    <div class="value ${vdCls}">${fmtUSD(valueDiff)}</div>
+    <div class="sub">market ${fmtUSD(totalMarketValue)}</div>
+    <div class="sub">purch ${fmtUSD(totalPurchased)}</div>
+  </div>`;
+
+  // Top-right: Cash
   html+=sumCard('💵 Cash',fmtUSD(cash),'');
-  html+=sumCard2('📈 Market Value',fmtUSD(totalMarketValue),
-    `<span class="${mktPctCls}">(${mktPct>=0?'+':''}${mktPct.toFixed(1)}%)</span> 매입 ${fmtUSD(totalPurchased)}`);
-  html+=sumCard2('💰 Total Earning',fmtUSD(totalEarning),
-    `<span>(${earnPct>=0?'+':''}${earnPct.toFixed(1)}%)</span>`,earnPctCls);
-  html+=sumCard2('📊 Realized P/L (total)',fmtUSD(totalRealizedPL),
-    `YTD ${fmtUSD(totalRealizedPLThisYear)}`,realPctCls);
+
+  // Bottom-left: Total Earning
+  html+=`<div class="sum-card">
+    <div class="label">💰 Total Earning (${earnPct>=0?'+':''}${earnPct.toFixed(1)}%)</div>
+    <div class="value ${earnCls}">${fmtUSD(totalEarning)}</div>
+    <div class="sub">asset ${fmtUSD(totalAsset)}</div>
+    <div class="sub">initial ${fmtUSD(initCash)}</div>
+  </div>`;
+
+  // Bottom-right: Realized P/L
+  html+=`<div class="sum-card">
+    <div class="label">📊 Realized P/L</div>
+    <div style="display:flex;align-items:baseline;gap:16px">
+      <div><div class="sub">total</div><div class="value ${realCls}">${fmtUSD(totalRealizedPL)}</div></div>
+      <div><div class="sub">YTD</div><div class="value ${realCls}" style="font-size:16px">${fmtUSD(totalRealizedPLThisYear)}</div></div>
+    </div>
+  </div>`;
+
   html+=`</div>`;
 
   // Holdings
