@@ -1002,10 +1002,10 @@ function holdingsHeader(){
   return`<div class="hold-hdr">
     <div><span>평균 / 현재가 (전일대비; 전주대비)</span><span>평가손익</span></div>
     <div><span>평가금액</span><span>매입금액</span></div>
+    <div><span>Fiscal · P/E fwd (YoY%)</span><span>Revenue fwd (YoY%)</span></div>
+    <div><span>EPS est. chg 1w</span><span>EPS est. chg 1m</span></div>
+    <div><span>Target (gap%)</span><span>Rating buy/hold/sell</span></div>
     <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
-    <div><span>P/E 12m fwd</span><span>EPS est. chg (1w/1m)</span></div>
-    <div><span>EPS 12m YoY%</span><span>Rev 12m YoY%</span></div>
-    <div><span>Target (% gap)</span><span>Grade consensus</span></div>
   </div>`;
 }
 
@@ -1020,55 +1020,71 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   }
   const dash='<span style="color:var(--text3)">—</span>';
 
-  // Fundamentals
   const fund=cachedFundamentals[ticker];
   const fundTk=getFundTicker(ticker);
   const isLev=fundTk!==ticker&&fundTk!==null;
   const levTag=isLev?` <span style="font-size:9px;color:var(--text3)">(${fundTk})</span>`:'';
 
-  // Col4: P/E 12m fwd + EPS est change
-  let peStr=dash, epsChgStr=dash;
-  // Col5: EPS 12m YoY% + Rev 12m YoY%
-  let epsYoyStr=dash, revYoyStr=dash;
-  // Col6: Target + Grade
-  let targetStr=dash, gradeStr=dash;
+  // Col3: Fiscal + P/E + Revenue
+  let fiscalStr=dash, peStr=dash, revStr=dash;
+  // Col4: EPS est change 1w / 1m
+  let epsChg1w=dash, epsChg1m=dash;
+  // Col5: Target + Rating
+  let targetStr=dash, ratingStr=dash;
 
   if(fund){
-    // -- Col4: P/E forward (fiscal year) --
+    // -- Col3: Fiscal month, P/E, Revenue --
+    if(fund.fwdYear){
+      // Extract month from annual date (e.g. "2026-12-27" → "Dec 26")
+      const annEntry=(fund.annual||[]).find(e=>e.date&&e.date.startsWith(fund.fwdYear));
+      let fiscalMonth='';
+      if(annEntry&&annEntry.date){
+        const mo=parseInt(annEntry.date.slice(5,7));
+        const moNames=['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        fiscalMonth=moNames[mo]||'';
+      }
+      fiscalStr=`${fiscalMonth} ${fund.fwdYear.slice(2)}${levTag}`;
+    }
     if(fund.pe12m!=null){
-      const yrLabel=fund.fwdYear?`FY${fund.fwdYear.slice(2)}`:'fwd';
-      peStr=`${fund.pe12m.toFixed(1)} <span style="font-size:9px;color:var(--text3)">${yrLabel}</span>${levTag}`;
+      let peExtra='';
+      if(fund.epsYoy12m!=null){
+        const cls=fund.epsYoy12m>=0?'c-up':'c-dn';
+        peExtra=` <span class="${cls}" style="font-size:10px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%Y)</span>`;
+      }
+      let analStr='';
+      if(fund.numAnalystsEps)analStr=` <span style="font-size:9px;color:var(--text3)">(${fund.numAnalystsEps} anal)</span>`;
+      peStr=`P/E ${fund.pe12m.toFixed(1)}${peExtra}${analStr}`;
     }
-    // EPS estimate change: placeholder until we have history
-    epsChgStr=`<span style="color:var(--text3);font-size:10px">tracking...</span>`;
+    if(fund.revFwd!=null){
+      // Format revenue in billions
+      const revB=(fund.revFwd/1e9).toFixed(1);
+      let revExtra='';
+      if(fund.revYoy12m!=null){
+        const cls=fund.revYoy12m>=0?'c-up':'c-dn';
+        revExtra=` <span class="${cls}" style="font-size:10px">(${fund.revYoy12m>=0?'+':''}${fund.revYoy12m.toFixed(0)}%)</span>`;
+      }
+      let analStr='';
+      if(fund.numAnalystsRev)analStr=` <span style="font-size:9px;color:var(--text3)">(${fund.numAnalystsRev} anal)</span>`;
+      revStr=`Rev $${revB}B${revExtra}${analStr}`;
+    }
 
-    // -- Col5: EPS YoY% & Rev YoY% --
-    if(fund.epsYoy12m!=null){
-      const cls=fund.epsYoy12m>=0?'c-up':'c-dn';
-      epsYoyStr=`<span class="${cls}">${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(1)}%</span>`;
-      if(fund.numAnalystsEps)epsYoyStr+=` <span style="font-size:9px;color:var(--text3)">(${fund.numAnalystsEps})</span>`;
-    }
-    if(fund.revYoy12m!=null){
-      const cls=fund.revYoy12m>=0?'c-up':'c-dn';
-      revYoyStr=`<span class="${cls}">${fund.revYoy12m>=0?'+':''}${fund.revYoy12m.toFixed(1)}%</span>`;
-      if(fund.numAnalystsRev)revYoyStr+=` <span style="font-size:9px;color:var(--text3)">(${fund.numAnalystsRev})</span>`;
-    }
+    // -- Col4: EPS estimate changes (need historical tracking) --
+    epsChg1w=`<span style="color:var(--text3);font-size:10px">tracking...</span>`;
+    epsChg1m=`<span style="color:var(--text3);font-size:10px">tracking...</span>`;
 
-    // -- Col6: Price target & Grade --
+    // -- Col5: Target price + Rating --
     if(fund.targetPrice!=null&&fund.price>0){
       const gap=((fund.targetPrice-fund.price)/fund.price*100);
-      // Red if upside (good), blue if downside (bad)
       const tCls=gap>=0?'c-up':'c-dn';
       targetStr=`<span class="${tCls}">$${fund.targetPrice.toFixed(0)} (${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`;
     }
-    const totalGrades=(fund.strongBuy||0)+(fund.buy||0)+(fund.hold||0)+(fund.sell||0)+(fund.strongSell||0);
-    if(totalGrades>0){
-      const buyN=(fund.strongBuy||0)+(fund.buy||0);
-      const holdN=fund.hold||0;
-      const sellN=(fund.sell||0)+(fund.strongSell||0);
-      const gCls=buyN>holdN+sellN?'c-up':sellN>holdN+buyN?'c-dn':'c-flat';
-      const gLabel=fund.consensus||(buyN>holdN+sellN?'Buy':sellN>holdN+buyN?'Sell':'Hold');
-      gradeStr=`<span class="${gCls}" style="font-weight:600">${gLabel}</span> <span style="font-size:9px;color:var(--text3)">${buyN}/${holdN}/${sellN}</span>`;
+    const buyN=(fund.strongBuy||0)+(fund.buy||0);
+    const holdN=fund.hold||0;
+    const sellN=(fund.sell||0)+(fund.strongSell||0);
+    const totalG=buyN+holdN+sellN;
+    if(totalG>0){
+      // Format: buy/hold/sell with change placeholders
+      ratingStr=`<span class="c-up">${buyN}(-)</span>/<span>${holdN}(-)</span>/<span class="c-dn">${sellN}(-)</span>`;
     }
   }
 
@@ -1087,20 +1103,21 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         <div class="val">${fmtUSD(purchasedAmt)}</div>
       </div>
       <div>
-        <div class="val ${realYtdCls}">${fmtUSD(realPLYtd)}</div>
-        <div class="val ${realCls}">${fmtUSD(realPL)}</div>
-      </div>
-      <div>
+        <div class="val">${fiscalStr}</div>
         <div class="val">${peStr}</div>
-        <div class="val">${epsChgStr}</div>
+        <div class="val">${revStr}</div>
       </div>
       <div>
-        <div class="val">${epsYoyStr}</div>
-        <div class="val">${revYoyStr}</div>
+        <div class="val">${epsChg1w}</div>
+        <div class="val">${epsChg1m}</div>
       </div>
       <div>
         <div class="val">${targetStr}</div>
-        <div class="val">${gradeStr}</div>
+        <div class="val">${ratingStr}</div>
+      </div>
+      <div>
+        <div class="val ${realYtdCls}">${fmtUSD(realPLYtd)}</div>
+        <div class="val ${realCls}">${fmtUSD(realPL)}</div>
       </div>
     </div>
   </div>`;
