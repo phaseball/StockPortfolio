@@ -93,8 +93,14 @@ table.t tr:hover td{background:var(--accentBg)}
 .sum-card .sub{font-size:11px;color:var(--text2);margin-top:2px;font-family:'JetBrains Mono',monospace}
 .sum-card .value.up{color:var(--buy)}.sum-card .value.dn{color:var(--sell)}
 
-/* Holdings table */
-.hold-row{display:grid;grid-template-columns:1fr;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
+/* Filter buttons */
+.filter-btns{display:flex;gap:4px}
+.fbtn{padding:7px 14px;border:1px solid var(--border);background:none;color:var(--text2);border-radius:8px;cursor:pointer;font:500 12px/1 'Noto Sans KR',sans-serif;transition:all .15s}
+.fbtn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.fbtn:hover:not(.on){background:var(--surface2);color:var(--text)}
+
+/* Holdings card v2 */
+.hold-row{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
 .hold-row:hover{border-color:var(--accent)}
 .hold-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 .hold-ticker{font-size:15px;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace}
@@ -140,7 +146,11 @@ table.t tr:hover td{background:var(--accentBg)}
   <!-- ==================== OVERVIEW ==================== -->
   <div id="p-overview" class="panel on">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <span style="font-size:14px;font-weight:600">Portfolio Overview</span>
+      <div class="filter-btns">
+        <button class="fbtn on" onclick="setFilter('all',this)">Total</button>
+        <button class="fbtn" onclick="setFilter('삼성',this)">🔵 삼성</button>
+        <button class="fbtn" onclick="setFilter('키움',this)">🔴 키움</button>
+      </div>
       <button class="btn btn-s btn-sm" onclick="loadOverview()">🔄 새로고침</button>
     </div>
     <div id="overviewContent"><p style="color:var(--text2);text-align:center;padding:32px">🔄 클릭하여 포트폴리오를 불러오세요</p></div>
@@ -388,6 +398,16 @@ async function fetchPrices(tickers){
 }
 
 // ================ OVERVIEW ================
+let cachedOverview=null; // {holdMap, holdings, prices, cash, initialCash}
+let currentFilter='all';
+
+function setFilter(f,btn){
+  currentFilter=f;
+  document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  if(cachedOverview)renderOverview();
+}
+
 async function loadOverview(){
   if(!SHEET_ID||!SA_KEY){toast('Google Sheets 설정을 완료하세요','err');return}
   const el=document.getElementById('overviewContent');
@@ -398,28 +418,24 @@ async function loadOverview(){
   // Sort chronologically (oldest first) for correct FIFO
   const chronoTx=[...allTransactions].reverse();
 
-  // Compute holdings using FIFO
+  // Compute holdings per broker using FIFO
+  // holdMap key = "broker|ticker"
   const holdMap={};
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
-    if(!holdMap[tx.ticker])holdMap[tx.ticker]={totalQty:0,totalCost:0,realizedPL:0,realizedPLThisYear:0,lots:[],brokers:new Set()};
-    const h=holdMap[tx.ticker];
-    h.brokers.add(tx.broker);
+    const key=`${tx.broker}|${tx.ticker}`;
+    if(!holdMap[key])holdMap[key]={broker:tx.broker,ticker:tx.ticker,totalQty:0,totalCost:0,realizedPL:0,realizedPLThisYear:0,lots:[]};
+    const h=holdMap[key];
     if(tx.qty>0){
       h.lots.push({qty:tx.qty,price:tx.price,date:tx.date});
       h.totalQty+=tx.qty;
       h.totalCost+=tx.qty*tx.price+tx.tax;
     }else{
       let sellQty=Math.abs(tx.qty);
-      const sellPrice=tx.price;
-      const sellTax=tx.tax;
-      let costBasis=0;
+      const sellPrice=tx.price;const sellTax=tx.tax;let costBasis=0;
       while(sellQty>0&&h.lots.length>0){
-        const lot=h.lots[0];
-        const used=Math.min(lot.qty,sellQty);
-        costBasis+=used*lot.price;
-        lot.qty-=used;
-        sellQty-=used;
+        const lot=h.lots[0];const used=Math.min(lot.qty,sellQty);
+        costBasis+=used*lot.price;lot.qty-=used;sellQty-=used;
         if(lot.qty<=0)h.lots.shift();
       }
       const pl=Math.abs(tx.qty)*sellPrice-costBasis-sellTax;
@@ -430,48 +446,64 @@ async function loadOverview(){
     }
   }
 
-  // Current holdings (qty > 0)
-  const holdings=Object.entries(holdMap).filter(([,h])=>h.totalQty>0).map(([ticker,h])=>({
-    ticker,qty:h.totalQty,avgPrice:h.totalQty>0?h.totalCost/h.totalQty:0,
-    purchasedAmt:h.totalCost,broker:[...h.brokers].join('/')
+  // Unique tickers with qty > 0
+  const allHoldings=Object.values(holdMap).filter(h=>h.totalQty>0).map(h=>({
+    broker:h.broker,ticker:h.ticker,qty:h.totalQty,
+    avgPrice:h.totalQty>0?h.totalCost/h.totalQty:0,
+    purchasedAmt:h.totalCost
   }));
-
-  // Fetch current prices
-  const tickers=holdings.map(h=>h.ticker);
+  const tickers=[...new Set(allHoldings.map(h=>h.ticker))];
   const prices=tickers.length>0?await fetchPrices(tickers):{};
 
-  // Compute totals
-  let totalMarketValue=0,totalPurchased=0,totalUnrealizedPL=0;
-  let totalRealizedPL=0,totalRealizedPLThisYear=0;
-  for(const[tk,h]of Object.entries(holdMap)){
-    totalRealizedPL+=h.realizedPL;
-    totalRealizedPLThisYear+=h.realizedPLThisYear;
-  }
-  for(const h of holdings){
+  for(const h of allHoldings){
     const p=prices[h.ticker];
     h.currentPrice=p?p.current:0;
     h.chg=p?p.chg:0;
     h.marketValue=h.qty*h.currentPrice;
     h.unrealizedPL=h.marketValue-h.purchasedAmt;
-    totalMarketValue+=h.marketValue;
-    totalPurchased+=h.purchasedAmt;
-    totalUnrealizedPL+=h.unrealizedPL;
   }
 
-  // Compute cash: initial_cash - sum of all net purchases + sum of all net sales proceeds
-  let cashFlow=0;
+  // Cash per broker
+  const cashByBroker={삼성:0,키움:0};
   for(const tx of allTransactions){
-    // total includes tax. Buy: cash goes out. Sell: cash comes in.
-    if(tx.qty>0)cashFlow-=tx.total; // buy: spend
-    else cashFlow+=Math.abs(tx.qty)*tx.price-tx.tax; // sell: receive (price*qty - tax)
+    if(tx.qty>0)cashByBroker[tx.broker]-=tx.total;
+    else cashByBroker[tx.broker]+=Math.abs(tx.qty)*tx.price-tx.tax;
   }
-  const cash=initialCash+cashFlow;
-  const totalEarning=cash+totalMarketValue-initialCash;
 
-  // Sort holdings by market value descending
+  cachedOverview={holdMap,allHoldings,prices,cashByBroker};
+  renderOverview();
+}
+
+function renderOverview(){
+  const{holdMap,allHoldings,prices,cashByBroker}=cachedOverview;
+  const el=document.getElementById('overviewContent');
+  const f=currentFilter;
+
+  // Filter holdings
+  const holdings=f==='all'?allHoldings:allHoldings.filter(h=>h.broker===f);
   holdings.sort((a,b)=>b.marketValue-a.marketValue);
 
-  // Render
+  // Filter holdMap for realized P/L
+  let totalRealizedPL=0,totalRealizedPLThisYear=0;
+  for(const h of Object.values(holdMap)){
+    if(f!=='all'&&h.broker!==f)continue;
+    totalRealizedPL+=h.realizedPL;
+    totalRealizedPLThisYear+=h.realizedPLThisYear;
+  }
+
+  let totalMarketValue=0,totalPurchased=0;
+  for(const h of holdings){
+    totalMarketValue+=h.marketValue;
+    totalPurchased+=h.purchasedAmt;
+  }
+
+  // Cash
+  let cash=0;
+  if(f==='all')cash=initialCash+cashByBroker['삼성']+cashByBroker['키움'];
+  else cash=(f==='삼성'?cashByBroker['삼성']:cashByBroker['키움']); // broker-specific: no initial cash split
+  const totalBase=f==='all'?initialCash:0;
+  const totalEarning=cash+totalMarketValue-totalBase;
+
   let html='';
 
   // Summary cards
@@ -479,7 +511,7 @@ async function loadOverview(){
   html+=sumCard('💵 Cash',fmtUSD(cash),'');
   html+=sumCard('📈 Market Value',fmtUSD(totalMarketValue),`매입: ${fmtUSD(totalPurchased)}`);
   html+=sumCard('💰 Total Earning',fmtUSD(totalEarning),
-    `${initialCash>0?((totalEarning/initialCash*100).toFixed(1)+'%'):''}`,totalEarning>=0?'up':'dn');
+    `${totalBase>0?((totalEarning/totalBase*100).toFixed(1)+'%'):''}`,totalEarning>=0?'up':'dn');
   html+=sumCard('📊 Realized P/L',fmtUSD(totalRealizedPL),
     `올해: ${fmtUSD(totalRealizedPLThisYear)}`,totalRealizedPL>=0?'up':'dn');
   html+=`</div>`;
@@ -492,22 +524,44 @@ async function loadOverview(){
     for(const h of holdings){
       const chgCls=h.chg>0?'c-up':h.chg<0?'c-dn':'c-flat';
       const plCls=h.unrealizedPL>=0?'c-up':'c-dn';
-      const realPL=holdMap[h.ticker].realizedPL;
+      const key=`${h.broker}|${h.ticker}`;
+      const hm=holdMap[key];
+      const realPL=hm?hm.realizedPL:0;
+      const realPLYtd=hm?hm.realizedPLThisYear:0;
       const realCls=realPL>=0?'c-up':'c-dn';
+      const realYtdCls=realPLYtd>=0?'c-up':'c-dn';
+      const chgStr=h.chg>=0?`+${h.chg.toFixed(2)}%`:h.chg.toFixed(2)+'%';
+
       html+=`<div class="hold-row" onclick="showHistory('${h.ticker}')">
         <div class="hold-top">
           <span class="hold-ticker">${h.ticker}</span>
-          <span class="hold-qty">${h.qty}주 · ${h.broker}</span>
+          <span class="hold-qty">${h.qty}주 · ${h.broker==='삼성'?'🔵':'🔴'} ${h.broker}</span>
         </div>
         <div class="hold-grid">
-          <div><div class="lbl">평균 / 현재가</div><div class="val">${h.avgPrice.toFixed(2)} / ${h.currentPrice.toFixed(2)}</div></div>
-          <div><div class="lbl">전일 대비</div><div class="val ${chgCls}">${h.chg>=0?'+':''}${h.chg.toFixed(2)}%</div></div>
-          <div><div class="lbl">평가손익</div><div class="val ${plCls}">${fmtUSD(h.unrealizedPL)}</div></div>
-          <div><div class="lbl">실현손익</div><div class="val ${realCls}">${fmtUSD(realPL)}</div></div>
-          <div><div class="lbl">평가금액</div><div class="val">${fmtUSD(h.marketValue)}</div></div>
-          <div><div class="lbl">매입금액</div><div class="val">${fmtUSD(h.purchasedAmt)}</div></div>
-          <div><div class="lbl">P/E (fwd)</div><div class="val" style="color:var(--text3)">—</div></div>
-          <div><div class="lbl">EPS est Δ1w</div><div class="val" style="color:var(--text3)">—</div></div>
+          <div>
+            <div class="lbl">평균 / 현재가 (전일대비)</div>
+            <div class="val">${h.avgPrice.toFixed(2)} / ${h.currentPrice.toFixed(2)} <span class="${chgCls}">(${chgStr})</span></div>
+            <div class="lbl" style="margin-top:4px">평가손익</div>
+            <div class="val ${plCls}">${fmtUSD(h.unrealizedPL)}</div>
+          </div>
+          <div>
+            <div class="lbl">평가금액</div>
+            <div class="val">${fmtUSD(h.marketValue)}</div>
+            <div class="lbl" style="margin-top:4px">매입금액</div>
+            <div class="val">${fmtUSD(h.purchasedAmt)}</div>
+          </div>
+          <div>
+            <div class="lbl">실현손익 (total)</div>
+            <div class="val ${realCls}">${fmtUSD(realPL)}</div>
+            <div class="lbl" style="margin-top:4px">실현손익 (YTD)</div>
+            <div class="val ${realYtdCls}">${fmtUSD(realPLYtd)}</div>
+          </div>
+          <div>
+            <div class="lbl">P/E (12m fwd)</div>
+            <div class="val" style="color:var(--text3)">—</div>
+            <div class="lbl" style="margin-top:4px">EPS est Δ1w</div>
+            <div class="val" style="color:var(--text3)">—</div>
+          </div>
         </div>
       </div>`;
     }
