@@ -451,6 +451,9 @@ function restoreCache(){
       renderOverview();
     }
   }catch(e){}
+  // Refresh version displays after restore
+  updatePriceInfo();
+  updateFundInfo();
 }
 function populateInitCashFields(){
   if(initialCashSS)document.getElementById('initCashSS').value=initialCashSS;
@@ -718,10 +721,11 @@ function renderOverview(){
   html+=`<div class="summary-grid">`;
 
   // Top-left: 평가손익
+  const vdSign=valueDiff>=0?'+':'';
   html+=`<div class="sum-card">
     <div class="label">📈 평가손익</div>
     <div style="display:flex;align-items:center;gap:20px">
-      <div class="value ${vdCls}" style="white-space:nowrap">${fmtUSD(valueDiff)} <span style="font-size:13px">(${valueDiffPct>=0?'+':''}${valueDiffPct.toFixed(1)}%)</span></div>
+      <div class="value ${vdCls}" style="white-space:nowrap">${vdSign}${fmtUSD(valueDiff)} <span style="font-size:13px">(${valueDiffPct>=0?'+':''}${valueDiffPct.toFixed(1)}%)</span></div>
       <div style="font-size:10px;color:var(--text2);line-height:1.6;font-family:'JetBrains Mono',monospace;white-space:nowrap;text-align:right">market <span style="display:inline-block;text-align:right">${fmtUSD(totalMarketValue)}</span><br>purcha <span style="display:inline-block;text-align:right">${fmtUSD(totalPurchased)}</span></div>
     </div>
   </div>`;
@@ -729,15 +733,18 @@ function renderOverview(){
   // Top-right: Cash
   html+=`<div class="sum-card">
     <div class="label">💵 Cash</div>
-    <div class="value">${fmtUSD(cash)}</div>
-    <div class="sub">(${cashPct.toFixed(0)}% of total asset)</div>
+    <div style="display:flex;align-items:center;gap:20px">
+      <div class="value" style="white-space:nowrap">${fmtUSD(cash)}</div>
+      <div style="font-size:10px;color:var(--text2);font-family:'JetBrains Mono',monospace;white-space:nowrap">(${cashPct.toFixed(0)}% of asset)</div>
+    </div>
   </div>`;
 
-  // Bottom-left: Total Earning
+  // Bottom-left: Total Value
+  const earnSign=totalEarning>=0?'+':'';
   html+=`<div class="sum-card">
-    <div class="label">💰 Total Earning</div>
+    <div class="label">💰 Total Value</div>
     <div style="display:flex;align-items:center;gap:20px">
-      <div class="value ${earnCls}" style="white-space:nowrap">${fmtUSD(totalEarning)} <span style="font-size:13px">(${earnPct>=0?'+':''}${earnPct.toFixed(1)}%)</span></div>
+      <div class="value ${earnCls}" style="white-space:nowrap">${earnSign}${fmtUSD(totalEarning)} <span style="font-size:13px">(${earnPct>=0?'+':''}${earnPct.toFixed(1)}%)</span></div>
       <div style="font-size:10px;color:var(--text2);line-height:1.6;font-family:'JetBrains Mono',monospace;white-space:nowrap;text-align:right">asset&nbsp;&nbsp; <span style="display:inline-block;text-align:right">${fmtUSD(totalAsset)}</span><br>initial <span style="display:inline-block;text-align:right">${fmtUSD(initCash)}</span></div>
     </div>
   </div>`;
@@ -774,7 +781,8 @@ function renderOverview(){
         const avgPrice=m.qty>0?m.purchasedAmt/m.qty:0;
         const chgCls=m.chg>0?'c-up':m.chg<0?'c-dn':'c-flat';
         const plCls=m.unrealizedPL>=0?'c-up':'c-dn';
-        const chgStr=m.chg>=0?`+${m.chg.toFixed(2)}%`:m.chg.toFixed(2)+'%';
+        const chgTri=m.chg>0?'▲':m.chg<0?'▼':'';
+        const chgStr=`${chgTri}${m.chg>=0?'+':''}${m.chg.toFixed(2)}%`;
         // Realized P/L for this ticker across all brokers
         let realPL=0,realPLYtd=0;
         for(const hv of Object.values(holdMap)){if(hv.ticker===m.ticker){realPL+=hv.realizedPL;realPLYtd+=hv.realizedPLThisYear}}
@@ -806,7 +814,8 @@ function renderOverview(){
         const realPLYtd=hm?hm.realizedPLThisYear:0;
         const realCls=realPL>=0?'c-up':'c-dn';
         const realYtdCls=realPLYtd>=0?'c-up':'c-dn';
-        const chgStr=h.chg>=0?`+${h.chg.toFixed(2)}%`:h.chg.toFixed(2)+'%';
+        const chgTri=h.chg>0?'▲':h.chg<0?'▼':'';
+        const chgStr=`${chgTri}${h.chg>=0?'+':''}${h.chg.toFixed(2)}%`;
         const qtyStr=`${h.qty}주 · ${h.broker==='삼성'?'🔵':'🔴'} ${h.broker}`;
         html+=renderHoldCard(h.ticker,qtyStr,h.avgPrice,h.currentPrice,chgStr,chgCls,h.unrealizedPL,plCls,h.marketValue,h.purchasedAmt,realPL,realCls,realPLYtd,realYtdCls);
       }
