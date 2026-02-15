@@ -720,9 +720,9 @@ function renderOverview(){
   // Top-left: 평가손익
   html+=`<div class="sum-card">
     <div class="label">📈 평가손익</div>
-    <div style="display:flex;align-items:center;gap:10px">
+    <div style="display:flex;align-items:center;gap:20px">
       <div class="value ${vdCls}" style="white-space:nowrap">${fmtUSD(valueDiff)} <span style="font-size:13px">(${valueDiffPct>=0?'+':''}${valueDiffPct.toFixed(1)}%)</span></div>
-      <div style="font-size:10px;color:var(--text2);line-height:1.5;font-family:'JetBrains Mono',monospace;white-space:nowrap">market ${fmtUSD(totalMarketValue)}<br>purch ${fmtUSD(totalPurchased)}</div>
+      <div style="font-size:10px;color:var(--text2);line-height:1.6;font-family:'JetBrains Mono',monospace;white-space:nowrap;text-align:right">market <span style="display:inline-block;text-align:right">${fmtUSD(totalMarketValue)}</span><br>purcha <span style="display:inline-block;text-align:right">${fmtUSD(totalPurchased)}</span></div>
     </div>
   </div>`;
 
@@ -736,18 +736,18 @@ function renderOverview(){
   // Bottom-left: Total Earning
   html+=`<div class="sum-card">
     <div class="label">💰 Total Earning</div>
-    <div style="display:flex;align-items:center;gap:10px">
+    <div style="display:flex;align-items:center;gap:20px">
       <div class="value ${earnCls}" style="white-space:nowrap">${fmtUSD(totalEarning)} <span style="font-size:13px">(${earnPct>=0?'+':''}${earnPct.toFixed(1)}%)</span></div>
-      <div style="font-size:10px;color:var(--text2);line-height:1.5;font-family:'JetBrains Mono',monospace;white-space:nowrap">asset ${fmtUSD(totalAsset)}<br>initial ${fmtUSD(initCash)}</div>
+      <div style="font-size:10px;color:var(--text2);line-height:1.6;font-family:'JetBrains Mono',monospace;white-space:nowrap;text-align:right">asset&nbsp;&nbsp; <span style="display:inline-block;text-align:right">${fmtUSD(totalAsset)}</span><br>initial <span style="display:inline-block;text-align:right">${fmtUSD(initCash)}</span></div>
     </div>
   </div>`;
 
-  // Bottom-right: Realized P/L
+  // Bottom-right: Realized P/L (YTD first, then total)
   html+=`<div class="sum-card">
     <div class="label">📊 Realized P/L</div>
-    <div style="display:flex;align-items:baseline;gap:28px">
-      <div><div class="sub">total</div><div class="value ${realCls}">${fmtUSD(totalRealizedPL)}</div></div>
-      <div><div class="sub">YTD</div><div class="value ${realYtdCls}" style="font-size:16px">${fmtUSD(totalRealizedPLThisYear)}</div></div>
+    <div style="display:flex;align-items:baseline;gap:32px">
+      <div><div class="sub">YTD</div><div class="value ${realYtdCls}">${fmtUSD(totalRealizedPLThisYear)}</div></div>
+      <div><div class="sub">total</div><div class="value ${realCls}" style="font-size:16px">${fmtUSD(totalRealizedPL)}</div></div>
     </div>
   </div>`;
 
