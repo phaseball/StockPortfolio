@@ -450,41 +450,19 @@ async function loadAllTransactions(){
   // Load initial cash
   try{const d=await sheetsGet('config!A1:B1');if(d.values&&d.values[0]&&d.values[0][1])initialCash=parseFloat(d.values[0][1])}catch(e){}
 
-  // Normalize splits: adjust all pre-split transactions to post-split terms
-  // Sort chronologically first
-  const sorted=[...allTransactions].sort((a,b)=>{
-    const dc=a.date.localeCompare(b.date);
-    if(dc!==0)return dc;
-    return(parseInt(a.seq)||0)-(parseInt(b.seq)||0);
-  });
-
-  // Find all unique split events (dedup by ticker+date)
-  const splitEvents=[];
-  const seenSplits={};
-  for(const tx of sorted){
+  // Normalize splits: only adjust rows that have a split marker
+  // split=1/2 on a row means THAT row's qty and price are pre-split
+  // -> qty *= 2, price /= 2 to convert to post-split terms
+  for(const tx of allTransactions){
     if(tx.split&&tx.split!==''){
-      const sk=`${tx.ticker}|${tx.date}`;
-      if(!seenSplits[sk]){
-        seenSplits[sk]=true;
-        const parts=tx.split.split('/');
-        if(parts.length===2){
-          const num=parseFloat(parts[0]),den=parseFloat(parts[1]);
-          if(num&&den)splitEvents.push({ticker:tx.ticker,date:tx.date,seq:parseInt(tx.seq)||0,factor:den/num});
+      const parts=tx.split.split('/');
+      if(parts.length===2){
+        const num=parseFloat(parts[0]),den=parseFloat(parts[1]);
+        if(num&&den){
+          const factor=den/num; // 1/2 -> 2
+          tx.qty*=factor;
+          tx.price/=factor;
         }
-      }
-    }
-  }
-
-  // For each split event, adjust all transactions of that ticker BEFORE the split date
-  // split=1/2 -> factor=2 -> pre-split qty*=2, price/=2, tax stays, total stays
-  for(const sp of splitEvents){
-    for(const tx of allTransactions){
-      if(tx.ticker!==sp.ticker)continue;
-      // Only adjust rows strictly before the split date
-      if(tx.date<sp.date){
-        tx.qty*=sp.factor;
-        tx.price/=sp.factor;
-        // tax and total remain unchanged (actual money spent/received doesn't change)
       }
     }
   }
