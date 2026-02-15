@@ -499,9 +499,117 @@ async function refreshPrices(){
   toast('✅ 가격 갱신 완료','ok');
 }
 
+// Leveraged ETF → underlying ticker mapping for fundamentals
+const UNDERLYING_MAP={AMDL:'AMD',NVDL:'NVDA',TQQQ:null,SOXL:null,SQQQ:null};
+
+function getFundTicker(ticker){
+  if(ticker in UNDERLYING_MAP)return UNDERLYING_MAP[ticker];
+  return ticker;
+}
+
+async function fmpGet(endpoint){
+  if(!FMP_KEY)throw new Error('FMP API Key 없음');
+  const url=`https://financialmodelingprep.com/api/v3/${endpoint}${endpoint.includes('?')?'&':'?'}apikey=${FMP_KEY}`;
+  const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
+  if(!r.ok)throw new Error(`FMP ${r.status}`);
+  return r.json();
+}
+
 async function refreshFundamentals(){
-  // Placeholder for FMP integration
-  toast('📐 Fundamentals는 FMP API 연결 후 사용 가능합니다','err');
+  if(!FMP_KEY){toast('⚙️ 설정에서 FMP API Key를 입력하세요','err');return}
+  toast('📊 Fundamentals 불러오는 중...','ok');
+  try{
+    // Get unique fundamental tickers from held tickers
+    const held=getHeldTickers();
+    const fundTickers=[...new Set(held.map(t=>getFundTicker(t)).filter(Boolean))];
+    if(!fundTickers.length){toast('펀더멘탈 데이터 대상 종목 없음','err');return}
+
+    const newFund={};
+    for(const tk of fundTickers){
+      try{
+        // Fetch annual and quarterly estimates
+        const [annual,quarterly]=await Promise.all([
+          fmpGet(`analyst-estimates/${tk}?period=annual&limit=5`),
+          fmpGet(`analyst-estimates/${tk}?period=quarter&limit=12`)
+        ]);
+
+        // Find FY2025 and FY2026 annual estimates
+        const fy2026=annual.find(e=>e.date&&e.date.startsWith('2026'));
+        const fy2025=annual.find(e=>e.date&&e.date.startsWith('2025'));
+        const fy2027=annual.find(e=>e.date&&e.date.startsWith('2027'));
+
+        // Current price for P/E calculation
+        const price=cachedPrices[tk]?cachedPrices[tk].current:0;
+
+        // FY2026 P/E = price / FY2026 EPS estimate
+        const eps2026=fy2026?fy2026.estimatedEpsAvg:null;
+        const eps2025=fy2025?fy2025.estimatedEpsAvg:null;
+        const pe2026=(eps2026&&eps2026>0&&price)?price/eps2026:null;
+        const epsYoy=(eps2025&&eps2026&&eps2025!==0)?((eps2026-eps2025)/Math.abs(eps2025)*100):null;
+
+        newFund[tk]={
+          pe2026,eps2026,eps2025,epsYoy,
+          analysts2026:fy2026?fy2026.numberAnalystEstimatedEps:null,
+          analysts2025:fy2025?fy2025.numberAnalystEstimatedEps:null,
+          eps2027:fy2027?fy2027.estimatedEpsAvg:null,
+          analysts2027:fy2027?fy2027.numberAnalystEstimatedEps:null,
+          annual,quarterly,
+          fetchDate:new Date().toISOString().slice(0,10)
+        };
+      }catch(e){console.error(`FMP error for ${tk}:`,e)}
+    }
+
+    // Map to held tickers (including leveraged ETFs)
+    for(const tk of held){
+      const fundTk=getFundTicker(tk);
+      if(fundTk&&newFund[fundTk]){
+        cachedFundamentals[tk]=newFund[fundTk];
+      }
+    }
+
+    saveCache();
+    // Save fund timestamp
+    const now=new Date();
+    const kst=new Date(now.getTime()+9*60*60*1000);
+    const mm=String(kst.getUTCMonth()+1).padStart(2,'0');
+    const dd=String(kst.getUTCDate()).padStart(2,'0');
+    const hh=String(kst.getUTCHours()).padStart(2,'0');
+    const mi=String(kst.getUTCMinutes()).padStart(2,'0');
+    localStorage.setItem('cache_fundTimestamp',`${mm}-${dd} ${hh}:${mi}`);
+    updateFundInfo();
+
+    // Save to Google Sheet fundamentals tab
+    await saveFundamentalsToSheet(newFund);
+
+    computeOverview();
+    renderOverview();
+    toast('✅ Fundamentals 갱신 완료','ok');
+  }catch(e){toast('Fundamentals 오류: '+e.message,'err');console.error(e)}
+}
+
+async function saveFundamentalsToSheet(fundData){
+  if(!SHEET_ID||!SA_KEY)return;
+  try{
+    const token=await getAccessToken();
+    const today=new Date().toISOString().slice(0,10);
+    const rows=[];
+    for(const[tk,d]of Object.entries(fundData)){
+      // Annual row
+      rows.push([today,tk,'annual','FY2025',d.eps2025||'',d.analysts2025||'','','']);
+      rows.push([today,tk,'annual','FY2026',d.eps2026||'',d.analysts2026||'',d.pe2026?d.pe2026.toFixed(2):'',d.epsYoy?d.epsYoy.toFixed(2)+'%':'']);
+      rows.push([today,tk,'annual','FY2027',d.eps2027||'',d.analysts2027||'','','']);
+      // Quarterly rows
+      if(d.quarterly){
+        for(const q of d.quarterly.slice(0,8)){
+          rows.push([today,tk,'quarter',q.date||'',q.estimatedEpsAvg||'',q.numberAnalystEstimatedEps||'','','']);
+        }
+      }
+    }
+    // Append to fundamentals tab
+    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fundamentals!A:H:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+    await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({values:rows})});
+  }catch(e){console.error('Failed to save fundamentals to sheet:',e)}
 }
 
 function getHeldTickers(){
@@ -844,7 +952,7 @@ function holdingsHeader(){
     <div><span>평균 / 현재가 (전일대비; 전주대비)</span><span>평가손익</span></div>
     <div><span>평가금액</span><span>매입금액</span></div>
     <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
-    <div><span>P/E (12m fwd)</span><span>EPS est Δ1w</span></div>
+    <div><span>P/E (FY26)</span><span>EPS YoY%</span></div>
   </div>`;
 }
 
@@ -856,6 +964,29 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     const tri=v>0?'▲':v<0?'▼':'';
     const cls=v>0?'c-up':v<0?'c-dn':'c-flat';
     return`<span class="${cls}">${tri}${v>=0?'+':''}${v.toFixed(2)}%</span>`;
+  }
+  // Fundamentals
+  const fund=cachedFundamentals[ticker];
+  const fundTk=getFundTicker(ticker);
+  const isLev=fundTk!==ticker&&fundTk!==null;
+  let peStr='<span style="color:var(--text3)">—</span>';
+  let epsYoyStr='<span style="color:var(--text3)">—</span>';
+  if(fund){
+    if(fund.pe2026!=null){
+      // For leveraged ETFs, recalculate P/E using ETF's own price
+      let pe=fund.pe2026;
+      if(isLev&&fund.eps2026&&fund.eps2026>0&&currentPrice>0){
+        // Can't directly compute P/E for leveraged ETF; show underlying's P/E
+        pe=fund.pe2026;
+      }
+      peStr=`${pe.toFixed(1)}`;
+      if(isLev)peStr+=` <span style="font-size:9px;color:var(--text3)">(${fundTk})</span>`;
+    }
+    if(fund.epsYoy!=null){
+      const yoyCls=fund.epsYoy>=0?'c-up':'c-dn';
+      epsYoyStr=`<span class="${yoyCls}">${fund.epsYoy>=0?'+':''}${fund.epsYoy.toFixed(1)}%</span>`;
+      if(isLev)epsYoyStr+=` <span style="font-size:9px;color:var(--text3)">(${fundTk})</span>`;
+    }
   }
   return`<div class="hold-row" onclick="showHistory('${ticker}')">
     <div class="hold-top">
@@ -876,8 +1007,8 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         <div class="val ${realCls}">${fmtUSD(realPL)}</div>
       </div>
       <div>
-        <div class="val" style="color:var(--text3)">—</div>
-        <div class="val" style="color:var(--text3)">—</div>
+        <div class="val">${peStr}</div>
+        <div class="val">${epsYoyStr}</div>
       </div>
     </div>
   </div>`;
