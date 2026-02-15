@@ -100,7 +100,7 @@ table.t tr:hover td{background:var(--accentBg)}
 .fbtn:hover:not(.on){background:var(--surface2);color:var(--text)}
 
 /* Holdings header - sticky */
-.hold-hdr{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:10px;color:var(--text3);padding:6px 12px;background:var(--bg);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border);margin-bottom:4px}
+.hold-hdr{display:grid;grid-template-columns:3fr 1fr 1fr 1fr;gap:2px;font-size:10px;color:var(--text3);padding:6px 12px;background:var(--bg);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border);margin-bottom:4px}
 .hold-hdr div{display:flex;flex-direction:column;gap:2px}
 
 /* Holdings card v2 */
@@ -109,7 +109,7 @@ table.t tr:hover td{background:var(--accentBg)}
 .hold-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 .hold-ticker{font-size:15px;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace}
 .hold-qty{font-size:12px;color:var(--text2)}
-.hold-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:11px}
+.hold-grid{display:grid;grid-template-columns:3fr 1fr 1fr 1fr;gap:2px;font-size:11px}
 .hold-grid .lbl{color:var(--text3);font-size:10px}
 .hold-grid .val{font-family:'JetBrains Mono',monospace;font-size:12px}
 
@@ -127,7 +127,7 @@ table.t tr:hover td{background:var(--accentBg)}
   table.t{font-size:11px}
   table.t th,table.t td{padding:5px 5px}
   nav button{padding:8px 10px;font-size:11px}
-  .hold-grid{grid-template-columns:repeat(2,1fr)}
+  .hold-grid,.hold-hdr{grid-template-columns:repeat(2,1fr)}
 }
 </style>
 </head>
@@ -865,7 +865,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     <div class="hold-grid">
       <div>
         <div class="val">${avgPrice.toFixed(2)} / ${currentPrice.toFixed(2)} (${fmtChg(chgDay)}; ${fmtChg(chgWeek)})</div>
-        <div class="val ${plCls}">${fmtUSD(unrealizedPL)} <span style="font-size:10px">${plPctStr}</span></div>
+        <div class="val ${plCls}" style="font-size:13px;font-weight:600">${fmtUSD(unrealizedPL)} <span style="font-size:11px;font-weight:400">${plPctStr}</span></div>
       </div>
       <div>
         <div class="val">${fmtUSD(marketValue)}</div>
