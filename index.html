@@ -498,39 +498,33 @@ function computeOverview(){
     return (parseInt(a.seq)||0)-(parseInt(b.seq)||0);
   });
 
-  // Build split multipliers per ticker
-  // split="1/2" means old prices are halved, old quantities doubled
-  const splitMult={}; // ticker -> cumulative multiplier (applied to older lots)
-  // Collect all splits first
-  const splitEvents=[]; // {ticker, date, seq, factor}
-  for(const tx of chronoTx){
-    if(tx.split&&tx.split!==''){
-      const parts=tx.split.split('/');
-      if(parts.length===2){
-        const num=parseFloat(parts[0]),den=parseFloat(parts[1]);
-        if(num&&den)splitEvents.push({ticker:tx.ticker,date:tx.date,seq:parseInt(tx.seq)||0,factor:den/num});
-        // factor: for "1/2" split -> den/num = 2/1 = 2 -> qty *= 2, price /= 2
-      }
-    }
-  }
-
   const holdMap={};
+  const appliedSplits={}; // "ticker|date" -> true, prevent double-applying same split
+
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
     const key=`${tx.broker}|${tx.ticker}`;
     if(!holdMap[key])holdMap[key]={broker:tx.broker,ticker:tx.ticker,totalQty:0,totalCost:0,realizedPL:0,realizedPLThisYear:0,lots:[]};
     const h=holdMap[key];
 
-    // Check if this tx has a split — apply to existing lots
+    // Check if this tx has a split — apply to ALL holdMap entries for this ticker (across brokers)
+    // But only once per ticker per date (both brokers mark the same split)
     if(tx.split&&tx.split!==''){
-      const parts=tx.split.split('/');
-      if(parts.length===2){
-        const num=parseFloat(parts[0]),den=parseFloat(parts[1]);
-        if(num&&den){
-          const factor=den/num;
-          for(const lot of h.lots){lot.qty*=factor;lot.price/=factor}
-          h.totalQty*=factor;
-          // totalCost stays the same (same money invested, just more shares at lower price)
+      const splitKey=`${tx.ticker}|${tx.date}`;
+      if(!appliedSplits[splitKey]){
+        appliedSplits[splitKey]=true;
+        const parts=tx.split.split('/');
+        if(parts.length===2){
+          const num=parseFloat(parts[0]),den=parseFloat(parts[1]);
+          if(num&&den){
+            const factor=den/num; // 1/2 -> factor=2: qty*=2, price/=2
+            for(const[k,hh]of Object.entries(holdMap)){
+              if(k.endsWith('|'+tx.ticker)){
+                for(const lot of hh.lots){lot.qty*=factor;lot.price/=factor}
+                hh.totalQty*=factor;
+              }
+            }
+          }
         }
       }
     }
@@ -765,12 +759,17 @@ function showHistory(ticker){
       return(parseInt(a.seq)||0)-(parseInt(b.seq)||0);
     });
     let qty=0,cost=0;
+    const appliedSplitsHist={};
     for(const tx of chronoTxs){
-      // Handle split
+      // Handle split (dedup by date)
       if(tx.split&&tx.split!==''){
-        const parts=tx.split.split('/');
-        if(parts.length===2){const num=parseFloat(parts[0]),den=parseFloat(parts[1]);
-          if(num&&den){const factor=den/num;qty*=factor;}}
+        const sk=`${tx.date}`;
+        if(!appliedSplitsHist[sk]){
+          appliedSplitsHist[sk]=true;
+          const parts=tx.split.split('/');
+          if(parts.length===2){const num=parseFloat(parts[0]),den=parseFloat(parts[1]);
+            if(num&&den){const factor=den/num;qty*=factor;}}
+        }
       }
       if(tx.qty>0){cost+=tx.qty*tx.price+tx.tax;qty+=tx.qty}
       else if(tx.qty<0){const sellQty=Math.abs(tx.qty);if(qty>0)cost-=cost/qty*sellQty;qty-=sellQty}
