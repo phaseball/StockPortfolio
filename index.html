@@ -100,7 +100,7 @@ table.t tr:hover td{background:var(--accentBg)}
 .fbtn:hover:not(.on){background:var(--surface2);color:var(--text)}
 
 /* Holdings header - sticky */
-.hold-hdr{display:grid;grid-template-columns:3fr 1fr 1fr 1fr;gap:2px;font-size:10px;color:var(--text3);padding:6px 12px;background:var(--bg);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border);margin-bottom:4px}
+.hold-hdr{display:grid;grid-template-columns:2.5fr 1fr 1fr 1.2fr 1.2fr 1.2fr;gap:2px;font-size:10px;color:var(--text3);padding:6px 12px;background:var(--bg);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border);margin-bottom:4px}
 .hold-hdr div{display:flex;flex-direction:column;gap:2px}
 
 /* Holdings card v2 */
@@ -109,9 +109,10 @@ table.t tr:hover td{background:var(--accentBg)}
 .hold-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 .hold-ticker{font-size:15px;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace}
 .hold-qty{font-size:12px;color:var(--text2)}
-.hold-grid{display:grid;grid-template-columns:3fr 1fr 1fr 1fr;gap:2px;font-size:11px}
+.hold-grid{display:grid;grid-template-columns:2.5fr 1fr 1fr 1.2fr 1.2fr 1.2fr;gap:2px;font-size:11px}
 .hold-grid .lbl{color:var(--text3);font-size:10px}
 .hold-grid .val{font-family:'JetBrains Mono',monospace;font-size:12px}
+.fund-sub{font-size:10px;color:var(--text3);margin-top:1px}
 
 /* Back button */
 .back-btn{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border:none;background:var(--surface2);color:var(--text2);border-radius:6px;cursor:pointer;font:12px 'Noto Sans KR',sans-serif;margin-bottom:12px}
@@ -127,7 +128,7 @@ table.t tr:hover td{background:var(--accentBg)}
   table.t{font-size:11px}
   table.t th,table.t td{padding:5px 5px}
   nav button{padding:8px 10px;font-size:11px}
-  .hold-grid,.hold-hdr{grid-template-columns:repeat(2,1fr)}
+  .hold-grid,.hold-hdr{grid-template-columns:repeat(3,1fr)}
 }
 </style>
 </head>
@@ -511,34 +512,19 @@ function getFundTicker(ticker){
 
 async function fmpGet(endpoint){
   if(!FMP_KEY)throw new Error('FMP API Key 없음');
-  const url=`https://financialmodelingprep.com/api/v3/${endpoint}${endpoint.includes('?')?'&':'?'}apikey=${FMP_KEY}`;
-  // Try direct first (FMP may support CORS)
+  const url=`https://financialmodelingprep.com/stable/${endpoint}${endpoint.includes('?')?'&':'?'}apikey=${FMP_KEY}`;
   try{
     const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
-    if(r.ok){const d=await r.json();if(d&&!d['Error Message'])return d}
-  }catch(e){}
-  // Fallback to CORS proxies
-  const proxies=[
-    u=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    u=>`https://corsproxy.io/?${encodeURIComponent(u)}`,
-  ];
-  for(const mkProxy of proxies){
-    try{
-      const r=await fetch(mkProxy(url),{signal:AbortSignal.timeout(10000)});
-      if(!r.ok)continue;
-      const d=await r.json();
-      if(d&&!d['Error Message'])return d;
-    }catch(e){continue}
-  }
-  throw new Error(`FMP fetch failed for ${endpoint}`);
+    if(!r.ok)throw new Error(`FMP ${r.status}`);
+    const d=await r.json();
+    return d;
+  }catch(e){throw new Error(`FMP fetch failed for ${endpoint}: ${e.message}`)}
 }
 
 async function refreshFundamentals(){
   if(!FMP_KEY){toast('⚙️ 설정에서 FMP API Key를 입력하세요','err');return}
   toast('📊 Fundamentals 불러오는 중...','ok');
   try{
-    // Get unique fundamental tickers from held tickers
-    // Only fetch for tickers that map to a real underlying (not null = no fundamentals)
     const held=getHeldTickers();
     const fundTickers=[...new Set(held.map(t=>getFundTicker(t)).filter(t=>t!==null))];
     console.log('Held tickers:',held,'Fund tickers to fetch:',fundTickers);
@@ -547,51 +533,87 @@ async function refreshFundamentals(){
     const newFund={};
     for(const tk of fundTickers){
       try{
-        console.log(`Fetching FMP estimates for ${tk}...`);
-        // Fetch annual and quarterly estimates
-        const [annual,quarterly]=await Promise.all([
-          fmpGet(`analyst-estimates/${tk}?period=annual&limit=5`),
-          fmpGet(`analyst-estimates/${tk}?period=quarter&limit=12`)
+        console.log(`Fetching FMP data for ${tk}...`);
+        const [annual, quarterly, ptConsensus, gradesSummary]=await Promise.all([
+          fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
+          fmpGet(`analyst-estimates?symbol=${tk}&period=quarter&limit=16`),
+          fmpGet(`price-target-consensus?symbol=${tk}`),
+          fmpGet(`grades-consensus?symbol=${tk}`)
         ]);
         console.log(`${tk} annual:`,annual);
         console.log(`${tk} quarterly:`,quarterly);
+        console.log(`${tk} priceTarget:`,ptConsensus);
+        console.log(`${tk} grades:`,gradesSummary);
 
-        // Find FY2025 and FY2026 annual estimates
-        const fy2026=annual.find(e=>e.date&&e.date.startsWith('2026'));
-        const fy2025=annual.find(e=>e.date&&e.date.startsWith('2025'));
-        const fy2027=annual.find(e=>e.date&&e.date.startsWith('2027'));
-
-        // Current price for P/E calculation
         const price=cachedPrices[tk]?cachedPrices[tk].current:0;
 
-        // FY2026 P/E = price / FY2026 EPS estimate
-        const eps2026=fy2026?fy2026.estimatedEpsAvg:null;
-        const eps2025=fy2025?fy2025.estimatedEpsAvg:null;
-        const pe2026=(eps2026&&eps2026>0&&price)?price/eps2026:null;
-        const epsYoy=(eps2025&&eps2026&&eps2025!==0)?((eps2026-eps2025)/Math.abs(eps2025)*100):null;
+        // --- 12-month forward EPS & Revenue ---
+        // Sort quarterly by date ascending, find quarters covering next 12 months
+        const now=new Date();
+        const sortedQ=(quarterly||[]).slice().sort((a,b)=>a.date.localeCompare(b.date));
+        // Future quarters: fiscal end date >= today
+        const futureQ=sortedQ.filter(q=>new Date(q.date)>=now);
+        // Take first 4 future quarters for 12m forward
+        const next4Q=futureQ.slice(0,4);
+        const eps12m=next4Q.length===4?next4Q.reduce((s,q)=>s+(q.epsAvg||0),0):null;
+        const rev12m=next4Q.length===4?next4Q.reduce((s,q)=>s+(q.revenueAvg||0),0):null;
+        const numAnalystsEps=next4Q.length>0?Math.round(next4Q.reduce((s,q)=>s+(q.numAnalystsEps||0),0)/next4Q.length):null;
+        const numAnalystsRev=next4Q.length>0?Math.round(next4Q.reduce((s,q)=>s+(q.numAnalystsRevenue||0),0)/next4Q.length):null;
+
+        // Prior 12m: 4 quarters before next4Q
+        const prev4Q=sortedQ.filter(q=>new Date(q.date)<now).slice(-4);
+        const epsPrev12m=prev4Q.length===4?prev4Q.reduce((s,q)=>s+(q.epsAvg||0),0):null;
+        const revPrev12m=prev4Q.length===4?prev4Q.reduce((s,q)=>s+(q.revenueAvg||0),0):null;
+
+        const pe12m=(eps12m&&eps12m>0&&price)?price/eps12m:null;
+        const epsYoy12m=(epsPrev12m&&eps12m&&epsPrev12m!==0)?((eps12m-epsPrev12m)/Math.abs(epsPrev12m)*100):null;
+        const revYoy12m=(revPrev12m&&rev12m&&revPrev12m!==0)?((rev12m-revPrev12m)/Math.abs(revPrev12m)*100):null;
+
+        // --- Price target ---
+        const pt=Array.isArray(ptConsensus)?ptConsensus[0]:ptConsensus;
+        const targetPrice=pt?.targetConsensus||pt?.targetMedian||null;
+        const targetHigh=pt?.targetHigh||null;
+        const targetLow=pt?.targetLow||null;
+
+        // --- Grades summary ---
+        const gr=Array.isArray(gradesSummary)?gradesSummary[0]:gradesSummary;
+        const strongBuy=gr?.strongBuy||0;
+        const buy=gr?.buy||0;
+        const hold=gr?.hold||0;
+        const sell=gr?.sell||0;
+        const strongSell=gr?.strongSell||0;
+        const consensus=gr?.consensus||null;
+
+        // Also keep annual for reference
+        const fy2026=annual.find(e=>e.date&&e.date.startsWith('2026'));
+        const fy2025=annual.find(e=>e.date&&e.date.startsWith('2025'));
 
         newFund[tk]={
-          pe2026,eps2026,eps2025,epsYoy,
-          analysts2026:fy2026?fy2026.numberAnalystEstimatedEps:null,
-          analysts2025:fy2025?fy2025.numberAnalystEstimatedEps:null,
-          eps2027:fy2027?fy2027.estimatedEpsAvg:null,
-          analysts2027:fy2027?fy2027.numberAnalystEstimatedEps:null,
-          annual,quarterly,
+          price,
+          // 12m forward
+          eps12m, rev12m, pe12m,
+          epsYoy12m, revYoy12m,
+          numAnalystsEps, numAnalystsRev,
+          epsPrev12m, revPrev12m,
+          next4Q:next4Q.map(q=>({date:q.date,epsAvg:q.epsAvg,revAvg:q.revenueAvg})),
+          // Price target
+          targetPrice, targetHigh, targetLow,
+          // Grades
+          strongBuy, buy, hold, sell, strongSell, consensus,
+          // Annual reference
+          annual, quarterly:sortedQ,
           fetchDate:new Date().toISOString().slice(0,10)
         };
+        console.log(`${tk} done:`,newFund[tk]);
       }catch(e){console.warn(`FMP skip ${tk}:`,e.message)}
     }
 
-    // Map to held tickers (including leveraged ETFs)
     for(const tk of held){
       const fundTk=getFundTicker(tk);
-      if(fundTk&&newFund[fundTk]){
-        cachedFundamentals[tk]=newFund[fundTk];
-      }
+      if(fundTk&&newFund[fundTk])cachedFundamentals[tk]=newFund[fundTk];
     }
 
     saveCache();
-    // Save fund timestamp
     const now=new Date();
     const kst=new Date(now.getTime()+9*60*60*1000);
     const mm=String(kst.getUTCMonth()+1).padStart(2,'0');
@@ -601,13 +623,11 @@ async function refreshFundamentals(){
     localStorage.setItem('cache_fundTimestamp',`${mm}-${dd} ${hh}:${mi}`);
     updateFundInfo();
 
-    // Save to Google Sheet fundamentals tab
-    console.log('Saving fundamentals to sheet...',newFund);
     await saveFundamentalsToSheet(newFund);
-
     computeOverview();
     renderOverview();
-    toast('✅ Fundamentals 갱신 완료','ok');
+    const count=Object.keys(newFund).length;
+    toast(`✅ Fundamentals 갱신 완료 (${count}종목)`,'ok');
   }catch(e){toast('Fundamentals 오류: '+e.message,'err');console.error(e)}
 }
 
@@ -618,19 +638,26 @@ async function saveFundamentalsToSheet(fundData){
     const today=new Date().toISOString().slice(0,10);
     const rows=[];
     for(const[tk,d]of Object.entries(fundData)){
-      // Annual row
-      rows.push([today,tk,'annual','FY2025',d.eps2025||'',d.analysts2025||'','','']);
-      rows.push([today,tk,'annual','FY2026',d.eps2026||'',d.analysts2026||'',d.pe2026?d.pe2026.toFixed(2):'',d.epsYoy?d.epsYoy.toFixed(2)+'%':'']);
-      rows.push([today,tk,'annual','FY2027',d.eps2027||'',d.analysts2027||'','','']);
+      // Summary row with 12m forward data
+      rows.push([today,tk,'12m_fwd','',
+        d.eps12m?d.eps12m.toFixed(3):'',
+        d.numAnalystsEps||'',
+        d.pe12m?d.pe12m.toFixed(2):'',
+        d.epsYoy12m?d.epsYoy12m.toFixed(2)+'%':'',
+        d.rev12m?Math.round(d.rev12m):'',
+        d.revYoy12m?d.revYoy12m.toFixed(2)+'%':'',
+        d.targetPrice||'',
+        `${d.strongBuy||0}/${d.buy||0}/${d.hold||0}/${d.sell||0}/${d.strongSell||0}`
+      ]);
       // Quarterly rows
-      if(d.quarterly){
-        for(const q of d.quarterly.slice(0,8)){
-          rows.push([today,tk,'quarter',q.date||'',q.estimatedEpsAvg||'',q.numberAnalystEstimatedEps||'','','']);
+      if(d.next4Q){
+        for(const q of d.next4Q){
+          rows.push([today,tk,'quarter',q.date,q.epsAvg||'','','','',q.revAvg?Math.round(q.revAvg):'','','','']);
         }
       }
     }
     // Append to fundamentals tab
-    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fundamentals!A:H:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fundamentals!A:L:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
     await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
       body:JSON.stringify({values:rows})});
   }catch(e){console.error('Failed to save fundamentals to sheet:',e)}
@@ -976,7 +1003,9 @@ function holdingsHeader(){
     <div><span>평균 / 현재가 (전일대비; 전주대비)</span><span>평가손익</span></div>
     <div><span>평가금액</span><span>매입금액</span></div>
     <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
-    <div><span>P/E (FY26)</span><span>EPS YoY%</span></div>
+    <div><span>P/E 12m fwd</span><span>EPS est. chg (1w/1m)</span></div>
+    <div><span>EPS 12m YoY%</span><span>Rev 12m YoY%</span></div>
+    <div><span>Target (% gap)</span><span>Grade consensus</span></div>
   </div>`;
 }
 
@@ -989,29 +1018,59 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     const cls=v>0?'c-up':v<0?'c-dn':'c-flat';
     return`<span class="${cls}">${tri}${v>=0?'+':''}${v.toFixed(2)}%</span>`;
   }
+  const dash='<span style="color:var(--text3)">—</span>';
+
   // Fundamentals
   const fund=cachedFundamentals[ticker];
   const fundTk=getFundTicker(ticker);
   const isLev=fundTk!==ticker&&fundTk!==null;
-  let peStr='<span style="color:var(--text3)">—</span>';
-  let epsYoyStr='<span style="color:var(--text3)">—</span>';
+  const levTag=isLev?` <span style="font-size:9px;color:var(--text3)">(${fundTk})</span>`:'';
+
+  // Col4: P/E 12m fwd + EPS est change
+  let peStr=dash, epsChgStr=dash;
+  // Col5: EPS 12m YoY% + Rev 12m YoY%
+  let epsYoyStr=dash, revYoyStr=dash;
+  // Col6: Target + Grade
+  let targetStr=dash, gradeStr=dash;
+
   if(fund){
-    if(fund.pe2026!=null){
-      // For leveraged ETFs, recalculate P/E using ETF's own price
-      let pe=fund.pe2026;
-      if(isLev&&fund.eps2026&&fund.eps2026>0&&currentPrice>0){
-        // Can't directly compute P/E for leveraged ETF; show underlying's P/E
-        pe=fund.pe2026;
-      }
-      peStr=`${pe.toFixed(1)}`;
-      if(isLev)peStr+=` <span style="font-size:9px;color:var(--text3)">(${fundTk})</span>`;
+    // -- Col4: P/E 12m forward --
+    if(fund.pe12m!=null){
+      peStr=`${fund.pe12m.toFixed(1)}${levTag}`;
     }
-    if(fund.epsYoy!=null){
-      const yoyCls=fund.epsYoy>=0?'c-up':'c-dn';
-      epsYoyStr=`<span class="${yoyCls}">${fund.epsYoy>=0?'+':''}${fund.epsYoy.toFixed(1)}%</span>`;
-      if(isLev)epsYoyStr+=` <span style="font-size:9px;color:var(--text3)">(${fundTk})</span>`;
+    // EPS estimate change: placeholder until we have history
+    epsChgStr=`<span style="color:var(--text3);font-size:10px">tracking...</span>`;
+
+    // -- Col5: EPS YoY% & Rev YoY% --
+    if(fund.epsYoy12m!=null){
+      const cls=fund.epsYoy12m>=0?'c-up':'c-dn';
+      epsYoyStr=`<span class="${cls}">${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(1)}%</span>`;
+      if(fund.numAnalystsEps)epsYoyStr+=` <span style="font-size:9px;color:var(--text3)">(${fund.numAnalystsEps})</span>`;
+    }
+    if(fund.revYoy12m!=null){
+      const cls=fund.revYoy12m>=0?'c-up':'c-dn';
+      revYoyStr=`<span class="${cls}">${fund.revYoy12m>=0?'+':''}${fund.revYoy12m.toFixed(1)}%</span>`;
+      if(fund.numAnalystsRev)revYoyStr+=` <span style="font-size:9px;color:var(--text3)">(${fund.numAnalystsRev})</span>`;
+    }
+
+    // -- Col6: Price target & Grade --
+    if(fund.targetPrice!=null&&fund.price>0){
+      const gap=((fund.targetPrice-fund.price)/fund.price*100);
+      // Red if upside (good), blue if downside (bad)
+      const tCls=gap>=0?'c-up':'c-dn';
+      targetStr=`<span class="${tCls}">$${fund.targetPrice.toFixed(0)} (${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`;
+    }
+    const totalGrades=(fund.strongBuy||0)+(fund.buy||0)+(fund.hold||0)+(fund.sell||0)+(fund.strongSell||0);
+    if(totalGrades>0){
+      const buyN=(fund.strongBuy||0)+(fund.buy||0);
+      const holdN=fund.hold||0;
+      const sellN=(fund.sell||0)+(fund.strongSell||0);
+      const gCls=buyN>holdN+sellN?'c-up':sellN>holdN+buyN?'c-dn':'c-flat';
+      const gLabel=fund.consensus||(buyN>holdN+sellN?'Buy':sellN>holdN+buyN?'Sell':'Hold');
+      gradeStr=`<span class="${gCls}" style="font-weight:600">${gLabel}</span> <span style="font-size:9px;color:var(--text3)">${buyN}/${holdN}/${sellN}</span>`;
     }
   }
+
   return`<div class="hold-row" onclick="showHistory('${ticker}')">
     <div class="hold-top">
       <span class="hold-ticker" style="color:var(--text2)">${ticker}</span>
@@ -1032,7 +1091,15 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
       </div>
       <div>
         <div class="val">${peStr}</div>
+        <div class="val">${epsChgStr}</div>
+      </div>
+      <div>
         <div class="val">${epsYoyStr}</div>
+        <div class="val">${revYoyStr}</div>
+      </div>
+      <div>
+        <div class="val">${targetStr}</div>
+        <div class="val">${gradeStr}</div>
       </div>
     </div>
   </div>`;
