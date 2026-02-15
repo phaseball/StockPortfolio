@@ -135,7 +135,7 @@ table.t tr:hover td{background:var(--accentBg)}
 <div class="app">
   <div class="header">
     <div class="logo">📊</div>
-    <div style="flex:1"><h1>US Stock Tracker</h1><div class="sub"><span id="verInfo">v0215-21:00:00</span> · <span id="dataInfo">data-없음</span></div></div>
+    <div style="flex:1"><h1>US Stock Tracker</h1><div class="sub"><span id="verInfo"></span> · <span id="dataInfo">data-없음</span></div></div>
     <button class="btn btn-s btn-sm" onclick="refreshData()" title="Google Sheet에서 거래 데이터 다시 불러오기">🔄 Data</button>
   </div>
 
@@ -157,8 +157,8 @@ table.t tr:hover td{background:var(--accentBg)}
         <button class="fbtn" onclick="setFilter('all',this)">Total</button>
       </div>
       <div style="display:flex;gap:4px">
-        <button class="btn btn-s btn-sm" onclick="refreshPrices()" title="현재가 업데이트">💲 Price</button>
-        <button class="btn btn-s btn-sm" onclick="refreshFundamentals()" title="P/E, EPS 업데이트">📐 Fund.</button>
+        <button class="btn btn-s btn-sm" onclick="refreshPrices()" title="현재가 업데이트">🔄 Price</button>
+        <button class="btn btn-s btn-sm" onclick="refreshFundamentals()" title="P/E, EPS 업데이트">🔄 Fund.</button>
       </div>
     </div>
     <div id="overviewContent"><p style="color:var(--text2);text-align:center;padding:32px">🔄 클릭하여 포트폴리오를 불러오세요</p></div>
@@ -246,7 +246,7 @@ CLS,1,282.5800,2"></textarea>
         <div class="step"><h3>Google Cloud 프로젝트 생성</h3><p><a href="https://console.cloud.google.com/projectcreate" target="_blank" style="color:var(--accent)">console.cloud.google.com</a> → 새 프로젝트</p></div>
         <div class="step"><h3>Google Sheets API 활성화</h3><p><a href="https://console.cloud.google.com/apis/library/sheets.googleapis.com" target="_blank" style="color:var(--accent)">Sheets API</a> → "사용" 클릭</p></div>
         <div class="step"><h3>서비스 계정 생성</h3><p><a href="https://console.cloud.google.com/iam-admin/serviceaccounts/create" target="_blank" style="color:var(--accent)">서비스 계정</a> → 생성 → "키" 탭 → JSON 다운로드</p></div>
-        <div class="step"><h3>Google Sheet 준비</h3><p>새 Sheet → 탭 이름: <code>삼성</code>, <code>키움</code>, <code>config</code>. config 탭에 initial_cash 값 입력 (A1: initial_cash, B1: 금액)</p></div>
+        <div class="step"><h3>Google Sheet 준비</h3><p>새 Sheet → 탭: <code>삼성</code>, <code>키움</code>, <code>config</code>. config 탭: A1=<code>initial_cash_삼성</code> B1=금액, A2=<code>initial_cash_키움</code> B2=금액</p></div>
         <div class="step"><h3>시트 공유</h3><p>JSON의 <code>client_email</code> → Sheet "공유" → 편집자 권한</p></div>
       </div>
     </div>
@@ -265,11 +265,12 @@ CLS,1,282.5800,2"></textarea>
     </div>
     <div class="card">
       <div class="card-hdr"><span class="ico">💰</span> Initial Cash (초기 투자금)</div>
-      <div style="display:flex;gap:8px">
-        <input type="number" id="initCash" placeholder="50000" step="100"/>
-        <button class="btn btn-p btn-sm" onclick="saveInitCash()">저장 → Sheet</button>
+      <div class="g2" style="margin-bottom:8px">
+        <label class="f"><span>🔵 삼성</span><input type="number" id="initCashSS" placeholder="30000" step="100"/></label>
+        <label class="f"><span>🔴 키움</span><input type="number" id="initCashKW" placeholder="20000" step="100"/></label>
       </div>
-      <p style="font-size:11px;color:var(--text2);margin-top:6px">Google Sheet의 config 탭에 저장됩니다</p>
+      <button class="btn btn-p btn-sm" onclick="saveInitCash()">저장 → Sheet</button>
+      <p style="font-size:11px;color:var(--text2);margin-top:6px">config 탭 형식: A1=initial_cash_삼성, B1=금액, A2=initial_cash_키움, B2=금액</p>
     </div>
   </div>
 </div>
@@ -282,25 +283,34 @@ const TAX={삼성:0.0003,키움:0.0007};
 const SCOPES='https://www.googleapis.com/auth/spreadsheets';
 let SA_KEY=null,SHEET_ID='',gToken=null,gTokenExp=0;
 let allTransactions=[];
-let initialCash=0;
-let cachedPrices={};    // ticker -> {current,prevClose,chg}
-let cachedFundamentals={}; // ticker -> {pe,epsChg} (future)
+let initialCashSS=0,initialCashKW=0;
+let cachedPrices={};
+let cachedFundamentals={};
 const CACHE_KEY_TX='cache_transactions';
 const CACHE_KEY_PRICES='cache_prices';
 const CACHE_KEY_FUND='cache_fundamentals';
-const CACHE_KEY_CASH='cache_initialCash';
+const CACHE_KEY_CASH='cache_initialCash2';
 const CACHE_KEY_DATA_TS='cache_dataTimestamp';
-
-const APP_VERSION='v0216-02:45:00';
 
 // ================ INIT ================
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.p)));
-  document.getElementById('verInfo').textContent=APP_VERSION;
+  updateVerInfo();
   loadConfig();
   restoreCache();
   updateDataInfo();
 });
+
+function updateVerInfo(){
+  const now=new Date();
+  const kst=new Date(now.getTime()+9*60*60*1000);
+  const mm=String(kst.getUTCMonth()+1).padStart(2,'0');
+  const dd=String(kst.getUTCDate()).padStart(2,'0');
+  const hh=String(kst.getUTCHours()).padStart(2,'0');
+  const mi=String(kst.getUTCMinutes()).padStart(2,'0');
+  const ss=String(kst.getUTCSeconds()).padStart(2,'0');
+  document.getElementById('verInfo').textContent=`v${mm}${dd}-${hh}:${mi}:${ss}`;
+}
 
 function switchTab(p){
   document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x.dataset.p===p));
@@ -322,13 +332,15 @@ function saveSA(){try{const r=document.getElementById('saKey').value.trim();SA_K
 function saveSheetId(){SHEET_ID=document.getElementById('sheetId').value.trim();localStorage.setItem('sheet_id',SHEET_ID);updateSt('st-sid','ok',SHEET_ID.slice(0,8)+'...');toast('저장 완료','ok')}
 function updateSt(id,cls,txt){const el=document.getElementById(id);el.className='status '+cls;el.textContent=txt}
 async function saveInitCash(){
-  const v=parseFloat(document.getElementById('initCash').value);
-  if(!v||!SHEET_ID||!SA_KEY){toast('금액과 Sheet 설정을 확인하세요','err');return}
+  const ss=parseFloat(document.getElementById('initCashSS').value);
+  const kw=parseFloat(document.getElementById('initCashKW').value);
+  if((!ss&&!kw)||!SHEET_ID||!SA_KEY){toast('금액과 Sheet 설정을 확인하세요','err');return}
   try{
     const token=await getAccessToken();
-    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A1:B1?valueInputOption=USER_ENTERED`;
+    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A1:B2?valueInputOption=USER_ENTERED`;
     await fetch(url,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-      body:JSON.stringify({range:'config!A1:B1',values:[['initial_cash',v]]})});
+      body:JSON.stringify({range:'config!A1:B2',values:[['initial_cash_삼성',ss||0],['initial_cash_키움',kw||0]]})});
+    initialCashSS=ss||0;initialCashKW=kw||0;
     toast('Initial cash 저장 완료','ok');
   }catch(e){toast('저장 실패: '+e.message,'err')}
 }
@@ -375,12 +387,14 @@ function saveCache(){
     localStorage.setItem(CACHE_KEY_TX,JSON.stringify(allTransactions));
     localStorage.setItem(CACHE_KEY_PRICES,JSON.stringify(cachedPrices));
     localStorage.setItem(CACHE_KEY_FUND,JSON.stringify(cachedFundamentals));
-    localStorage.setItem(CACHE_KEY_CASH,JSON.stringify(initialCash));
+    localStorage.setItem(CACHE_KEY_CASH,JSON.stringify({ss:initialCashSS,kw:initialCashKW}));
   }catch(e){}
 }
 function saveDataTimestamp(){
-  const now=new Date();
-  const ts=String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
+  // Use latest transaction date from data
+  let latest='';
+  for(const tx of allTransactions){if(tx.date>latest)latest=tx.date}
+  const ts=latest?fmtDate(latest):'없음';
   localStorage.setItem(CACHE_KEY_DATA_TS,ts);
   updateDataInfo();
 }
@@ -397,7 +411,7 @@ function restoreCache(){
     const fd=localStorage.getItem(CACHE_KEY_FUND);
     if(fd){cachedFundamentals=JSON.parse(fd)}
     const ic=localStorage.getItem(CACHE_KEY_CASH);
-    if(ic){initialCash=JSON.parse(ic)}
+    if(ic){const c=JSON.parse(ic);initialCashSS=c.ss||0;initialCashKW=c.kw||0}
     if(allTransactions.length>0){
       computeOverview();
       renderOverview();
@@ -466,8 +480,18 @@ async function loadAllTransactions(){
       }
     }catch(e){}
   }
-  // Load initial cash
-  try{const d=await sheetsGet('config!A1:B1');if(d.values&&d.values[0]&&d.values[0][1])initialCash=parseFloat(d.values[0][1])}catch(e){}
+  // Load initial cash per broker from config tab
+  try{
+    const d=await sheetsGet('config!A1:B2');
+    if(d.values){
+      for(const row of d.values){
+        if(row[0]==='initial_cash_삼성')initialCashSS=parseFloat(row[1])||0;
+        if(row[0]==='initial_cash_키움')initialCashKW=parseFloat(row[1])||0;
+        // Legacy: single initial_cash
+        if(row[0]==='initial_cash'){initialCashSS=parseFloat(row[1])||0;initialCashKW=0}
+      }
+    }
+  }catch(e){}
 
   // Normalize splits: only adjust rows that have a split marker
   // split=1/2 on a row means THAT row's qty and price are pre-split
@@ -539,7 +563,7 @@ function computeOverview(){
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
     const key=`${tx.broker}|${tx.ticker}`;
-    if(!holdMap[key])holdMap[key]={broker:tx.broker,ticker:tx.ticker,totalQty:0,avgCost:0,realizedPL:0,realizedPLThisYear:0,lots:[]};
+    if(!holdMap[key])holdMap[key]={broker:tx.broker,ticker:tx.ticker,totalQty:0,avgCost:0,realizedPL:0,realizedPLThisYear:0};
     const h=holdMap[key];
 
     if(tx.qty>0){
@@ -547,21 +571,13 @@ function computeOverview(){
       const newCost=h.avgCost*h.totalQty+tx.qty*tx.price;
       h.totalQty+=tx.qty;
       h.avgCost=h.totalQty>0?newCost/h.totalQty:0;
-      // FIFO lots for realized P/L
-      h.lots.push({qty:tx.qty,price:tx.price,date:tx.date});
     }else if(tx.qty<0){
-      // Sell: moving avg cost doesn't change per share, just reduce qty
-      let sellQty=Math.abs(tx.qty);
-      const sellPrice=tx.price;const sellTax=tx.tax;let costBasis=0;
-      while(sellQty>0&&h.lots.length>0){
-        const lot=h.lots[0];const used=Math.min(lot.qty,sellQty);
-        costBasis+=used*lot.price;lot.qty-=used;sellQty-=used;
-        if(lot.qty<=0)h.lots.shift();
-      }
-      const pl=Math.abs(tx.qty)*sellPrice-costBasis-sellTax;
+      // Sell: realized P/L using moving avg cost basis
+      const sellQty=Math.abs(tx.qty);
+      const pl=sellQty*(tx.price-h.avgCost)-tx.tax;
       h.realizedPL+=pl;
       if(tx.date.startsWith('26'))h.realizedPLThisYear+=pl;
-      h.totalQty-=Math.abs(tx.qty);
+      h.totalQty-=sellQty;
       if(h.totalQty<=0){h.avgCost=0;h.totalQty=0}
     }
   }
@@ -628,22 +644,36 @@ function renderOverview(){
   }
 
   // Cash
-  let cash=0;
-  if(f==='all')cash=initialCash+cashByBroker['삼성']+cashByBroker['키움'];
-  else cash=(f==='삼성'?cashByBroker['삼성']:cashByBroker['키움']); // broker-specific: no initial cash split
-  const totalBase=f==='all'?initialCash:0;
-  const totalEarning=cash+totalMarketValue-totalBase;
+  let cash=0,initCash=0;
+  if(f==='all'){
+    initCash=initialCashSS+initialCashKW;
+    cash=initCash+cashByBroker['삼성']+cashByBroker['키움'];
+  }else if(f==='삼성'){
+    initCash=initialCashSS;
+    cash=initialCashSS+cashByBroker['삼성'];
+  }else{
+    initCash=initialCashKW;
+    cash=initialCashKW+cashByBroker['키움'];
+  }
+  const totalEarning=cash+totalMarketValue-initCash;
 
   let html='';
 
   // Summary cards
+  const mktPct=totalPurchased>0?((totalMarketValue-totalPurchased)/totalPurchased*100):0;
+  const mktPctCls=mktPct>=0?'c-up':'c-dn';
+  const earnPct=initCash>0?((totalEarning/initCash*100)):0;
+  const earnPctCls=totalEarning>=0?'up':'dn';
+  const realPctCls=totalRealizedPL>=0?'up':'dn';
+
   html+=`<div class="summary-grid">`;
   html+=sumCard('💵 Cash',fmtUSD(cash),'');
-  html+=sumCard('📈 Market Value',fmtUSD(totalMarketValue),`매입: ${fmtUSD(totalPurchased)}`);
-  html+=sumCard('💰 Total Earning',fmtUSD(totalEarning),
-    `${totalBase>0?((totalEarning/totalBase*100).toFixed(1)+'%'):''}`,totalEarning>=0?'up':'dn');
-  html+=sumCard('📊 Realized P/L',fmtUSD(totalRealizedPL),
-    `올해: ${fmtUSD(totalRealizedPLThisYear)}`,totalRealizedPL>=0?'up':'dn');
+  html+=sumCard2('📈 Market Value',fmtUSD(totalMarketValue),
+    `<span class="${mktPctCls}">(${mktPct>=0?'+':''}${mktPct.toFixed(1)}%)</span> 매입 ${fmtUSD(totalPurchased)}`);
+  html+=sumCard2('💰 Total Earning',fmtUSD(totalEarning),
+    `<span>(${earnPct>=0?'+':''}${earnPct.toFixed(1)}%)</span>`,earnPctCls);
+  html+=sumCard2('📊 Realized P/L (total)',fmtUSD(totalRealizedPL),
+    `YTD ${fmtUSD(totalRealizedPLThisYear)}`,realPctCls);
   html+=`</div>`;
 
   // Holdings
@@ -719,15 +749,17 @@ function holdingsHeader(){
 }
 
 function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgStr,chgCls,unrealizedPL,plCls,marketValue,purchasedAmt,realPL,realCls,realPLYtd,realYtdCls){
+  const plPct=purchasedAmt>0?((unrealizedPL/purchasedAmt)*100):0;
+  const plPctStr=`(${plPct>=0?'+':''}${plPct.toFixed(1)}%)`;
   return`<div class="hold-row" onclick="showHistory('${ticker}')">
     <div class="hold-top">
-      <span class="hold-ticker">${ticker}</span>
+      <span class="hold-ticker" style="color:var(--text2)">${ticker}</span>
       <span class="hold-qty">${qtyStr}</span>
     </div>
     <div class="hold-grid">
       <div>
         <div class="val">${avgPrice.toFixed(2)} / ${currentPrice.toFixed(2)} <span class="${chgCls}">(${chgStr})</span></div>
-        <div class="val ${plCls}">${fmtUSD(unrealizedPL)}</div>
+        <div class="val ${plCls}">${fmtUSD(unrealizedPL)} <span style="font-size:10px">${plPctStr}</span></div>
       </div>
       <div>
         <div class="val">${fmtUSD(marketValue)}</div>
@@ -747,6 +779,9 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgStr,chgCls,unreal
 
 function sumCard(label,value,sub,cls=''){
   return`<div class="sum-card"><div class="label">${label}</div><div class="value ${cls}">${value}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`;
+}
+function sumCard2(label,value,right,cls=''){
+  return`<div class="sum-card"><div class="label">${label}</div><div style="display:flex;align-items:baseline;gap:6px"><div class="value ${cls}">${value}</div><div class="sub" style="margin-top:0">${right}</div></div></div>`;
 }
 
 // ================ TICKER HISTORY ================
