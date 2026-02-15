@@ -99,6 +99,10 @@ table.t tr:hover td{background:var(--accentBg)}
 .fbtn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .fbtn:hover:not(.on){background:var(--surface2);color:var(--text)}
 
+/* Holdings header - sticky */
+.hold-hdr{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:10px;color:var(--text3);padding:6px 12px;background:var(--bg);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border);margin-bottom:4px}
+.hold-hdr div{display:flex;flex-direction:column;gap:2px}
+
 /* Holdings card v2 */
 .hold-row{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
 .hold-row:hover{border-color:var(--accent)}
@@ -287,7 +291,7 @@ const CACHE_KEY_FUND='cache_fundamentals';
 const CACHE_KEY_CASH='cache_initialCash';
 const CACHE_KEY_DATA_TS='cache_dataTimestamp';
 
-const APP_VERSION='v0216-02:15:00';
+const APP_VERSION='v0216-02:45:00';
 
 // ================ INIT ================
 document.addEventListener('DOMContentLoaded',()=>{
@@ -658,6 +662,7 @@ function renderOverview(){
       html+='<p style="color:var(--text2);text-align:center;padding:24px">보유 종목이 없습니다</p>';
     }else{
       html+=`<div style="font-size:13px;font-weight:600;margin-bottom:8px">보유 종목 (${mergedList.length})</div>`;
+      html+=holdingsHeader();
       for(const m of mergedList){
         const avgPrice=m.qty>0?m.purchasedAmt/m.qty:0;
         const chgCls=m.chg>0?'c-up':m.chg<0?'c-dn':'c-flat';
@@ -684,6 +689,7 @@ function renderOverview(){
       html+='<p style="color:var(--text2);text-align:center;padding:24px">보유 종목이 없습니다</p>';
     }else{
       html+=`<div style="font-size:13px;font-weight:600;margin-bottom:8px">보유 종목 (${holdings.length})</div>`;
+      html+=holdingsHeader();
       for(const h of holdings){
         const chgCls=h.chg>0?'c-up':h.chg<0?'c-dn':'c-flat';
         const plCls=h.unrealizedPL>=0?'c-up':'c-dn';
@@ -703,6 +709,15 @@ function renderOverview(){
   el.innerHTML=html;
 }
 
+function holdingsHeader(){
+  return`<div class="hold-hdr">
+    <div><span>평균 / 현재가 (전일대비)</span><span>평가손익</span></div>
+    <div><span>평가금액</span><span>매입금액</span></div>
+    <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
+    <div><span>P/E (12m fwd)</span><span>EPS est Δ1w</span></div>
+  </div>`;
+}
+
 function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgStr,chgCls,unrealizedPL,plCls,marketValue,purchasedAmt,realPL,realCls,realPLYtd,realYtdCls){
   return`<div class="hold-row" onclick="showHistory('${ticker}')">
     <div class="hold-top">
@@ -711,27 +726,19 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgStr,chgCls,unreal
     </div>
     <div class="hold-grid">
       <div>
-        <div class="lbl">평균 / 현재가 (전일대비)</div>
         <div class="val">${avgPrice.toFixed(2)} / ${currentPrice.toFixed(2)} <span class="${chgCls}">(${chgStr})</span></div>
-        <div class="lbl" style="margin-top:4px">평가손익</div>
         <div class="val ${plCls}">${fmtUSD(unrealizedPL)}</div>
       </div>
       <div>
-        <div class="lbl">평가금액</div>
         <div class="val">${fmtUSD(marketValue)}</div>
-        <div class="lbl" style="margin-top:4px">매입금액</div>
         <div class="val">${fmtUSD(purchasedAmt)}</div>
       </div>
       <div>
-        <div class="lbl">실현손익 (YTD)</div>
         <div class="val ${realYtdCls}">${fmtUSD(realPLYtd)}</div>
-        <div class="lbl" style="margin-top:4px">실현손익 (total)</div>
         <div class="val ${realCls}">${fmtUSD(realPL)}</div>
       </div>
       <div>
-        <div class="lbl">P/E (12m fwd)</div>
         <div class="val" style="color:var(--text3)">—</div>
-        <div class="lbl" style="margin-top:4px">EPS est Δ1w</div>
         <div class="val" style="color:var(--text3)">—</div>
       </div>
     </div>
@@ -763,22 +770,32 @@ function showHistory(ticker){
     titleEl.textContent='전체 거래 내역';
   }
 
-  // For single ticker: compute running average at each transaction point
-  // Sort chronologically with seq for computation
-  let runningAvgs={};
-  if(ticker){
-    const chronoTxs=[...txs].sort((a,b)=>{
+  // Compute running average and per-tx realized P/L for each ticker
+  // Need to do this per-ticker even in all-transactions view
+  let runningAvgs={};  // key -> avg at that point
+  let txRealizedPL={}; // key -> realized P/L for that sell tx
+
+  // Get unique tickers in txs
+  const tickersInView=[...new Set(txs.map(t=>t.ticker).filter(Boolean))];
+  for(const tk of tickersInView){
+    const tkTxs=allTransactions.filter(t=>t.ticker===tk).sort((a,b)=>{
       const dc=a.date.localeCompare(b.date);if(dc!==0)return dc;
       return(parseInt(a.seq)||0)-(parseInt(b.seq)||0);
     });
     let qty=0,cost=0;
-    for(const tx of chronoTxs){
-      if(tx.qty>0){cost+=tx.qty*tx.price;qty+=tx.qty}
-      else if(tx.qty<0){const sellQty=Math.abs(tx.qty);if(qty>0)cost-=cost/qty*sellQty;qty-=sellQty}
-      const avg=qty>0?cost/qty:0;
-      // Key by date+seq+broker for unique lookup
+    for(const tx of tkTxs){
       const k=`${tx.date}|${tx.seq}|${tx.broker}`;
-      runningAvgs[k]=avg;
+      if(tx.qty>0){
+        cost+=tx.qty*tx.price;qty+=tx.qty;
+      }else if(tx.qty<0){
+        const sellQty=Math.abs(tx.qty);
+        const avgAtSale=qty>0?cost/qty:0;
+        const pl=sellQty*(tx.price-avgAtSale)-tx.tax;
+        txRealizedPL[k]=pl;
+        if(qty>0)cost-=cost/qty*sellQty;
+        qty-=sellQty;
+      }
+      runningAvgs[k]=qty>0?cost/qty:0;
     }
   }
 
@@ -795,11 +812,11 @@ function showHistory(ticker){
     dateGroups[date].sort((a,b)=>(parseInt(a.seq)||0)-(parseInt(b.seq)||0));
   }
 
-  let html=`<div class="tbl-wrap"><table class="t"><tr><th>날짜</th><th>증권사</th><th>종목</th><th>매매</th><th>수량</th><th>단가</th><th>금액</th></tr>`;
+  let html=`<div class="tbl-wrap"><table class="t"><tr><th>날짜</th><th>증권사</th><th>종목</th><th>매매</th><th>수량</th><th>단가</th><th>금액</th><th>실현</th></tr>`;
 
   for(const date of dates){
     const dTxs=dateGroups[date];
-    html+=`<tr style="background:var(--surface2)"><td colspan="7" style="padding:8px;font-weight:600;color:var(--text)">${fmtDate(date)} <span style="font-weight:400;color:var(--text2);font-size:11px">(${dTxs.length}건)</span></td></tr>`;
+    html+=`<tr style="background:var(--surface2)"><td colspan="8" style="padding:8px;font-weight:600;color:var(--text)">${fmtDate(date)} <span style="font-weight:400;color:var(--text2);font-size:11px">(${dTxs.length}건)</span></td></tr>`;
 
     for(const tx of dTxs){
       const cls=tx.qty>0?'c-buy':'c-sell';
@@ -807,22 +824,28 @@ function showHistory(ticker){
       const bk=tx.broker==='삼성'?'🔵':'🔴';
       const amt=Math.abs(tx.qty)*tx.price;
 
-      // Price with % from avg (only for single ticker view)
+      // Price with % from avg
       let priceStr=tx.price.toFixed(2);
-      if(ticker){
-        const k=`${tx.date}|${tx.seq}|${tx.broker}`;
-        const avg=runningAvgs[k];
-        if(avg&&avg>0){
-          const pctFromAvg=((tx.price-avg)/avg*100);
-          const pctCls=pctFromAvg>=0?'c-buy':'c-sell';
-          priceStr+=` <span class="${pctCls}" style="font-size:10px">(${pctFromAvg>=0?'+':''}${pctFromAvg.toFixed(1)}%)</span>`;
-        }
+      const k=`${tx.date}|${tx.seq}|${tx.broker}`;
+      const avg=runningAvgs[k];
+      if(ticker&&avg&&avg>0){
+        const pctFromAvg=((tx.price-avg)/avg*100);
+        const pctCls=pctFromAvg>=0?'c-buy':'c-sell';
+        priceStr+=` <span class="${pctCls}" style="font-size:10px">(${pctFromAvg>=0?'+':''}${pctFromAvg.toFixed(1)}%)</span>`;
       }
 
-      html+=`<tr><td></td><td>${bk}</td><td><b style="cursor:pointer;color:var(--accent)" onclick="event.stopPropagation();showHistory('${tx.ticker}')">${tx.ticker}</b></td><td class="${cls}">${side}</td><td class="${cls}">${tx.qty>0?'+':''}${tx.qty}</td><td>${priceStr}</td><td>${fmtUSD(amt)}</td></tr>`;
+      // Per-tx realized P/L (sells only)
+      let plStr='';
+      if(tx.qty<0&&txRealizedPL[k]!==undefined){
+        const pl=txRealizedPL[k];
+        const plC=pl>=0?'c-buy':'c-sell';
+        plStr=`<span class="${plC}">${fmtUSD(pl)}</span>`;
+      }
+
+      html+=`<tr><td></td><td>${bk}</td><td><b style="cursor:pointer;color:#d0d4dc" onclick="event.stopPropagation();showHistory('${tx.ticker}')">${tx.ticker}</b></td><td class="${cls}">${side}</td><td class="${cls}">${tx.qty>0?'+':''}${tx.qty}</td><td>${priceStr}</td><td>${fmtUSD(amt)}</td><td>${plStr}</td></tr>`;
     }
 
-    // Daily summary
+    // Daily summary - indented to align with 매매 column
     const buys=dTxs.filter(t=>t.qty>0);
     const sells=dTxs.filter(t=>t.qty<0);
     const buyQty=buys.reduce((s,t)=>s+t.qty,0);
@@ -831,11 +854,15 @@ function showHistory(ticker){
     const sellAmt=sells.reduce((s,t)=>s+Math.abs(t.qty)*t.price,0);
     const buyAvg=buyQty>0?(buyAmt/buyQty):0;
     const sellAvg=sellQty>0?(sellAmt/sellQty):0;
+    // Sum realized P/L for the day
+    let dayPL=0;
+    for(const tx of dTxs){if(tx.qty<0){const k=`${tx.date}|${tx.seq}|${tx.broker}`;if(txRealizedPL[k]!==undefined)dayPL+=txRealizedPL[k]}}
+    const dayPLStr=sells.length>0?`<span class="${dayPL>=0?'c-buy':'c-sell'}">${fmtUSD(dayPL)}</span>`:'';
 
     let sumParts=[];
     if(buyQty>0)sumParts.push(`<span class="c-buy">매수 ${buyQty}주 avg ${buyAvg.toFixed(2)} = ${fmtUSD(buyAmt)}</span>`);
     if(sellQty>0)sumParts.push(`<span class="c-sell">매도 ${sellQty}주 avg ${sellAvg.toFixed(2)} = ${fmtUSD(sellAmt)}</span>`);
-    html+=`<tr style="background:var(--surface)"><td colspan="7" style="padding:6px 8px;font-size:11px;color:var(--text2)">${sumParts.join(' · ')}</td></tr>`;
+    html+=`<tr style="background:var(--surface)"><td></td><td></td><td></td><td colspan="4" style="padding:6px 8px;font-size:11px;color:var(--text2)">${sumParts.join(' · ')}</td><td style="font-size:11px">${dayPLStr}</td></tr>`;
   }
 
   html+=`</table></div>`;
