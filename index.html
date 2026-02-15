@@ -131,7 +131,7 @@ table.t tr:hover td{background:var(--accentBg)}
 <div class="app">
   <div class="header">
     <div class="logo">📊</div>
-    <div style="flex:1"><h1>US Stock Tracker</h1><div class="sub">삼성 / 키움 → Google Sheets</div></div>
+    <div style="flex:1"><h1>US Stock Tracker</h1><div class="sub"><span id="verInfo">v0215-21:00:00</span> · <span id="dataInfo">data-없음</span></div></div>
     <button class="btn btn-s btn-sm" onclick="refreshData()" title="Google Sheet에서 거래 데이터 다시 불러오기">🔄 Data</button>
   </div>
 
@@ -285,12 +285,17 @@ const CACHE_KEY_TX='cache_transactions';
 const CACHE_KEY_PRICES='cache_prices';
 const CACHE_KEY_FUND='cache_fundamentals';
 const CACHE_KEY_CASH='cache_initialCash';
+const CACHE_KEY_DATA_TS='cache_dataTimestamp';
+
+const APP_VERSION='v0216-02:15:00';
 
 // ================ INIT ================
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.p)));
+  document.getElementById('verInfo').textContent=APP_VERSION;
   loadConfig();
   restoreCache();
+  updateDataInfo();
 });
 
 function switchTab(p){
@@ -369,6 +374,16 @@ function saveCache(){
     localStorage.setItem(CACHE_KEY_CASH,JSON.stringify(initialCash));
   }catch(e){}
 }
+function saveDataTimestamp(){
+  const now=new Date();
+  const ts=String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
+  localStorage.setItem(CACHE_KEY_DATA_TS,ts);
+  updateDataInfo();
+}
+function updateDataInfo(){
+  const ts=localStorage.getItem(CACHE_KEY_DATA_TS);
+  document.getElementById('dataInfo').textContent=ts?`data-${ts}`:'data-없음';
+}
 function restoreCache(){
   try{
     const tx=localStorage.getItem(CACHE_KEY_TX);
@@ -379,7 +394,6 @@ function restoreCache(){
     if(fd){cachedFundamentals=JSON.parse(fd)}
     const ic=localStorage.getItem(CACHE_KEY_CASH);
     if(ic){initialCash=JSON.parse(ic)}
-    // If we have cached data, render immediately
     if(allTransactions.length>0){
       computeOverview();
       renderOverview();
@@ -393,6 +407,7 @@ async function refreshData(){
   toast('📡 데이터 불러오는 중...','ok');
   await loadAllTransactions();
   saveCache();
+  saveDataTimestamp();
   computeOverview();
   renderOverview();
   toast('✅ 데이터 갱신 완료','ok');
@@ -520,14 +535,18 @@ function computeOverview(){
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
     const key=`${tx.broker}|${tx.ticker}`;
-    if(!holdMap[key])holdMap[key]={broker:tx.broker,ticker:tx.ticker,totalQty:0,totalCost:0,realizedPL:0,realizedPLThisYear:0,lots:[]};
+    if(!holdMap[key])holdMap[key]={broker:tx.broker,ticker:tx.ticker,totalQty:0,avgCost:0,realizedPL:0,realizedPLThisYear:0,lots:[]};
     const h=holdMap[key];
 
     if(tx.qty>0){
-      h.lots.push({qty:tx.qty,price:tx.price,date:tx.date});
+      // Buy: update moving average cost (no tax)
+      const newCost=h.avgCost*h.totalQty+tx.qty*tx.price;
       h.totalQty+=tx.qty;
-      h.totalCost+=tx.qty*tx.price+tx.tax;
+      h.avgCost=h.totalQty>0?newCost/h.totalQty:0;
+      // FIFO lots for realized P/L
+      h.lots.push({qty:tx.qty,price:tx.price,date:tx.date});
     }else if(tx.qty<0){
+      // Sell: moving avg cost doesn't change per share, just reduce qty
       let sellQty=Math.abs(tx.qty);
       const sellPrice=tx.price;const sellTax=tx.tax;let costBasis=0;
       while(sellQty>0&&h.lots.length>0){
@@ -539,14 +558,14 @@ function computeOverview(){
       h.realizedPL+=pl;
       if(tx.date.startsWith('26'))h.realizedPLThisYear+=pl;
       h.totalQty-=Math.abs(tx.qty);
-      h.totalCost-=costBasis;
+      if(h.totalQty<=0){h.avgCost=0;h.totalQty=0}
     }
   }
 
   const allHoldings=Object.values(holdMap).filter(h=>h.totalQty>0).map(h=>({
     broker:h.broker,ticker:h.ticker,qty:h.totalQty,
-    avgPrice:h.totalQty>0?h.totalCost/h.totalQty:0,
-    purchasedAmt:h.totalCost
+    avgPrice:h.avgCost,
+    purchasedAmt:h.avgCost*h.totalQty
   }));
 
   // Apply cached prices
@@ -754,7 +773,7 @@ function showHistory(ticker){
     });
     let qty=0,cost=0;
     for(const tx of chronoTxs){
-      if(tx.qty>0){cost+=tx.qty*tx.price+tx.tax;qty+=tx.qty}
+      if(tx.qty>0){cost+=tx.qty*tx.price;qty+=tx.qty}
       else if(tx.qty<0){const sellQty=Math.abs(tx.qty);if(qty>0)cost-=cost/qty*sellQty;qty-=sellQty}
       const avg=qty>0?cost/qty:0;
       // Key by date+seq+broker for unique lookup
