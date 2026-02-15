@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>US Stock Tracker</title>
+<title>Sunghoon's Portfolio Manager</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsrsasign/11.1.0/jsrsasign-all-min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -135,7 +135,7 @@ table.t tr:hover td{background:var(--accentBg)}
 <div class="app">
   <div class="header">
     <div class="logo">📊</div>
-    <div style="flex:1"><h1>US Stock Tracker</h1><div class="sub"><span id="verInfo"></span> · <span id="dataInfo">data-없음</span></div></div>
+    <div style="flex:1"><h1>Sunghoon's Portfolio Manager</h1><div class="sub"><span id="verInfo"></span> · <span id="dataInfo">data-없음</span></div></div>
     <button class="btn btn-s btn-sm" onclick="refreshData()" title="Google Sheet에서 거래 데이터 다시 불러오기">🔄 Data</button>
   </div>
 
@@ -709,37 +709,45 @@ function renderOverview(){
   const valueDiffPct=totalPurchased>0?((valueDiff/totalPurchased)*100):0;
   const vdCls=valueDiff>=0?'up':'dn';
   const totalAsset=cash+totalMarketValue;
+  const cashPct=totalAsset>0?((cash/totalAsset)*100):0;
   const earnPct=initCash>0?((totalEarning/initCash)*100):0;
   const earnCls=totalEarning>=0?'up':'dn';
   const realCls=totalRealizedPL>=0?'up':'dn';
+  const realYtdCls=totalRealizedPLThisYear>=0?'up':'dn';
 
   html+=`<div class="summary-grid">`;
 
-  // Top-left: Value Difference
+  // Top-left: 평가손익
   html+=`<div class="sum-card">
-    <div class="label">📈 평가손익 (${valueDiffPct>=0?'+':''}${valueDiffPct.toFixed(1)}%)</div>
-    <div class="value ${vdCls}">${fmtUSD(valueDiff)}</div>
-    <div class="sub">market ${fmtUSD(totalMarketValue)}</div>
-    <div class="sub">purch ${fmtUSD(totalPurchased)}</div>
+    <div class="label">📈 평가손익</div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="value ${vdCls}" style="white-space:nowrap">${fmtUSD(valueDiff)} <span style="font-size:13px">(${valueDiffPct>=0?'+':''}${valueDiffPct.toFixed(1)}%)</span></div>
+      <div style="font-size:10px;color:var(--text2);line-height:1.5;font-family:'JetBrains Mono',monospace;white-space:nowrap">market ${fmtUSD(totalMarketValue)}<br>purch ${fmtUSD(totalPurchased)}</div>
+    </div>
   </div>`;
 
   // Top-right: Cash
-  html+=sumCard('💵 Cash',fmtUSD(cash),'');
+  html+=`<div class="sum-card">
+    <div class="label">💵 Cash</div>
+    <div class="value">${fmtUSD(cash)}</div>
+    <div class="sub">(${cashPct.toFixed(0)}% of total asset)</div>
+  </div>`;
 
   // Bottom-left: Total Earning
   html+=`<div class="sum-card">
-    <div class="label">💰 Total Earning (${earnPct>=0?'+':''}${earnPct.toFixed(1)}%)</div>
-    <div class="value ${earnCls}">${fmtUSD(totalEarning)}</div>
-    <div class="sub">asset ${fmtUSD(totalAsset)}</div>
-    <div class="sub">initial ${fmtUSD(initCash)}</div>
+    <div class="label">💰 Total Earning</div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="value ${earnCls}" style="white-space:nowrap">${fmtUSD(totalEarning)} <span style="font-size:13px">(${earnPct>=0?'+':''}${earnPct.toFixed(1)}%)</span></div>
+      <div style="font-size:10px;color:var(--text2);line-height:1.5;font-family:'JetBrains Mono',monospace;white-space:nowrap">asset ${fmtUSD(totalAsset)}<br>initial ${fmtUSD(initCash)}</div>
+    </div>
   </div>`;
 
   // Bottom-right: Realized P/L
   html+=`<div class="sum-card">
     <div class="label">📊 Realized P/L</div>
-    <div style="display:flex;align-items:baseline;gap:16px">
+    <div style="display:flex;align-items:baseline;gap:28px">
       <div><div class="sub">total</div><div class="value ${realCls}">${fmtUSD(totalRealizedPL)}</div></div>
-      <div><div class="sub">YTD</div><div class="value ${realCls}" style="font-size:16px">${fmtUSD(totalRealizedPLThisYear)}</div></div>
+      <div><div class="sub">YTD</div><div class="value ${realYtdCls}" style="font-size:16px">${fmtUSD(totalRealizedPLThisYear)}</div></div>
     </div>
   </div>`;
 
