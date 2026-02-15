@@ -515,10 +515,13 @@ async function fmpGet(endpoint){
   const url=`https://financialmodelingprep.com/stable/${endpoint}${endpoint.includes('?')?'&':'?'}apikey=${FMP_KEY}`;
   try{
     const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
-    if(!r.ok)throw new Error(`FMP ${r.status}`);
+    if(!r.ok){
+      console.warn(`FMP ${r.status} for ${endpoint}`);
+      return null;
+    }
     const d=await r.json();
     return d;
-  }catch(e){throw new Error(`FMP fetch failed for ${endpoint}: ${e.message}`)}
+  }catch(e){console.warn(`FMP fetch failed for ${endpoint}: ${e.message}`);return null}
 }
 
 async function refreshFundamentals(){
@@ -526,88 +529,86 @@ async function refreshFundamentals(){
   toast('📊 Fundamentals 불러오는 중...','ok');
   try{
     const held=getHeldTickers();
+    // Only fetch for tickers that have a valid underlying (skip null-mapped leveraged ETFs)
     const fundTickers=[...new Set(held.map(t=>getFundTicker(t)).filter(t=>t!==null))];
-    console.log('Held tickers:',held,'Fund tickers to fetch:',fundTickers);
+    console.log('Fund tickers to fetch:',fundTickers);
     if(!fundTickers.length){toast('펀더멘탈 데이터 대상 종목 없음','err');return}
 
     const newFund={};
     for(const tk of fundTickers){
-      try{
-        console.log(`Fetching FMP data for ${tk}...`);
-        const [annual, quarterly, ptConsensus, gradesSummary]=await Promise.all([
-          fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
-          fmpGet(`analyst-estimates?symbol=${tk}&period=quarter&limit=16`),
-          fmpGet(`price-target-consensus?symbol=${tk}`),
-          fmpGet(`grades-consensus?symbol=${tk}`)
-        ]);
-        console.log(`${tk} annual:`,annual);
-        console.log(`${tk} quarterly:`,quarterly);
-        console.log(`${tk} priceTarget:`,ptConsensus);
-        console.log(`${tk} grades:`,gradesSummary);
+      console.log(`=== Fetching FMP data for ${tk} ===`);
+      // Fetch each endpoint independently — null if fails
+      const [annual, quarterly, ptConsensus, gradesData]=await Promise.all([
+        fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
+        fmpGet(`analyst-estimates?symbol=${tk}&period=quarter&limit=16`),
+        fmpGet(`price-target-consensus?symbol=${tk}`),
+        fmpGet(`grades-consensus?symbol=${tk}`)
+      ]);
+      console.log(`${tk} annual:`,annual);
+      console.log(`${tk} quarterly:`,quarterly);
+      console.log(`${tk} priceTarget:`,ptConsensus);
+      console.log(`${tk} grades:`,gradesData);
 
-        const price=cachedPrices[tk]?cachedPrices[tk].current:0;
+      const price=cachedPrices[tk]?cachedPrices[tk].current:0;
 
-        // --- 12-month forward EPS & Revenue ---
-        // Sort quarterly by date ascending, find quarters covering next 12 months
+      // --- 12-month forward EPS & Revenue from quarterly ---
+      let eps12m=null,rev12m=null,pe12m=null,epsYoy12m=null,revYoy12m=null;
+      let numAnalystsEps=null,numAnalystsRev=null,epsPrev12m=null,revPrev12m=null;
+      let next4Q=[];
+      if(Array.isArray(quarterly)&&quarterly.length>0){
         const now=new Date();
-        const sortedQ=(quarterly||[]).slice().sort((a,b)=>a.date.localeCompare(b.date));
-        // Future quarters: fiscal end date >= today
+        const sortedQ=quarterly.slice().sort((a,b)=>a.date.localeCompare(b.date));
         const futureQ=sortedQ.filter(q=>new Date(q.date)>=now);
-        // Take first 4 future quarters for 12m forward
-        const next4Q=futureQ.slice(0,4);
-        const eps12m=next4Q.length===4?next4Q.reduce((s,q)=>s+(q.epsAvg||0),0):null;
-        const rev12m=next4Q.length===4?next4Q.reduce((s,q)=>s+(q.revenueAvg||0),0):null;
-        const numAnalystsEps=next4Q.length>0?Math.round(next4Q.reduce((s,q)=>s+(q.numAnalystsEps||0),0)/next4Q.length):null;
-        const numAnalystsRev=next4Q.length>0?Math.round(next4Q.reduce((s,q)=>s+(q.numAnalystsRevenue||0),0)/next4Q.length):null;
-
-        // Prior 12m: 4 quarters before next4Q
+        next4Q=futureQ.slice(0,4);
+        if(next4Q.length===4){
+          eps12m=next4Q.reduce((s,q)=>s+(q.epsAvg||0),0);
+          rev12m=next4Q.reduce((s,q)=>s+(q.revenueAvg||0),0);
+          numAnalystsEps=Math.round(next4Q.reduce((s,q)=>s+(q.numAnalystsEps||0),0)/4);
+          numAnalystsRev=Math.round(next4Q.reduce((s,q)=>s+(q.numAnalystsRevenue||0),0)/4);
+        }
         const prev4Q=sortedQ.filter(q=>new Date(q.date)<now).slice(-4);
-        const epsPrev12m=prev4Q.length===4?prev4Q.reduce((s,q)=>s+(q.epsAvg||0),0):null;
-        const revPrev12m=prev4Q.length===4?prev4Q.reduce((s,q)=>s+(q.revenueAvg||0),0):null;
+        if(prev4Q.length===4){
+          epsPrev12m=prev4Q.reduce((s,q)=>s+(q.epsAvg||0),0);
+          revPrev12m=prev4Q.reduce((s,q)=>s+(q.revenueAvg||0),0);
+        }
+        pe12m=(eps12m&&eps12m>0&&price)?price/eps12m:null;
+        epsYoy12m=(epsPrev12m&&eps12m&&epsPrev12m!==0)?((eps12m-epsPrev12m)/Math.abs(epsPrev12m)*100):null;
+        revYoy12m=(revPrev12m&&rev12m&&revPrev12m!==0)?((rev12m-revPrev12m)/Math.abs(revPrev12m)*100):null;
+      }
 
-        const pe12m=(eps12m&&eps12m>0&&price)?price/eps12m:null;
-        const epsYoy12m=(epsPrev12m&&eps12m&&epsPrev12m!==0)?((eps12m-epsPrev12m)/Math.abs(epsPrev12m)*100):null;
-        const revYoy12m=(revPrev12m&&rev12m&&revPrev12m!==0)?((rev12m-revPrev12m)/Math.abs(revPrev12m)*100):null;
+      // --- Price target ---
+      const ptArr=Array.isArray(ptConsensus)?ptConsensus:[];
+      const pt=ptArr[0]||{};
+      const targetPrice=pt.targetConsensus||pt.targetMedian||null;
+      const targetHigh=pt.targetHigh||null;
+      const targetLow=pt.targetLow||null;
 
-        // --- Price target ---
-        const pt=Array.isArray(ptConsensus)?ptConsensus[0]:ptConsensus;
-        const targetPrice=pt?.targetConsensus||pt?.targetMedian||null;
-        const targetHigh=pt?.targetHigh||null;
-        const targetLow=pt?.targetLow||null;
+      // --- Grades ---
+      const grArr=Array.isArray(gradesData)?gradesData:[];
+      const gr=grArr[0]||{};
+      const strongBuy=gr.strongBuy||0;
+      const buy=gr.buy||0;
+      const hold=gr.hold||0;
+      const sell=gr.sell||0;
+      const strongSell=gr.strongSell||0;
+      const consensus=gr.consensus||null;
 
-        // --- Grades summary ---
-        const gr=Array.isArray(gradesSummary)?gradesSummary[0]:gradesSummary;
-        const strongBuy=gr?.strongBuy||0;
-        const buy=gr?.buy||0;
-        const hold=gr?.hold||0;
-        const sell=gr?.sell||0;
-        const strongSell=gr?.strongSell||0;
-        const consensus=gr?.consensus||null;
-
-        // Also keep annual for reference
-        const fy2026=annual.find(e=>e.date&&e.date.startsWith('2026'));
-        const fy2025=annual.find(e=>e.date&&e.date.startsWith('2025'));
-
-        newFund[tk]={
-          price,
-          // 12m forward
-          eps12m, rev12m, pe12m,
-          epsYoy12m, revYoy12m,
-          numAnalystsEps, numAnalystsRev,
-          epsPrev12m, revPrev12m,
-          next4Q:next4Q.map(q=>({date:q.date,epsAvg:q.epsAvg,revAvg:q.revenueAvg})),
-          // Price target
-          targetPrice, targetHigh, targetLow,
-          // Grades
-          strongBuy, buy, hold, sell, strongSell, consensus,
-          // Annual reference
-          annual, quarterly:sortedQ,
-          fetchDate:new Date().toISOString().slice(0,10)
-        };
-        console.log(`${tk} done:`,newFund[tk]);
-      }catch(e){console.warn(`FMP skip ${tk}:`,e.message)}
+      newFund[tk]={
+        price,
+        eps12m, rev12m, pe12m,
+        epsYoy12m, revYoy12m,
+        numAnalystsEps, numAnalystsRev,
+        epsPrev12m, revPrev12m,
+        next4Q:next4Q.map(q=>({date:q.date,epsAvg:q.epsAvg,revAvg:q.revenueAvg})),
+        targetPrice, targetHigh, targetLow,
+        strongBuy, buy, hold, sell, strongSell, consensus,
+        annual:annual||[], quarterly:quarterly||[],
+        fetchDate:new Date().toISOString().slice(0,10)
+      };
+      console.log(`${tk} RESULT:`,newFund[tk]);
     }
 
+    // Map to held tickers (including leveraged ETFs → underlying)
     for(const tk of held){
       const fundTk=getFundTicker(tk);
       if(fundTk&&newFund[fundTk])cachedFundamentals[tk]=newFund[fundTk];
