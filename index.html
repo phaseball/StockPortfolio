@@ -131,7 +131,8 @@ table.t tr:hover td{background:var(--accentBg)}
 <div class="app">
   <div class="header">
     <div class="logo">📊</div>
-    <div><h1>US Stock Tracker</h1><div class="sub">삼성 / 키움 → Google Sheets</div></div>
+    <div style="flex:1"><h1>US Stock Tracker</h1><div class="sub">삼성 / 키움 → Google Sheets</div></div>
+    <button class="btn btn-s btn-sm" onclick="refreshData()" title="Google Sheet에서 거래 데이터 다시 불러오기">🔄 Data</button>
   </div>
 
   <nav id="nav">
@@ -151,7 +152,10 @@ table.t tr:hover td{background:var(--accentBg)}
         <button class="fbtn" onclick="setFilter('키움',this)">🔴 키움</button>
         <button class="fbtn" onclick="setFilter('all',this)">Total</button>
       </div>
-      <button class="btn btn-s btn-sm" onclick="loadOverview()">🔄 새로고침</button>
+      <div style="display:flex;gap:4px">
+        <button class="btn btn-s btn-sm" onclick="refreshPrices()" title="현재가 업데이트">💲 Price</button>
+        <button class="btn btn-s btn-sm" onclick="refreshFundamentals()" title="P/E, EPS 업데이트">📐 Fund.</button>
+      </div>
     </div>
     <div id="overviewContent"><p style="color:var(--text2);text-align:center;padding:32px">🔄 클릭하여 포트폴리오를 불러오세요</p></div>
   </div>
@@ -273,14 +277,20 @@ CLS,1,282.5800,2"></textarea>
 const TAX={삼성:0.0003,키움:0.0007};
 const SCOPES='https://www.googleapis.com/auth/spreadsheets';
 let SA_KEY=null,SHEET_ID='',gToken=null,gTokenExp=0;
-let allTransactions=[];  // parsed from sheets
+let allTransactions=[];
 let initialCash=0;
+let cachedPrices={};    // ticker -> {current,prevClose,chg}
+let cachedFundamentals={}; // ticker -> {pe,epsChg} (future)
+const CACHE_KEY_TX='cache_transactions';
+const CACHE_KEY_PRICES='cache_prices';
+const CACHE_KEY_FUND='cache_fundamentals';
+const CACHE_KEY_CASH='cache_initialCash';
 
 // ================ INIT ================
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.p)));
-  const drop=document.getElementById('drop');
   loadConfig();
+  restoreCache();
 });
 
 function switchTab(p){
@@ -350,6 +360,69 @@ async function testConnection(){
   catch(e){updateSt('st-gs','no','실패');toast(e.message,'err')}
 }
 
+// ================ CACHE ================
+function saveCache(){
+  try{
+    localStorage.setItem(CACHE_KEY_TX,JSON.stringify(allTransactions));
+    localStorage.setItem(CACHE_KEY_PRICES,JSON.stringify(cachedPrices));
+    localStorage.setItem(CACHE_KEY_FUND,JSON.stringify(cachedFundamentals));
+    localStorage.setItem(CACHE_KEY_CASH,JSON.stringify(initialCash));
+  }catch(e){}
+}
+function restoreCache(){
+  try{
+    const tx=localStorage.getItem(CACHE_KEY_TX);
+    if(tx){allTransactions=JSON.parse(tx)}
+    const pr=localStorage.getItem(CACHE_KEY_PRICES);
+    if(pr){cachedPrices=JSON.parse(pr)}
+    const fd=localStorage.getItem(CACHE_KEY_FUND);
+    if(fd){cachedFundamentals=JSON.parse(fd)}
+    const ic=localStorage.getItem(CACHE_KEY_CASH);
+    if(ic){initialCash=JSON.parse(ic)}
+    // If we have cached data, render immediately
+    if(allTransactions.length>0){
+      computeOverview();
+      renderOverview();
+    }
+  }catch(e){}
+}
+
+// Three separate refresh functions
+async function refreshData(){
+  if(!SHEET_ID||!SA_KEY){toast('Google Sheets 설정을 완료하세요','err');return}
+  toast('📡 데이터 불러오는 중...','ok');
+  await loadAllTransactions();
+  saveCache();
+  computeOverview();
+  renderOverview();
+  toast('✅ 데이터 갱신 완료','ok');
+}
+
+async function refreshPrices(){
+  const tickers=getHeldTickers();
+  if(!tickers.length){toast('보유 종목 없음','err');return}
+  toast('💲 가격 불러오는 중...','ok');
+  cachedPrices=await fetchPrices(tickers);
+  saveCache();
+  computeOverview();
+  renderOverview();
+  toast('✅ 가격 갱신 완료','ok');
+}
+
+async function refreshFundamentals(){
+  // Placeholder for FMP integration
+  toast('📐 Fundamentals는 FMP API 연결 후 사용 가능합니다','err');
+}
+
+function getHeldTickers(){
+  const qtyMap={};
+  for(const tx of allTransactions){
+    if(!tx.ticker)continue;
+    qtyMap[tx.ticker]=(qtyMap[tx.ticker]||0)+tx.qty;
+  }
+  return Object.entries(qtyMap).filter(([,q])=>q>0).map(([t])=>t);
+}
+
 // ================ LOAD ALL TRANSACTIONS ================
 async function loadAllTransactions(){
   allTransactions=[];
@@ -401,28 +474,20 @@ async function fetchPrices(tickers){
 }
 
 // ================ OVERVIEW ================
-let cachedOverview=null; // {holdMap, holdings, prices, cash, initialCash}
+let cachedOverviewData=null; // {holdMap, allHoldings, cashByBroker}
 let currentFilter='삼성';
 
 function setFilter(f,btn){
   currentFilter=f;
   document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('on'));
   btn.classList.add('on');
-  if(cachedOverview)renderOverview();
+  if(cachedOverviewData)renderOverview();
 }
 
-async function loadOverview(){
-  if(!SHEET_ID||!SA_KEY){toast('Google Sheets 설정을 완료하세요','err');return}
-  const el=document.getElementById('overviewContent');
-  el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 불러오는 중...</p>';
-
-  await loadAllTransactions();
-
+function computeOverview(){
   // Sort chronologically (oldest first) for correct FIFO
   const chronoTx=[...allTransactions].reverse();
 
-  // Compute holdings per broker using FIFO
-  // holdMap key = "broker|ticker"
   const holdMap={};
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
@@ -449,36 +514,46 @@ async function loadOverview(){
     }
   }
 
-  // Unique tickers with qty > 0
   const allHoldings=Object.values(holdMap).filter(h=>h.totalQty>0).map(h=>({
     broker:h.broker,ticker:h.ticker,qty:h.totalQty,
     avgPrice:h.totalQty>0?h.totalCost/h.totalQty:0,
     purchasedAmt:h.totalCost
   }));
-  const tickers=[...new Set(allHoldings.map(h=>h.ticker))];
-  const prices=tickers.length>0?await fetchPrices(tickers):{};
 
+  // Apply cached prices
   for(const h of allHoldings){
-    const p=prices[h.ticker];
+    const p=cachedPrices[h.ticker];
     h.currentPrice=p?p.current:0;
     h.chg=p?p.chg:0;
     h.marketValue=h.qty*h.currentPrice;
     h.unrealizedPL=h.marketValue-h.purchasedAmt;
   }
 
-  // Cash per broker
   const cashByBroker={삼성:0,키움:0};
   for(const tx of allTransactions){
     if(tx.qty>0)cashByBroker[tx.broker]-=tx.total;
     else cashByBroker[tx.broker]+=Math.abs(tx.qty)*tx.price-tx.tax;
   }
 
-  cachedOverview={holdMap,allHoldings,prices,cashByBroker};
+  cachedOverviewData={holdMap,allHoldings,cashByBroker};
+}
+
+async function loadOverview(){
+  // Legacy: full refresh (data + prices)
+  if(!SHEET_ID||!SA_KEY){toast('Google Sheets 설정을 완료하세요','err');return}
+  const el=document.getElementById('overviewContent');
+  el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 불러오는 중...</p>';
+  await loadAllTransactions();
+  const tickers=getHeldTickers();
+  if(tickers.length)cachedPrices=await fetchPrices(tickers);
+  saveCache();
+  computeOverview();
   renderOverview();
 }
 
 function renderOverview(){
-  const{holdMap,allHoldings,prices,cashByBroker}=cachedOverview;
+  if(!cachedOverviewData)return;
+  const{holdMap,allHoldings,cashByBroker}=cachedOverviewData;
   const el=document.getElementById('overviewContent');
   const f=currentFilter;
 
@@ -728,7 +803,7 @@ async function doImport(){
     try{await sheetsInsertAtTop(g.broker,rows);addLog(logEl,`✅ ${g.broker} ${fmtDate(g.date)}: ${rows.length}건 저장`,'ok')}
     catch(e){addLog(logEl,`❌ ${g.broker} 실패: ${e.message}`,'err')}
   }
-  toast('가져오기 완료!','ok');
+  toast('가져오기 완료! Data를 새로고침하세요.','ok');
 }
 
 // ================ MANUAL ================
