@@ -533,13 +533,6 @@ async function loadAllTransactions(){
     }
   }catch(e){}
 
-  // Compute actual cash amounts BEFORE split normalization
-  for(const tx of allTransactions){
-    if(tx.qty>0)tx.cashAmt=-(Math.abs(tx.qty)*tx.price+tx.tax); // buy: cash out (negative)
-    else if(tx.qty<0)tx.cashAmt=Math.abs(tx.qty)*tx.price-tx.tax; // sell: cash in (positive)
-    else tx.cashAmt=0;
-  }
-
   // Normalize splits: only adjust rows that have a split marker
   // split=1/2 on a row means THAT row's qty and price are pre-split
   // -> qty *= 2, price /= 2 to convert to post-split terms
@@ -646,7 +639,8 @@ function computeOverview(){
 
   const cashByBroker={삼성:0,키움:0};
   for(const tx of allTransactions){
-    cashByBroker[tx.broker]+=(tx.cashAmt||0);
+    if(tx.qty>0)cashByBroker[tx.broker]-=tx.total; // buy: cash out
+    else if(tx.qty<0)cashByBroker[tx.broker]+=tx.total-2*tx.tax; // sell: cash in (total=|qty|*price+tax, so proceeds=total-2*tax)
   }
 
   cachedOverviewData={holdMap,allHoldings,cashByBroker};
@@ -902,7 +896,7 @@ function showHistory(ticker){
     for(const tx of dTxs){
       const cls=tx.qty>0?'c-buy':'c-sell';
       const side=tx.qty>0?'매수':'매도';
-      const bk=tx.broker==='삼성'?'🔵':'🔴';
+      const bk=tx.broker==='삼성'?'🔵삼성':'🔴키움';
       const amt=Math.abs(tx.qty)*tx.price;
 
       // Price with % from avg
