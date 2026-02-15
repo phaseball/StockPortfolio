@@ -510,9 +510,19 @@ function getFundTicker(ticker){
 async function fmpGet(endpoint){
   if(!FMP_KEY)throw new Error('FMP API Key 없음');
   const url=`https://financialmodelingprep.com/api/v3/${endpoint}${endpoint.includes('?')?'&':'?'}apikey=${FMP_KEY}`;
-  const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
-  if(!r.ok)throw new Error(`FMP ${r.status}`);
-  return r.json();
+  const proxies=[
+    u=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u=>`https://corsproxy.io/?${encodeURIComponent(u)}`,
+  ];
+  for(const mkProxy of proxies){
+    try{
+      const r=await fetch(mkProxy(url),{signal:AbortSignal.timeout(10000)});
+      if(!r.ok)continue;
+      const d=await r.json();
+      if(d&&!d.error)return d;
+    }catch(e){continue}
+  }
+  throw new Error(`FMP fetch failed for ${endpoint}`);
 }
 
 async function refreshFundamentals(){
@@ -527,11 +537,14 @@ async function refreshFundamentals(){
     const newFund={};
     for(const tk of fundTickers){
       try{
+        console.log(`Fetching FMP estimates for ${tk}...`);
         // Fetch annual and quarterly estimates
         const [annual,quarterly]=await Promise.all([
           fmpGet(`analyst-estimates/${tk}?period=annual&limit=5`),
           fmpGet(`analyst-estimates/${tk}?period=quarter&limit=12`)
         ]);
+        console.log(`${tk} annual:`,annual);
+        console.log(`${tk} quarterly:`,quarterly);
 
         // Find FY2025 and FY2026 annual estimates
         const fy2026=annual.find(e=>e.date&&e.date.startsWith('2026'));
@@ -556,7 +569,7 @@ async function refreshFundamentals(){
           annual,quarterly,
           fetchDate:new Date().toISOString().slice(0,10)
         };
-      }catch(e){console.error(`FMP error for ${tk}:`,e)}
+      }catch(e){console.error(`FMP error for ${tk}:`,e);toast(`FMP ${tk} 오류: ${e.message}`,'err')}
     }
 
     // Map to held tickers (including leveraged ETFs)
@@ -579,6 +592,7 @@ async function refreshFundamentals(){
     updateFundInfo();
 
     // Save to Google Sheet fundamentals tab
+    console.log('Saving fundamentals to sheet...',newFund);
     await saveFundamentalsToSheet(newFund);
 
     computeOverview();
