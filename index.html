@@ -505,7 +505,7 @@ async function refreshPrices(){
 // Leveraged ETF → underlying ticker mapping for fundamentals
 // null = skip (no fundamentals available, e.g. index ETFs)
 // Tickers not in this map: fetch their own fundamentals directly
-const UNDERLYING_MAP={AMDL:'AMD',NVDL:'NVDA',TQQQ:null,SOXL:null,SQQQ:null,GGLL:null};
+const UNDERLYING_MAP={AMDL:'AMD',NVDL:'NVDA',TQQQ:null,SOXL:null,SQQQ:null,GGLL:'GOOGL',TSLL:'TSLA'};
 
 function getFundTicker(ticker){
   if(ticker in UNDERLYING_MAP)return UNDERLYING_MAP[ticker];
@@ -549,7 +549,36 @@ async function refreshFundamentals(){
       console.log(`${tk} priceTarget:`,ptConsensus);
       console.log(`${tk} grades:`,gradesData);
 
-      const price=cachedPrices[tk]?cachedPrices[tk].current:0;
+      // Price: try cached price for this ticker, or find from Yahoo quote
+      let price=0;
+      if(cachedPrices[tk]&&cachedPrices[tk].current){
+        price=cachedPrices[tk].current;
+      }else{
+        // For underlying tickers (e.g. NVDA from NVDL), fetch price
+        // Try FMP quote first
+        try{
+          const q=await fmpGet(`profile?symbol=${tk}`);
+          if(Array.isArray(q)&&q[0]&&q[0].price)price=q[0].price;
+          else if(q&&q.price)price=q.price;
+        }catch(e){}
+        // Fallback to Yahoo
+        if(price===0){
+          try{
+            const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?interval=1d&range=1d`;
+            const proxies=[u=>`https://corsproxy.io/?${encodeURIComponent(u)}`];
+            for(const mkP of proxies){
+              try{
+                const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(8000)});
+                if(!r.ok)continue;
+                const d=await r.json();
+                price=d.chart?.result?.[0]?.meta?.regularMarketPrice||0;
+                if(price>0)break;
+              }catch(e){continue}
+            }
+          }catch(e){}
+        }
+        console.log(`${tk} price fetched: ${price}`);
+      }
 
       // --- Forward P/E from annual estimates ---
       // Use the nearest future fiscal year as "forward"
@@ -1011,7 +1040,7 @@ function holdingsHeader(){
   return`<div class="hold-hdr">
     <div><span>평균 / 현재가 (전일대비; 전주대비)</span><span>평가손익</span></div>
     <div><span>평가금액</span><span>매입금액</span></div>
-    <div><span>P/E fwd (YOY%)</span><span>Rev fwd (YOY%)</span></div>
+    <div><span>P/E 12m (YOY%)</span><span>Rev 12m (YOY%)</span></div>
     <div><span>EPS est. chg 1w</span><span>EPS est. chg 1m</span></div>
     <div><span>Target (gap%)</span><span>Rating B/H/S</span></div>
     <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
