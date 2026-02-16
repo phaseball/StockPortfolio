@@ -1358,39 +1358,41 @@ async function showTotalValueChart(){
   const chronoTx=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
   if(chronoTx.length===0){el.innerHTML='<p style="color:var(--text2)">거래 내역이 없습니다</p>';return}
 
-  const posMap={}; // ticker -> {qty, lastPrice, invested}
+  const posMap={}; // ticker -> {qty, avgCost, lastPrice}
   let cashSS=initialCashSS, cashKW=initialCashKW;
   chartSnapshots=[];
   let lastDate=null;
-  let cumPurchased=0;
 
   function takeSnapshot(date){
-    let mktVal=0;
+    let mktVal=0, costBasis=0;
     const holdings={};
     for(const[tk,p] of Object.entries(posMap)){
       const val=p.qty*p.lastPrice;
       mktVal+=val;
+      costBasis+=p.qty*p.avgCost;
       if(p.qty>0)holdings[tk]=val;
     }
-    chartSnapshots.push({date,totalValue:cashSS+cashKW+mktVal,purchasedAmt:cumPurchased,holdings:{...holdings}});
+    chartSnapshots.push({date,totalValue:cashSS+cashKW+mktVal,purchasedAmt:costBasis,holdings:{...holdings}});
   }
 
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
     const tk=tx.ticker;
-    if(!posMap[tk])posMap[tk]={qty:0,lastPrice:0,invested:0};
+    if(!posMap[tk])posMap[tk]={qty:0,avgCost:0,lastPrice:0};
     const pos=posMap[tk];
     pos.lastPrice=tx.price;
 
     if(tx.qty>0){
+      // Update moving average cost
+      const newCost=pos.avgCost*pos.qty+tx.qty*tx.price;
       pos.qty+=tx.qty;
-      pos.invested+=tx.qty*tx.price+tx.tax;
-      cumPurchased+=tx.qty*tx.price+tx.tax;
+      pos.avgCost=pos.qty>0?newCost/pos.qty:0;
       if(tx.broker==='삼성')cashSS-=(tx.qty*tx.price+tx.tax);
       else cashKW-=(tx.qty*tx.price+tx.tax);
     }else if(tx.qty<0){
       const sq=Math.abs(tx.qty);
-      pos.qty-=sq;if(pos.qty<0)pos.qty=0;
+      pos.qty-=sq;
+      if(pos.qty<=0){pos.qty=0;pos.avgCost=0}
       if(tx.broker==='삼성')cashSS+=(sq*tx.price-tx.tax);
       else cashKW+=(sq*tx.price-tx.tax);
     }
@@ -1405,15 +1407,15 @@ async function showTotalValueChart(){
   // Today's value
   if(cachedOverviewData){
     const{allHoldings,cashByBroker}=cachedOverviewData;
-    let mktVal=0;const holdings={};
-    for(const h of allHoldings){mktVal+=h.marketValue;if(h.qty>0)holdings[h.ticker]=h.marketValue}
+    let mktVal=0;const holdings={};let costBasis=0;
+    for(const h of allHoldings){mktVal+=h.marketValue;if(h.qty>0)holdings[h.ticker]=h.marketValue;costBasis+=h.purchasedAmt||0}
     const todayCash=initialCashSS+cashByBroker['삼성']+initialCashKW+cashByBroker['키움'];
     const todayDate=new Date().toISOString().slice(2,10).replace(/-/g,'');
     if(chartSnapshots.length===0||chartSnapshots[chartSnapshots.length-1].date!==todayDate){
-      chartSnapshots.push({date:todayDate,totalValue:todayCash+mktVal,purchasedAmt:cumPurchased,holdings});
+      chartSnapshots.push({date:todayDate,totalValue:todayCash+mktVal,purchasedAmt:costBasis,holdings});
     }else{
       const last=chartSnapshots[chartSnapshots.length-1];
-      last.totalValue=todayCash+mktVal;last.holdings=holdings;
+      last.totalValue=todayCash+mktVal;last.holdings=holdings;last.purchasedAmt=costBasis;
     }
   }
 
@@ -1464,11 +1466,7 @@ function redrawChart(){
     if(lookups[tk])baseBench[tk]=findPrice(lookups[tk],snaps[0].date);
   }
 
-  // In chg% mode, skip snapshots where purchasedAmt is 0 or near-zero
-  if(chartMode==='chg'){
-    snaps=snaps.filter(s=>s.purchasedAmt>0);
-    if(snaps.length<2){el.innerHTML='<p style="color:var(--text2)">Change% 데이터가 부족합니다</p>';return}
-  }
+  // baseBench only needed for norm mode
 
   // Determine top 5 tickers by final holdings value
   const finalHoldings=snaps[snaps.length-1].holdings||{};
@@ -1491,15 +1489,32 @@ function redrawChart(){
         entry[tk]=p?((p/baseBench[tk])*100):null;
       }
     }else{
-      // Change% mode: portfolio = (totalValue - purchasedAmt) / purchasedAmt
-      entry.portfolio=snap.purchasedAmt>0?((snap.totalValue-snap.purchasedAmt)/snap.purchasedAmt*100):0;
-      // Benchmarks: daily change% from same start date
+      // Change% mode: daily change of total value / purchase amount
+      // Measures investment earning rate, discarding cash
+      // Need previous snapshot's totalValue
+      const prevIdx=snaps.indexOf(snap)-1;
+      if(prevIdx>=0&&snap.purchasedAmt>0){
+        const prevSnap=snaps[prevIdx];
+        const dailyChg=snap.totalValue-prevSnap.totalValue;
+        entry.portfolio=(dailyChg/snap.purchasedAmt)*100;
+      }else{
+        entry.portfolio=null;
+      }
+      // Benchmarks: daily change% of price
       for(const tk of chartBenches){
-        if(!lookups[tk]||!baseBench[tk])continue;
+        if(!lookups[tk])continue;
         const p=findPrice(lookups[tk],snap.date);
-        entry[tk]=p?((p-baseBench[tk])/baseBench[tk]*100):null;
+        const prevIdx2=snaps.indexOf(snap)-1;
+        if(prevIdx2>=0){
+          const pp=findPrice(lookups[tk],snaps[prevIdx2].date);
+          entry[tk]=(p&&pp&&pp>0)?((p-pp)/pp*100):null;
+        }else{
+          entry[tk]=null;
+        }
       }
     }
+    // Skip entries with null portfolio in chg% mode
+    if(chartMode==='chg'&&entry.portfolio==null)continue;
     chartData.push(entry);
   }
 
