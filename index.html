@@ -120,7 +120,7 @@ table.t tr:hover td{background:var(--accentBg)}
 .closed-open .closed-arrow{transform:rotate(90deg)}
 
 /* Back button */
-.back-btn{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border:none;background:var(--surface2);color:var(--text2);border-radius:6px;cursor:pointer;font:12px 'Noto Sans KR',sans-serif;margin-bottom:12px}
+.back-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:none;background:var(--surface2);color:var(--text2);border-radius:8px;cursor:pointer;font:600 14px 'Noto Sans KR',sans-serif;margin-bottom:12px}
 .back-btn:hover{color:var(--text);background:var(--surface3)}
 
 /* Loading spinner */
@@ -171,6 +171,15 @@ table.t tr:hover td{background:var(--accentBg)}
       price: <span id="priceInfo">없음</span> · fund: <span id="fundInfo">없음</span>
     </div>
     <div id="overviewContent"><p style="color:var(--text2);text-align:center;padding:32px">🔄 클릭하여 포트폴리오를 불러오세요</p></div>
+  </div>
+
+  <!-- ==================== TOTAL VALUE CHART ==================== -->
+  <div id="p-chart" class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span class="back-btn" onclick="switchTab('overview')">← 돌아가기</span>
+      <span style="font-size:14px;font-weight:600">📈 Total Value vs TQQQ</span>
+    </div>
+    <div id="chartContent"><p style="color:var(--text2);text-align:center;padding:32px">로딩 중...</p></div>
   </div>
 
   <!-- ==================== TICKER HISTORY ==================== -->
@@ -1000,10 +1009,10 @@ function renderOverview(){
     </div>
   </div>`;
 
-  // Bottom-left: Total Value
+  // Bottom-left: Total Value (clickable for chart)
   const earnSign=totalEarning>=0?'+':'';
-  html+=`<div class="sum-card">
-    <div class="label">💰 Total Value</div>
+  html+=`<div class="sum-card" onclick="showTotalValueChart()" style="cursor:pointer">
+    <div class="label">💰 Total Value <span style="font-size:10px;color:var(--text3)">📈 클릭</span></div>
     <div style="display:flex;align-items:center;gap:20px">
       <div class="value ${earnCls}" style="white-space:nowrap">${earnSign}${fmtUSD(totalEarning)} <span style="font-size:13px">(${earnPct>=0?'+':''}${earnPct.toFixed(1)}%)</span></div>
       <div style="font-size:10px;color:var(--text2);line-height:1.6;font-family:'JetBrains Mono',monospace;white-space:nowrap;text-align:right">asset&nbsp;&nbsp; <span style="display:inline-block;text-align:right">${fmtUSD(totalAsset)}</span><br>initial <span style="display:inline-block;text-align:right">${fmtUSD(initCash)}</span></div>
@@ -1253,6 +1262,242 @@ function sumCard2(label,value,right,cls=''){
   return`<div class="sum-card"><div class="label">${label}</div><div style="display:flex;align-items:baseline;gap:6px"><div class="value ${cls}">${value}</div><div class="sub" style="margin-top:0">${right}</div></div></div>`;
 }
 
+// ================ TOTAL VALUE CHART ================
+async function showTotalValueChart(){
+  switchTab('chart');
+  const el=document.getElementById('chartContent');
+  el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 차트 데이터 계산 중...</p>';
+
+  // Compute daily total value from transactions
+  // For each date a transaction occurred, compute total asset value (cash + holdings market value)
+  // We need historical prices for held tickers on each date — approximate using transaction prices
+  const chronoTx=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
+  if(chronoTx.length===0){el.innerHTML='<p style="color:var(--text2)">거래 내역이 없습니다</p>';return}
+
+  // Build daily snapshots: track positions and cash
+  const posMap={}; // ticker -> {qty, avgCost, lastPrice}
+  let cashSS=initialCashSS, cashKW=initialCashKW;
+  const snapshots=[]; // [{date, totalValue}]
+  let lastDate=null;
+
+  for(const tx of chronoTx){
+    if(!tx.ticker)continue;
+    const tk=tx.ticker;
+    if(!posMap[tk])posMap[tk]={qty:0,lastPrice:0};
+    const pos=posMap[tk];
+
+    // Update last known price for this ticker
+    pos.lastPrice=tx.price;
+
+    if(tx.qty>0){
+      pos.qty+=tx.qty;
+      if(tx.broker==='삼성')cashSS-=(tx.qty*tx.price+tx.tax);
+      else cashKW-=(tx.qty*tx.price+tx.tax);
+    }else if(tx.qty<0){
+      const sq=Math.abs(tx.qty);
+      pos.qty-=sq;
+      if(pos.qty<0)pos.qty=0;
+      if(tx.broker==='삼성')cashSS+=(sq*tx.price-tx.tax);
+      else cashKW+=(sq*tx.price-tx.tax);
+    }
+
+    // Snapshot at each unique date
+    if(tx.date!==lastDate){
+      if(lastDate){
+        // Save snapshot for lastDate
+        let mktVal=0;
+        for(const p of Object.values(posMap))mktVal+=p.qty*p.lastPrice;
+        snapshots.push({date:lastDate,totalValue:cashSS+cashKW+mktVal});
+      }
+      lastDate=tx.date;
+    }
+  }
+  // Final snapshot
+  if(lastDate){
+    let mktVal=0;
+    for(const p of Object.values(posMap))mktVal+=p.qty*p.lastPrice;
+    snapshots.push({date:lastDate,totalValue:cashSS+cashKW+mktVal});
+  }
+
+  // Also add today's value from cachedOverviewData
+  if(cachedOverviewData){
+    const{allHoldings,cashByBroker}=cachedOverviewData;
+    let mktVal=0;
+    for(const h of allHoldings)mktVal+=h.marketValue;
+    const todayCash=initialCashSS+cashByBroker['삼성']+initialCashKW+cashByBroker['키움'];
+    const todayDate=new Date().toISOString().slice(2,10).replace(/-/g,'');
+    // Only add if different from last snapshot
+    if(snapshots.length===0||snapshots[snapshots.length-1].date!==todayDate){
+      snapshots.push({date:todayDate,totalValue:todayCash+mktVal});
+    }else{
+      snapshots[snapshots.length-1].totalValue=todayCash+mktVal;
+    }
+  }
+
+  if(snapshots.length<2){el.innerHTML='<p style="color:var(--text2)">차트를 그리기에 데이터가 부족합니다</p>';return}
+
+  // Fetch TQQQ historical prices
+  el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> TQQQ 가격 불러오는 중...</p>';
+  const startDate=snapshots[0].date; // YYMMDD
+  const startFull='20'+startDate.slice(0,2)+'-'+startDate.slice(2,4)+'-'+startDate.slice(4,6);
+  let tqqqData=[];
+  try{
+    const range='5y';
+    const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/TQQQ?interval=1d&range=${range}`;
+    const proxies=[u=>`https://corsproxy.io/?${encodeURIComponent(u)}`];
+    for(const mkP of proxies){
+      try{
+        const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(15000)});
+        if(!r.ok)continue;
+        const d=await r.json();
+        const ts=d.chart?.result?.[0]?.timestamp||[];
+        const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
+        for(let i=0;i<ts.length;i++){
+          if(closes[i]==null)continue;
+          const dt=new Date(ts[i]*1000);
+          const yy=String(dt.getFullYear()).slice(2);
+          const mm=String(dt.getMonth()+1).padStart(2,'0');
+          const dd=String(dt.getDate()).padStart(2,'0');
+          tqqqData.push({date:`${yy}${mm}${dd}`,close:closes[i]});
+        }
+        if(tqqqData.length>0)break;
+      }catch(e){continue}
+    }
+  }catch(e){console.error('TQQQ fetch error:',e)}
+
+  // Match TQQQ to snapshot dates (find closest TQQQ date <= snapshot date)
+  const tqqqMap={};
+  for(const t of tqqqData)tqqqMap[t.date]=t.close;
+  // Sort tqqq dates
+  const tqqqDates=tqqqData.map(t=>t.date).sort();
+
+  function findTqqqPrice(date){
+    // Find the closest TQQQ date <= given date
+    if(tqqqMap[date])return tqqqMap[date];
+    for(let i=tqqqDates.length-1;i>=0;i--){
+      if(tqqqDates[i]<=date)return tqqqMap[tqqqDates[i]];
+    }
+    return null;
+  }
+
+  // Build chart data: normalize to 100 at first snapshot
+  const baseValue=snapshots[0].totalValue;
+  const baseTqqq=findTqqqPrice(snapshots[0].date);
+
+  const chartData=[];
+  for(const snap of snapshots){
+    const normVal=(snap.totalValue/baseValue)*100;
+    const tqPrice=findTqqqPrice(snap.date);
+    const normTqqq=baseTqqq&&tqPrice?((tqPrice/baseTqqq)*100):null;
+    const dateLabel='20'+snap.date.slice(0,2)+'.'+snap.date.slice(2,4)+'.'+snap.date.slice(4,6);
+    chartData.push({date:dateLabel,portfolio:normVal,tqqq:normTqqq});
+  }
+
+  // Render chart using canvas
+  renderChart(el,chartData,baseValue);
+}
+
+function renderChart(container,data,baseValue){
+  const W=Math.min(container.clientWidth||800,1200);
+  const H=400;
+  const pad={t:30,r:60,b:50,l:60};
+  const cW=W-pad.l-pad.r;
+  const cH=H-pad.t-pad.b;
+
+  // Find min/max
+  let yMin=Infinity,yMax=-Infinity;
+  for(const d of data){
+    if(d.portfolio<yMin)yMin=d.portfolio;
+    if(d.portfolio>yMax)yMax=d.portfolio;
+    if(d.tqqq!=null){
+      if(d.tqqq<yMin)yMin=d.tqqq;
+      if(d.tqqq>yMax)yMax=d.tqqq;
+    }
+  }
+  // Add padding
+  const yRange=yMax-yMin||1;
+  yMin=Math.floor(yMin-yRange*0.05);
+  yMax=Math.ceil(yMax+yRange*0.05);
+
+  const canvas=document.createElement('canvas');
+  canvas.width=W*2;canvas.height=H*2;
+  canvas.style.width=W+'px';canvas.style.height=H+'px';
+  const ctx=canvas.getContext('2d');
+  ctx.scale(2,2);
+
+  // Background
+  ctx.fillStyle='#1a1d23';ctx.fillRect(0,0,W,H);
+
+  function xPos(i){return pad.l+(i/(data.length-1))*cW}
+  function yPos(v){return pad.t+(1-(v-yMin)/(yMax-yMin))*cH}
+
+  // Grid lines
+  ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
+  const ySteps=5;
+  for(let i=0;i<=ySteps;i++){
+    const v=yMin+(yMax-yMin)*i/ySteps;
+    const y=yPos(v);
+    ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+    ctx.fillStyle='#888';ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='right';
+    ctx.fillText(v.toFixed(0),pad.l-6,y+3);
+  }
+
+  // 100 baseline
+  if(yMin<=100&&yMax>=100){
+    ctx.strokeStyle='#555';ctx.lineWidth=1;ctx.setLineDash([4,4]);
+    ctx.beginPath();ctx.moveTo(pad.l,yPos(100));ctx.lineTo(W-pad.r,yPos(100));ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // X axis labels
+  ctx.fillStyle='#888';ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='center';
+  const xLabelStep=Math.max(1,Math.floor(data.length/8));
+  for(let i=0;i<data.length;i+=xLabelStep){
+    ctx.fillText(data[i].date.slice(2),xPos(i),H-pad.b+16);
+  }
+  // Always show last label
+  ctx.fillText(data[data.length-1].date.slice(2),xPos(data.length-1),H-pad.b+16);
+
+  // Draw TQQQ line
+  ctx.strokeStyle='#666';ctx.lineWidth=1.5;ctx.beginPath();
+  let started=false;
+  for(let i=0;i<data.length;i++){
+    if(data[i].tqqq==null)continue;
+    if(!started){ctx.moveTo(xPos(i),yPos(data[i].tqqq));started=true}
+    else ctx.lineTo(xPos(i),yPos(data[i].tqqq));
+  }
+  ctx.stroke();
+
+  // Draw portfolio line
+  ctx.strokeStyle='#4fc3f7';ctx.lineWidth=2;ctx.beginPath();
+  ctx.moveTo(xPos(0),yPos(data[0].portfolio));
+  for(let i=1;i<data.length;i++){
+    ctx.lineTo(xPos(i),yPos(data[i].portfolio));
+  }
+  ctx.stroke();
+
+  // End values
+  const lastP=data[data.length-1].portfolio;
+  const lastT=data[data.length-1].tqqq;
+  ctx.font='bold 11px JetBrains Mono, monospace';
+  ctx.textAlign='left';
+  ctx.fillStyle='#4fc3f7';
+  ctx.fillText(`Portfolio ${lastP.toFixed(0)}`,W-pad.r+4,yPos(lastP)+4);
+  if(lastT!=null){
+    ctx.fillStyle='#888';
+    ctx.fillText(`TQQQ ${lastT.toFixed(0)}`,W-pad.r+4,yPos(lastT)+4);
+  }
+
+  // Legend
+  ctx.font='11px JetBrains Mono, monospace';
+  ctx.fillStyle='#4fc3f7';ctx.fillText('── Portfolio',pad.l,18);
+  ctx.fillStyle='#888';ctx.fillText('── TQQQ',pad.l+110,18);
+  ctx.fillStyle='#555';ctx.fillText(`(base=${fmtUSD(baseValue)})`,pad.l+200,18);
+
+  container.innerHTML='';
+  container.appendChild(canvas);
+}
+
 // ================ TICKER HISTORY ================
 function showHistory(ticker){
   const el=document.getElementById('historyContent');
@@ -1269,7 +1514,7 @@ function showHistory(ticker){
   if(ticker){
     let totalBought=0,totalSold=0;
     for(const tx of txs){if(tx.qty>0)totalBought+=tx.qty;else totalSold+=Math.abs(tx.qty)}
-    titleEl.innerHTML=`<span style="cursor:pointer" onclick="showHistory(null)">← </span><span style="font-family:'JetBrains Mono',monospace;color:var(--accent)">${ticker}</span> <span style="font-size:12px;color:var(--text2);font-weight:400">매수 ${totalBought} / 매도 ${totalSold} / 보유 ${totalBought-totalSold}주</span>`;
+    titleEl.innerHTML=`<span class="back-btn" onclick="event.stopPropagation();switchTab('overview')">← 돌아가기</span> <span style="font-family:'JetBrains Mono',monospace;color:var(--accent)">${ticker}</span> <span style="font-size:12px;color:var(--text2);font-weight:400">매수 ${totalBought} / 매도 ${totalSold} / 보유 ${totalBought-totalSold}주</span>`;
   }else{
     titleEl.textContent='전체 거래 내역';
   }
