@@ -1296,8 +1296,9 @@ function sumCard2(label,value,right,cls=''){
 }
 
 // ================ TOTAL VALUE CHART ================
-let chartSnapshots=[];   // [{date, totalValue, purchasedAmt, holdings:{ticker:amt}}]
-let chartBenchData={};   // {TQQQ:[{date,close}], QQQ:[], ...}
+let chartTxStates={};    // date -> {cash, positions:{tk:{qty,avgCost}}, totalValue}
+let chartTxDates=[];     // sorted tx dates
+let chartBenchData={};   // {TQQQ:[{date,close}], ...}
 let chartPeriod='total';
 let chartMode='norm';    // 'norm' or 'chg'
 let chartBenches=new Set(['TQQQ','%5ESOX','IWM']);
@@ -1385,32 +1386,34 @@ async function showTotalValueChart(){
   const chronoTx=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
   if(chronoTx.length===0){el.innerHTML='<p style="color:var(--text2)">거래 내역이 없습니다</p>';return}
 
-  const posMap={}; // ticker -> {qty, avgCost, lastPrice}
+  // Build position state at each transaction date
+  // posState[date] = {cash, positions:{ticker:{qty,avgCost}}, totalValue (approx)}
+  const posMap={}; // ticker -> {qty, avgCost}
   let cashSS=initialCashSS, cashKW=initialCashKW;
-  chartSnapshots=[];
+  const txDateStates={}; // date -> state snapshot
   let lastDate=null;
 
-  function takeSnapshot(date){
-    let mktVal=0, costBasis=0;
-    const holdings={};
+  function captureState(date,txPrices){
+    const positions={};
+    let mktVal=0;
     for(const[tk,p] of Object.entries(posMap)){
-      const val=p.qty*p.lastPrice;
-      mktVal+=val;
-      costBasis+=p.qty*p.avgCost;
-      if(p.qty>0)holdings[tk]=val;
+      if(p.qty>0){
+        positions[tk]={qty:p.qty,avgCost:p.avgCost};
+        mktVal+=p.qty*(txPrices[tk]||p.avgCost);
+      }
     }
-    chartSnapshots.push({date,totalValue:cashSS+cashKW+mktVal,purchasedAmt:costBasis,cash:cashSS+cashKW,holdings:{...holdings}});
+    txDateStates[date]={cash:cashSS+cashKW,positions:{...positions},totalValue:cashSS+cashKW+mktVal};
   }
 
+  const txPrices={}; // last known tx price per ticker
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
     const tk=tx.ticker;
-    if(!posMap[tk])posMap[tk]={qty:0,avgCost:0,lastPrice:0};
+    if(!posMap[tk])posMap[tk]={qty:0,avgCost:0};
     const pos=posMap[tk];
-    pos.lastPrice=tx.price;
+    txPrices[tk]=tx.price;
 
     if(tx.qty>0){
-      // Update moving average cost
       const newCost=pos.avgCost*pos.qty+tx.qty*tx.price;
       pos.qty+=tx.qty;
       pos.avgCost=pos.qty>0?newCost/pos.qty:0;
@@ -1425,58 +1428,65 @@ async function showTotalValueChart(){
     }
 
     if(tx.date!==lastDate){
-      if(lastDate)takeSnapshot(lastDate);
+      if(lastDate)captureState(lastDate,txPrices);
       lastDate=tx.date;
     }
   }
-  if(lastDate)takeSnapshot(lastDate);
+  if(lastDate)captureState(lastDate,txPrices);
 
-  // Today's value — always update with live prices
-  if(cachedOverviewData){
-    const{allHoldings,cashByBroker}=cachedOverviewData;
-    let mktVal=0;const liveHoldings={};let costBasis=0;
-    for(const h of allHoldings){mktVal+=h.marketValue;if(h.qty>0)liveHoldings[h.ticker]=h.marketValue;costBasis+=h.purchasedAmt||0}
-    const todayCash=initialCashSS+cashByBroker['삼성']+initialCashKW+cashByBroker['키움'];
-    const now=new Date();
-    const todayDate=String(now.getFullYear()).slice(2)+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
-    if(chartSnapshots.length>0&&chartSnapshots[chartSnapshots.length-1].date===todayDate){
-      // Transaction exists today — update with live data
-      const last=chartSnapshots[chartSnapshots.length-1];
-      last.totalValue=todayCash+mktVal;last.holdings=liveHoldings;last.purchasedAmt=costBasis;last.cash=todayCash;
-    }else if(chartSnapshots.length>0){
-      // No transaction today — update last snapshot's holdings with live prices (same qty, better prices)
-      // AND add today as a new point
-      const prev=chartSnapshots[chartSnapshots.length-1];
-      prev.holdings=liveHoldings;prev.totalValue=todayCash+mktVal;prev.cash=todayCash;prev.purchasedAmt=costBasis;
-      // Don't add separate today point — the last snapshot now has live data
-    }else{
-      chartSnapshots.push({date:todayDate,totalValue:todayCash+mktVal,purchasedAmt:costBasis,cash:todayCash,holdings:liveHoldings});
-    }
+  // Store final state for today
+  chartTxStates=txDateStates;
+  chartTxDates=Object.keys(txDateStates).sort();
+
+  // Fetch all enabled benchmarks (+ always fetch TQQQ for date axis)
+  const toFetch=new Set([...chartBenches,'TQQQ']);
+  for(const tk of toFetch){
+    if(!chartBenchData[tk])await fetchBenchmark(tk);
   }
-
-  if(chartSnapshots.length<2){el.innerHTML='<p style="color:var(--text2)">차트를 그리기에 데이터가 부족합니다</p>';return}
-
-  const toFetch=[...chartBenches].filter(tk=>!chartBenchData[tk]);
-  for(const tk of toFetch)await fetchBenchmark(tk);
 
   redrawChart();
 }
 
+// Get position state at any date (carry forward from last tx date)
+function getStateAtDate(date){
+  let best=null;
+  for(let i=chartTxDates.length-1;i>=0;i--){
+    if(chartTxDates[i]<=date){best=chartTxStates[chartTxDates[i]];break}
+  }
+  return best;
+}
+
 function redrawChart(){
   const el=document.getElementById('chartContent');
-  if(chartSnapshots.length<2)return;
+  if(chartTxDates.length<1)return;
 
-  let snaps=[...chartSnapshots];
+  // Use TQQQ daily dates as master x-axis (all market days)
+  let masterDates=[];
+  const tqqqArr=chartBenchData['TQQQ']||[];
+  if(tqqqArr.length>0){
+    masterDates=tqqqArr.map(d=>d.date).sort();
+  }else{
+    masterDates=[...chartTxDates];
+  }
+
+  // Filter to start from first transaction
+  const firstTxDate=chartTxDates[0];
+  masterDates=masterDates.filter(d=>d>=firstTxDate);
+
+  // Period filter
   if(chartPeriod!=='total'){
     const now=new Date();
     let cutoff;
     if(chartPeriod==='1y')cutoff=new Date(now.getFullYear()-1,now.getMonth(),now.getDate());
     else if(chartPeriod==='3m')cutoff=new Date(now.getFullYear(),now.getMonth()-3,now.getDate());
     const cutStr=String(cutoff.getFullYear()).slice(2)+String(cutoff.getMonth()+1).padStart(2,'0')+String(cutoff.getDate()).padStart(2,'0');
-    snaps=snaps.filter(s=>s.date>=cutStr);
-    if(snaps.length<2)snaps=chartSnapshots.slice(-2);
+    const filtered=masterDates.filter(d=>d>=cutStr);
+    if(filtered.length>=2)masterDates=filtered;
   }
 
+  if(masterDates.length<2){el.innerHTML='<p style="color:var(--text2)">데이터가 부족합니다</p>';return}
+
+  // Benchmark lookups
   function makeLookup(arr){
     const map={};for(const t of arr)map[t.date]=t.close;
     const dates=arr.map(t=>t.date).sort();
@@ -1495,59 +1505,93 @@ function redrawChart(){
     if(chartBenchData[tk])lookups[tk]=makeLookup(chartBenchData[tk]);
   }
 
-  const baseValue=snaps[0].totalValue;
   const baseBench={};
   for(const tk of chartBenches){
-    if(lookups[tk])baseBench[tk]=findPrice(lookups[tk],snaps[0].date);
+    if(lookups[tk])baseBench[tk]=findPrice(lookups[tk],masterDates[0]);
   }
 
-  // baseBench only needed for norm mode
+  // For top chart: interpolate totalValue between tx dates using benchmark movement
+  // Use TQQQ as proxy for portfolio price movement between transactions
+  const tqqqLookup=chartBenchData['TQQQ']?makeLookup(chartBenchData['TQQQ']):null;
 
-  // Build chart data with holding groups
+  // Build chart data for each market day
   const groupLabels=HOLD_GROUPS.map(g=>g.label);
   const chartData=[];
-  for(let si=0;si<snaps.length;si++){
-    const snap=snaps[si];
-    const dateLabel='20'+snap.date.slice(0,2)+'.'+snap.date.slice(2,4)+'.'+snap.date.slice(4,6);
-    const entry={date:dateLabel,purchasedAmt:snap.purchasedAmt,cash:snap.cash||0};
+  let prevTotalValue=null;
 
-    // Per-group holdings for bottom chart
+  for(let di=0;di<masterDates.length;di++){
+    const date=masterDates[di];
+    const dateLabel='20'+date.slice(0,2)+'.'+date.slice(2,4)+'.'+date.slice(4,6);
+    const state=getStateAtDate(date);
+    if(!state)continue;
+
+    // Bottom chart: cost basis per group (qty * avgCost) — stable between txs
+    const entry={date:dateLabel,cash:state.cash};
+    let totalCostBasis=0;
     for(const g of HOLD_GROUPS){
       let sum=0;
-      for(const tk of g.tickers)sum+=(snap.holdings[tk]||0);
+      for(const tk of g.tickers){
+        if(state.positions[tk])sum+=state.positions[tk].qty*state.positions[tk].avgCost;
+      }
       entry['g_'+g.label]=sum;
+      totalCostBasis+=sum;
+    }
+    entry.purchasedAmt=totalCostBasis;
+
+    // Top chart: totalValue
+    // On tx dates, use the recorded totalValue
+    // Between tx dates, estimate using TQQQ movement as proxy
+    let totalValue=state.totalValue;
+    // Find which tx date this state came from
+    let stateDate=null;
+    for(let i=chartTxDates.length-1;i>=0;i--){
+      if(chartTxDates[i]<=date){stateDate=chartTxDates[i];break}
+    }
+    if(stateDate&&stateDate!==date&&tqqqLookup){
+      // Interpolate: adjust holdings portion by TQQQ movement
+      const tqAtState=findPrice(tqqqLookup,stateDate);
+      const tqNow=findPrice(tqqqLookup,date);
+      if(tqAtState&&tqNow&&tqAtState>0){
+        const holdingsAtState=state.totalValue-state.cash;
+        const ratio=tqNow/tqAtState;
+        totalValue=state.cash+holdingsAtState*ratio;
+      }
     }
 
     if(chartMode==='norm'){
-      entry.portfolio=(snap.totalValue/baseValue)*100;
+      if(di===0){entry._baseValue=totalValue}
+      const baseVal=chartData.length>0?chartData[0]._baseValue:totalValue;
+      entry.portfolio=(totalValue/baseVal)*100;
       for(const tk of chartBenches){
         if(!lookups[tk]||!baseBench[tk])continue;
-        const p=findPrice(lookups[tk],snap.date);
+        const p=findPrice(lookups[tk],date);
         entry[tk]=p?((p/baseBench[tk])*100):null;
       }
     }else{
-      const prevIdx=si-1;
-      if(prevIdx>=0&&snap.purchasedAmt>0){
-        const prevSnap=snaps[prevIdx];
-        const dailyChg=snap.totalValue-prevSnap.totalValue;
-        entry.portfolio=(dailyChg/snap.purchasedAmt)*100;
+      // Change% mode: daily
+      if(prevTotalValue!=null&&totalCostBasis>0){
+        entry.portfolio=((totalValue-prevTotalValue)/totalCostBasis*100);
       }else{
         entry.portfolio=null;
       }
       for(const tk of chartBenches){
         if(!lookups[tk])continue;
-        const p=findPrice(lookups[tk],snap.date);
-        if(prevIdx>=0){
-          const pp=findPrice(lookups[tk],snaps[prevIdx].date);
+        const p=findPrice(lookups[tk],date);
+        if(di>0){
+          const pp=findPrice(lookups[tk],masterDates[di-1]);
           entry[tk]=(p&&pp&&pp>0)?((p-pp)/pp*100):null;
-        }else{
-          entry[tk]=null;
-        }
+        }else{entry[tk]=null}
       }
     }
-    if(chartMode==='chg'&&entry.portfolio==null)continue;
+    prevTotalValue=totalValue;
+
+    if(chartMode==='chg'&&entry.portfolio==null&&di>0)continue;
+    if(di===0&&chartMode==='chg')continue;
     chartData.push(entry);
   }
+
+  // Store baseValue for legend
+  const baseValue=chartData.length>0&&chartData[0]._baseValue?chartData[0]._baseValue:1;
 
   renderCharts(el,chartData,[...chartBenches],groupLabels);
 }
