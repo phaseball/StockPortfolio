@@ -193,12 +193,16 @@ table.t tr:hover td{background:var(--accentBg)}
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn on" onclick="toggleBench('TQQQ',this)">TQQQ</button>
         <button class="cbtn" onclick="toggleBench('QQQ',this)">QQQ</button>
-        <button class="cbtn" onclick="toggleBench('SOXL',this)">SOXL</button>
+        <button class="cbtn" onclick="toggleBench('SOXL',this)">SOX</button>
         <button class="cbtn" onclick="toggleBench('IWM',this)">Russell</button>
       </div>
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn on" onclick="setChartMode('norm',this)">Normalized</button>
         <button class="cbtn" onclick="setChartMode('chg',this)">Change%</button>
+      </div>
+      <div class="chart-grp" style="margin-left:8px">
+        <button class="cbtn on" onclick="setBottomMode('abs',this)">$</button>
+        <button class="cbtn" onclick="setBottomMode('pct',this)">%</button>
       </div>
     </div>
     <div id="chartContent"><p style="color:var(--text2);text-align:center;padding:32px">로딩 중...</p></div>
@@ -1294,20 +1298,20 @@ let chartBenches=new Set(['TQQQ']);
 const BENCH_META={
   TQQQ:{color:'#888',label:'TQQQ'},
   QQQ:{color:'#ab47bc',label:'QQQ'},
-  SOXL:{color:'#66bb6a',label:'SOXL'},
+  SOXL:{color:'#66bb6a',label:'SOX'},
   IWM:{color:'#ffa726',label:'Russell'}
 };
-const HOLD_COLORS=['#4fc3f7','#ff7043','#ab47bc','#66bb6a','#ffa726','#ef5350','#78909c'];
-// Custom holding groups for bottom chart
+const HOLD_COLORS=['#4fc3f7','#ff7043','#ab47bc','#66bb6a','#ffa726','#ef5350','#78909c','#fff176'];
 const HOLD_GROUPS=[
-  {label:'tsla',tickers:['TSLL','TSLA']},
+  {label:'tsla',tickers:['TSLL','TSLA','TER','XPEV']},
   {label:'nvd+amd',tickers:['AMDL','AMD','NVDL','NVDA']},
   {label:'tqqq',tickers:['TQQQ']},
-  {label:'soxl+mu',tickers:['SOXL','MU','SNDK']},
+  {label:'sox+mu',tickers:['SOXL','MU','SNDK']},
   {label:'ggll+avgo',tickers:['GGLL','AVGO','AVL']},
   {label:'cls',tickers:['CLS','CRDO','CIEN']},
-  {label:'fslr+gev',tickers:['FSLR','GEV','CAT']},
+  {label:'fslr+gev',tickers:['FSLR','GEV','CAT','BE']},
 ];
+let chartBottomMode='abs'; // 'abs' or 'pct'
 
 function setChartPeriod(p,btn){
   chartPeriod=p;
@@ -1317,6 +1321,12 @@ function setChartPeriod(p,btn){
 }
 function setChartMode(m,btn){
   chartMode=m;
+  btn.parentElement.querySelectorAll('.cbtn').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  redrawChart();
+}
+function setBottomMode(m,btn){
+  chartBottomMode=m;
   btn.parentElement.querySelectorAll('.cbtn').forEach(b=>b.classList.remove('on'));
   btn.classList.add('on');
   redrawChart();
@@ -1382,7 +1392,7 @@ async function showTotalValueChart(){
       costBasis+=p.qty*p.avgCost;
       if(p.qty>0)holdings[tk]=val;
     }
-    chartSnapshots.push({date,totalValue:cashSS+cashKW+mktVal,purchasedAmt:costBasis,holdings:{...holdings}});
+    chartSnapshots.push({date,totalValue:cashSS+cashKW+mktVal,purchasedAmt:costBasis,cash:cashSS+cashKW,holdings:{...holdings}});
   }
 
   for(const tx of chronoTx){
@@ -1422,10 +1432,10 @@ async function showTotalValueChart(){
     const todayCash=initialCashSS+cashByBroker['삼성']+initialCashKW+cashByBroker['키움'];
     const todayDate=new Date().toISOString().slice(2,10).replace(/-/g,'');
     if(chartSnapshots.length===0||chartSnapshots[chartSnapshots.length-1].date!==todayDate){
-      chartSnapshots.push({date:todayDate,totalValue:todayCash+mktVal,purchasedAmt:costBasis,holdings});
+      chartSnapshots.push({date:todayDate,totalValue:todayCash+mktVal,purchasedAmt:costBasis,cash:todayCash,holdings});
     }else{
       const last=chartSnapshots[chartSnapshots.length-1];
-      last.totalValue=todayCash+mktVal;last.holdings=holdings;last.purchasedAmt=costBasis;
+      last.totalValue=todayCash+mktVal;last.holdings=holdings;last.purchasedAmt=costBasis;last.cash=todayCash;
     }
   }
 
@@ -1484,7 +1494,7 @@ function redrawChart(){
   for(let si=0;si<snaps.length;si++){
     const snap=snaps[si];
     const dateLabel='20'+snap.date.slice(0,2)+'.'+snap.date.slice(2,4)+'.'+snap.date.slice(4,6);
-    const entry={date:dateLabel,purchasedAmt:snap.purchasedAmt};
+    const entry={date:dateLabel,purchasedAmt:snap.purchasedAmt,cash:snap.cash||0};
 
     // Per-group holdings for bottom chart
     for(const g of HOLD_GROUPS){
@@ -1625,19 +1635,29 @@ function renderCharts(container,data,benchKeys,groupLabels){
     ctx.fillStyle=meta.color;ctx.fillText(`── ${meta.label}`,lx,18);lx+=90;
   }
 
-  // ===== BOTTOM CHART: Purchase Amount + Holding Groups =====
+  // ===== BOTTOM CHART: Holdings + Cash (individual lines or %) =====
   const y2Top=H1+gap;
   const cH2=H2-pad2.t-pad2.b;
+  const isPct=chartBottomMode==='pct';
 
-  // Y range for bottom chart
-  let y2Max=0;
+  // Compute values for bottom chart
+  // allLabels = groups + cash
+  const allLabels=[...groupLabels,'cash'];
+  const allColors=[...HOLD_COLORS.slice(0,groupLabels.length),'#ccc'];
+
+  // Y range
+  let y2Min=0, y2Max=0;
   for(const d of data){
-    let sum=0;
-    for(const gl of groupLabels)sum+=d['g_'+gl]||0;
-    if(d.purchasedAmt>y2Max)y2Max=d.purchasedAmt;
-    if(sum>y2Max)y2Max=sum;
+    const totalAsset=d.cash+groupLabels.reduce((s,gl)=>s+(d['g_'+gl]||0),0);
+    if(isPct){
+      y2Max=100;
+    }else{
+      for(const gl of groupLabels){const v=d['g_'+gl]||0;if(v>y2Max)y2Max=v}
+      if(d.cash>y2Max)y2Max=d.cash;
+      if(d.purchasedAmt>y2Max)y2Max=d.purchasedAmt;
+    }
   }
-  y2Max=Math.ceil(y2Max*1.1);
+  if(!isPct)y2Max=Math.ceil(y2Max*1.1);
   if(y2Max===0)y2Max=100;
 
   function yPos2(v){return y2Top+pad2.t+(1-v/y2Max)*cH2}
@@ -1649,54 +1669,73 @@ function renderCharts(container,data,benchKeys,groupLabels){
     const y=yPos2(v);
     ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
     ctx.fillStyle='#888';ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='right';
-    const label=v>=1e6?(v/1e6).toFixed(0)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v.toFixed(0);
-    ctx.fillText('$'+label,pad.l-6,y+3);
-  }
-
-  // Stacked area for holding groups
-  if(groupLabels.length>0){
-    for(let ti=groupLabels.length-1;ti>=0;ti--){
-      ctx.fillStyle=HOLD_COLORS[ti%HOLD_COLORS.length]+'30';
-      ctx.strokeStyle=HOLD_COLORS[ti%HOLD_COLORS.length];ctx.lineWidth=1;
-      ctx.beginPath();
-      ctx.moveTo(xPos(0),yPos2(0));
-      for(let i=0;i<data.length;i++){
-        let sum=0;
-        for(let j=0;j<=ti;j++)sum+=data[i]['g_'+groupLabels[j]]||0;
-        ctx.lineTo(xPos(i),yPos2(sum));
-      }
-      ctx.lineTo(xPos(data.length-1),yPos2(0));
-      ctx.closePath();ctx.fill();
-      ctx.beginPath();
-      for(let i=0;i<data.length;i++){
-        let sum=0;
-        for(let j=0;j<=ti;j++)sum+=data[i]['g_'+groupLabels[j]]||0;
-        if(i===0)ctx.moveTo(xPos(i),yPos2(sum));
-        else ctx.lineTo(xPos(i),yPos2(sum));
-      }
-      ctx.stroke();
+    if(isPct){
+      ctx.fillText(v.toFixed(0)+'%',pad.l-6,y+3);
+    }else{
+      const label=v>=1e6?(v/1e6).toFixed(0)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v.toFixed(0);
+      ctx.fillText('$'+label,pad.l-6,y+3);
     }
   }
 
-  // Purchase amount line (dashed white)
-  ctx.strokeStyle='#ccc';ctx.lineWidth=1.5;ctx.setLineDash([6,3]);ctx.beginPath();
-  ctx.moveTo(xPos(0),yPos2(data[0].purchasedAmt));
-  for(let i=1;i<data.length;i++)ctx.lineTo(xPos(i),yPos2(data[i].purchasedAmt));
-  ctx.stroke();ctx.setLineDash([]);
+  // Draw individual lines for each group + cash
+  const endLabels2=[];
+  for(let gi=0;gi<allLabels.length;gi++){
+    const gl=allLabels[gi];
+    const color=allColors[gi];
+    ctx.strokeStyle=color;ctx.lineWidth=1.2;ctx.beginPath();
+    let lastVal=0;
+    for(let i=0;i<data.length;i++){
+      let val;
+      if(isPct){
+        // % of total asset
+        const totalAsset=data[i].cash+groupLabels.reduce((s,g)=>s+(data[i]['g_'+g]||0),0);
+        const raw=gl==='cash'?data[i].cash:(data[i]['g_'+gl]||0);
+        val=totalAsset>0?(raw/totalAsset*100):0;
+      }else{
+        val=gl==='cash'?data[i].cash:(data[i]['g_'+gl]||0);
+      }
+      if(i===0)ctx.moveTo(xPos(i),yPos2(val));
+      else ctx.lineTo(xPos(i),yPos2(val));
+      lastVal=val;
+    }
+    ctx.stroke();
+    if(lastVal>0||gl==='cash')endLabels2.push({y:yPos2(lastVal),val:lastVal,color,label:gl});
+  }
 
-  // End labels for bottom chart
-  const lastPurch=data[data.length-1].purchasedAmt;
-  ctx.font='bold 10px JetBrains Mono, monospace';ctx.textAlign='left';
-  ctx.fillStyle='#ccc';
-  ctx.fillText('$'+(lastPurch/1e3).toFixed(0)+'K',W-pad.r+4,yPos2(lastPurch)+3);
+  // Purchase amount line (dashed white) — only in abs mode
+  if(!isPct){
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.setLineDash([6,3]);ctx.beginPath();
+    ctx.moveTo(xPos(0),yPos2(data[0].purchasedAmt));
+    for(let i=1;i<data.length;i++)ctx.lineTo(xPos(i),yPos2(data[i].purchasedAmt));
+    ctx.stroke();ctx.setLineDash([]);
+    const lastPurch=data[data.length-1].purchasedAmt;
+    endLabels2.push({y:yPos2(lastPurch),val:lastPurch,color:'#fff',label:'purch'});
+  }
+
+  // Spread end labels
+  endLabels2.sort((a,b)=>a.y-b.y);
+  for(let i=1;i<endLabels2.length;i++){
+    if(endLabels2[i].y-endLabels2[i-1].y<11)endLabels2[i].y=endLabels2[i-1].y+11;
+  }
+
+  ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';
+  for(const ep of endLabels2){
+    ctx.fillStyle=ep.color;
+    if(isPct){
+      ctx.fillText(`${ep.val.toFixed(0)}%`,W-pad.r+4,ep.y+3);
+    }else{
+      const v=ep.val;
+      ctx.fillText('$'+(v>=1e3?(v/1e3).toFixed(0)+'K':v.toFixed(0)),W-pad.r+4,ep.y+3);
+    }
+  }
 
   // Bottom chart legend
   ctx.font='10px JetBrains Mono, monospace';
   let lx2=pad.l;
-  ctx.fillStyle='#ccc';ctx.fillText('--- Purchase',lx2,y2Top+12);lx2+=90;
-  for(let i=0;i<groupLabels.length;i++){
-    ctx.fillStyle=HOLD_COLORS[i%HOLD_COLORS.length];
-    ctx.fillText(`■ ${groupLabels[i]}`,lx2,y2Top+12);lx2+=75;
+  if(!isPct){ctx.fillStyle='#fff';ctx.fillText('--- purch',lx2,y2Top+12);lx2+=72}
+  for(let i=0;i<allLabels.length;i++){
+    ctx.fillStyle=allColors[i];
+    ctx.fillText(`── ${allLabels[i]}`,lx2,y2Top+12);lx2+=75;
   }
 
   // Shared X axis labels (below bottom chart)
