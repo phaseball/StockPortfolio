@@ -193,7 +193,7 @@ table.t tr:hover td{background:var(--accentBg)}
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn on" onclick="toggleBench('TQQQ',this)">TQQQ</button>
         <button class="cbtn" onclick="toggleBench('QQQ',this)">QQQ</button>
-        <button class="cbtn" onclick="toggleBench('SPY',this)">S&P500</button>
+        <button class="cbtn" onclick="toggleBench('SOXL',this)">SOXL</button>
         <button class="cbtn" onclick="toggleBench('IWM',this)">Russell</button>
       </div>
       <div class="chart-grp" style="margin-left:8px">
@@ -1285,8 +1285,8 @@ function sumCard2(label,value,right,cls=''){
 }
 
 // ================ TOTAL VALUE CHART ================
-let chartSnapshots=[];   // [{date, totalValue, purchasedAmt}]
-let chartBenchData={};   // {TQQQ:[{date,close}], QQQ:[], SPY:[], IWM:[]}
+let chartSnapshots=[];   // [{date, totalValue, purchasedAmt, holdings:{ticker:amt}}]
+let chartBenchData={};   // {TQQQ:[{date,close}], QQQ:[], ...}
 let chartPeriod='total';
 let chartMode='norm';    // 'norm' or 'chg'
 let chartBenches=new Set(['TQQQ']);
@@ -1294,9 +1294,10 @@ let chartBenches=new Set(['TQQQ']);
 const BENCH_META={
   TQQQ:{color:'#888',label:'TQQQ'},
   QQQ:{color:'#ab47bc',label:'QQQ'},
-  SPY:{color:'#66bb6a',label:'S&P500'},
+  SOXL:{color:'#66bb6a',label:'SOXL'},
   IWM:{color:'#ffa726',label:'Russell'}
 };
+const HOLD_COLORS=['#4fc3f7','#ff7043','#ab47bc','#66bb6a','#ffa726'];
 
 function setChartPeriod(p,btn){
   chartPeriod=p;
@@ -1313,7 +1314,6 @@ function setChartMode(m,btn){
 function toggleBench(tk,btn){
   if(chartBenches.has(tk))chartBenches.delete(tk);else chartBenches.add(tk);
   btn.classList.toggle('on');
-  // Fetch if not yet loaded
   if(chartBenches.has(tk)&&!chartBenchData[tk]){
     fetchBenchmark(tk).then(()=>redrawChart());
   }else{
@@ -1355,27 +1355,36 @@ async function showTotalValueChart(){
   const el=document.getElementById('chartContent');
   el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 차트 데이터 계산 중...</p>';
 
-  // Build snapshots from transactions
   const chronoTx=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
   if(chronoTx.length===0){el.innerHTML='<p style="color:var(--text2)">거래 내역이 없습니다</p>';return}
 
-  const posMap={};
+  const posMap={}; // ticker -> {qty, lastPrice, invested}
   let cashSS=initialCashSS, cashKW=initialCashKW;
   chartSnapshots=[];
   let lastDate=null;
-
-  // Track cumulative purchased amount
   let cumPurchased=0;
+
+  function takeSnapshot(date){
+    let mktVal=0;
+    const holdings={};
+    for(const[tk,p] of Object.entries(posMap)){
+      const val=p.qty*p.lastPrice;
+      mktVal+=val;
+      if(p.qty>0)holdings[tk]=val;
+    }
+    chartSnapshots.push({date,totalValue:cashSS+cashKW+mktVal,purchasedAmt:cumPurchased,holdings:{...holdings}});
+  }
 
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
     const tk=tx.ticker;
-    if(!posMap[tk])posMap[tk]={qty:0,lastPrice:0};
+    if(!posMap[tk])posMap[tk]={qty:0,lastPrice:0,invested:0};
     const pos=posMap[tk];
     pos.lastPrice=tx.price;
 
     if(tx.qty>0){
       pos.qty+=tx.qty;
+      pos.invested+=tx.qty*tx.price+tx.tax;
       cumPurchased+=tx.qty*tx.price+tx.tax;
       if(tx.broker==='삼성')cashSS-=(tx.qty*tx.price+tx.tax);
       else cashKW-=(tx.qty*tx.price+tx.tax);
@@ -1387,40 +1396,31 @@ async function showTotalValueChart(){
     }
 
     if(tx.date!==lastDate){
-      if(lastDate){
-        let mktVal=0;
-        for(const p of Object.values(posMap))mktVal+=p.qty*p.lastPrice;
-        chartSnapshots.push({date:lastDate,totalValue:cashSS+cashKW+mktVal,purchasedAmt:cumPurchased});
-      }
+      if(lastDate)takeSnapshot(lastDate);
       lastDate=tx.date;
     }
   }
-  if(lastDate){
-    let mktVal=0;
-    for(const p of Object.values(posMap))mktVal+=p.qty*p.lastPrice;
-    chartSnapshots.push({date:lastDate,totalValue:cashSS+cashKW+mktVal,purchasedAmt:cumPurchased});
-  }
+  if(lastDate)takeSnapshot(lastDate);
 
   // Today's value
   if(cachedOverviewData){
     const{allHoldings,cashByBroker}=cachedOverviewData;
-    let mktVal=0;for(const h of allHoldings)mktVal+=h.marketValue;
+    let mktVal=0;const holdings={};
+    for(const h of allHoldings){mktVal+=h.marketValue;if(h.qty>0)holdings[h.ticker]=h.marketValue}
     const todayCash=initialCashSS+cashByBroker['삼성']+initialCashKW+cashByBroker['키움'];
     const todayDate=new Date().toISOString().slice(2,10).replace(/-/g,'');
     if(chartSnapshots.length===0||chartSnapshots[chartSnapshots.length-1].date!==todayDate){
-      chartSnapshots.push({date:todayDate,totalValue:todayCash+mktVal,purchasedAmt:cumPurchased});
+      chartSnapshots.push({date:todayDate,totalValue:todayCash+mktVal,purchasedAmt:cumPurchased,holdings});
     }else{
-      chartSnapshots[chartSnapshots.length-1].totalValue=todayCash+mktVal;
+      const last=chartSnapshots[chartSnapshots.length-1];
+      last.totalValue=todayCash+mktVal;last.holdings=holdings;
     }
   }
 
   if(chartSnapshots.length<2){el.innerHTML='<p style="color:var(--text2)">차트를 그리기에 데이터가 부족합니다</p>';return}
 
-  // Fetch all enabled benchmarks
   const toFetch=[...chartBenches].filter(tk=>!chartBenchData[tk]);
-  for(const tk of toFetch){
-    await fetchBenchmark(tk);
-  }
+  for(const tk of toFetch)await fetchBenchmark(tk);
 
   redrawChart();
 }
@@ -1429,19 +1429,17 @@ function redrawChart(){
   const el=document.getElementById('chartContent');
   if(chartSnapshots.length<2)return;
 
-  // Filter by period
   let snaps=[...chartSnapshots];
   if(chartPeriod!=='total'){
     const now=new Date();
     let cutoff;
-    if(chartPeriod==='1y'){cutoff=new Date(now.getFullYear()-1,now.getMonth(),now.getDate())}
-    else if(chartPeriod==='3m'){cutoff=new Date(now.getFullYear(),now.getMonth()-3,now.getDate())}
+    if(chartPeriod==='1y')cutoff=new Date(now.getFullYear()-1,now.getMonth(),now.getDate());
+    else if(chartPeriod==='3m')cutoff=new Date(now.getFullYear(),now.getMonth()-3,now.getDate());
     const cutStr=String(cutoff.getFullYear()).slice(2)+String(cutoff.getMonth()+1).padStart(2,'0')+String(cutoff.getDate()).padStart(2,'0');
     snaps=snaps.filter(s=>s.date>=cutStr);
-    if(snaps.length<2)snaps=chartSnapshots.slice(-2); // fallback
+    if(snaps.length<2)snaps=chartSnapshots.slice(-2);
   }
 
-  // Build benchmark lookup helpers
   function makeLookup(arr){
     const map={};for(const t of arr)map[t.date]=t.close;
     const dates=arr.map(t=>t.date).sort();
@@ -1461,17 +1459,23 @@ function redrawChart(){
   }
 
   const baseValue=snaps[0].totalValue;
-  const basePurch=snaps[0].purchasedAmt;
   const baseBench={};
   for(const tk of chartBenches){
     if(lookups[tk])baseBench[tk]=findPrice(lookups[tk],snaps[0].date);
   }
 
+  // Determine top 5 tickers by final holdings value
+  const finalHoldings=snaps[snaps.length-1].holdings||{};
+  const top5=Object.entries(finalHoldings).sort((a,b)=>b[1]-a[1]).slice(0,5).map(e=>e[0]);
+
   // Build chart data
   const chartData=[];
   for(const snap of snaps){
     const dateLabel='20'+snap.date.slice(0,2)+'.'+snap.date.slice(2,4)+'.'+snap.date.slice(4,6);
-    const entry={date:dateLabel};
+    const entry={date:dateLabel,purchasedAmt:snap.purchasedAmt};
+
+    // Per-ticker holdings for bottom chart
+    for(const tk of top5)entry['h_'+tk]=snap.holdings[tk]||0;
 
     if(chartMode==='norm'){
       entry.portfolio=(snap.totalValue/baseValue)*100;
@@ -1481,8 +1485,9 @@ function redrawChart(){
         entry[tk]=p?((p/baseBench[tk])*100):null;
       }
     }else{
-      // Change% mode: portfolio change% = (totalValue - purchasedAmt) / purchasedAmt * 100
+      // Change% mode: portfolio = (totalValue - purchasedAmt) / purchasedAmt
       entry.portfolio=snap.purchasedAmt>0?((snap.totalValue-snap.purchasedAmt)/snap.purchasedAmt*100):0;
+      // Benchmarks: daily change% from same start date
       for(const tk of chartBenches){
         if(!lookups[tk]||!baseBench[tk])continue;
         const p=findPrice(lookups[tk],snap.date);
@@ -1492,111 +1497,93 @@ function redrawChart(){
     chartData.push(entry);
   }
 
-  renderChart(el,chartData,baseValue,[...chartBenches]);
+  renderCharts(el,chartData,[...chartBenches],top5);
 }
 
-function renderChart(container,data,baseValue,benchKeys){
+function renderCharts(container,data,benchKeys,top5){
   const W=Math.min(container.clientWidth||800,1200);
-  const H=400;
-  const pad={t:30,r:50,b:50,l:55};
-  const cW=W-pad.l-pad.r;
-  const cH=H-pad.t-pad.b;
-
-  // Collect all series values for y range
-  let yMin=Infinity,yMax=-Infinity;
-  for(const d of data){
-    if(d.portfolio<yMin)yMin=d.portfolio;
-    if(d.portfolio>yMax)yMax=d.portfolio;
-    for(const tk of benchKeys){
-      if(d[tk]!=null){
-        if(d[tk]<yMin)yMin=d[tk];
-        if(d[tk]>yMax)yMax=d[tk];
-      }
-    }
-  }
-  const yRange=yMax-yMin||1;
-  yMin=Math.floor(yMin-yRange*0.05);
-  yMax=Math.ceil(yMax+yRange*0.05);
+  const H1=350, H2=200, gap=30;
+  const totalH=H1+gap+H2;
+  const pad={t:30,r:50,b:20,l:55};
+  const pad2={t:20,r:50,b:40,l:55};
 
   const canvas=document.createElement('canvas');
-  canvas.width=W*2;canvas.height=H*2;
-  canvas.style.width=W+'px';canvas.style.height=H+'px';
+  canvas.width=W*2;canvas.height=totalH*2;
+  canvas.style.width=W+'px';canvas.style.height=totalH+'px';
   const ctx=canvas.getContext('2d');
   ctx.scale(2,2);
+  ctx.fillStyle='#1a1d23';ctx.fillRect(0,0,W,totalH);
 
-  ctx.fillStyle='#1a1d23';ctx.fillRect(0,0,W,H);
+  const cW=W-pad.l-pad.r;
 
   function xPos(i){return pad.l+(i/(data.length-1||1))*cW}
-  function yPos(v){return pad.t+(1-(v-yMin)/(yMax-yMin))*cH}
+
+  // ===== TOP CHART: Performance =====
+  const cH1=H1-pad.t-pad.b;
+  let y1Min=Infinity,y1Max=-Infinity;
+  for(const d of data){
+    if(d.portfolio<y1Min)y1Min=d.portfolio;
+    if(d.portfolio>y1Max)y1Max=d.portfolio;
+    for(const tk of benchKeys){
+      if(d[tk]!=null){if(d[tk]<y1Min)y1Min=d[tk];if(d[tk]>y1Max)y1Max=d[tk]}
+    }
+  }
+  const yr1=y1Max-y1Min||1;
+  y1Min=Math.floor(y1Min-yr1*0.05);y1Max=Math.ceil(y1Max+yr1*0.05);
+
+  function yPos1(v){return pad.t+(1-(v-y1Min)/(y1Max-y1Min))*cH1}
 
   // Grid
   ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
-  const ySteps=5;
-  for(let i=0;i<=ySteps;i++){
-    const v=yMin+(yMax-yMin)*i/ySteps;
-    const y=yPos(v);
+  for(let i=0;i<=5;i++){
+    const v=y1Min+(y1Max-y1Min)*i/5;
+    const y=yPos1(v);
     ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
     ctx.fillStyle='#888';ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='right';
     ctx.fillText(chartMode==='chg'?v.toFixed(0)+'%':v.toFixed(0),pad.l-6,y+3);
   }
 
-  // Baseline (100 for norm, 0 for chg%)
+  // Baseline
   const baseline=chartMode==='chg'?0:100;
-  if(yMin<=baseline&&yMax>=baseline){
+  if(y1Min<=baseline&&y1Max>=baseline){
     ctx.strokeStyle='#555';ctx.lineWidth=1;ctx.setLineDash([4,4]);
-    ctx.beginPath();ctx.moveTo(pad.l,yPos(baseline));ctx.lineTo(W-pad.r,yPos(baseline));ctx.stroke();
+    ctx.beginPath();ctx.moveTo(pad.l,yPos1(baseline));ctx.lineTo(W-pad.r,yPos1(baseline));ctx.stroke();
     ctx.setLineDash([]);
   }
 
-  // X labels
-  ctx.fillStyle='#888';ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='center';
-  const xLabelStep=Math.max(1,Math.floor(data.length/8));
-  for(let i=0;i<data.length;i+=xLabelStep){
-    ctx.fillText(data[i].date.slice(2),xPos(i),H-pad.b+16);
-  }
-  ctx.fillText(data[data.length-1].date.slice(2),xPos(data.length-1),H-pad.b+16);
-
-  // Draw benchmark lines
-  const endYPositions=[];
+  // Benchmark lines
+  const endYPos=[];
   for(const tk of benchKeys){
     const meta=BENCH_META[tk]||{color:'#888',label:tk};
     ctx.strokeStyle=meta.color;ctx.lineWidth=1.5;ctx.beginPath();
     let started=false;
     for(let i=0;i<data.length;i++){
       if(data[i][tk]==null)continue;
-      if(!started){ctx.moveTo(xPos(i),yPos(data[i][tk]));started=true}
-      else ctx.lineTo(xPos(i),yPos(data[i][tk]));
+      if(!started){ctx.moveTo(xPos(i),yPos1(data[i][tk]));started=true}
+      else ctx.lineTo(xPos(i),yPos1(data[i][tk]));
     }
     ctx.stroke();
-    // End label
-    const lastV=data[data.length-1][tk];
-    if(lastV!=null){
-      endYPositions.push({y:yPos(lastV),val:lastV,color:meta.color,label:meta.label});
-    }
+    const lv=data[data.length-1][tk];
+    if(lv!=null)endYPos.push({y:yPos1(lv),val:lv,color:meta.color,label:meta.label});
   }
 
-  // Draw portfolio line
+  // Portfolio line
   ctx.strokeStyle='#4fc3f7';ctx.lineWidth=2.5;ctx.beginPath();
-  ctx.moveTo(xPos(0),yPos(data[0].portfolio));
-  for(let i=1;i<data.length;i++){
-    ctx.lineTo(xPos(i),yPos(data[i].portfolio));
-  }
+  ctx.moveTo(xPos(0),yPos1(data[0].portfolio));
+  for(let i=1;i<data.length;i++)ctx.lineTo(xPos(i),yPos1(data[i].portfolio));
   ctx.stroke();
 
   const lastP=data[data.length-1].portfolio;
-  endYPositions.push({y:yPos(lastP),val:lastP,color:'#4fc3f7',label:'Port'});
+  endYPos.push({y:yPos1(lastP),val:lastP,color:'#4fc3f7',label:'Port'});
 
-  // Spread overlapping end labels
-  endYPositions.sort((a,b)=>a.y-b.y);
-  for(let i=1;i<endYPositions.length;i++){
-    if(endYPositions[i].y-endYPositions[i-1].y<13){
-      endYPositions[i].y=endYPositions[i-1].y+13;
-    }
+  // Spread labels
+  endYPos.sort((a,b)=>a.y-b.y);
+  for(let i=1;i<endYPos.length;i++){
+    if(endYPos[i].y-endYPos[i-1].y<13)endYPos[i].y=endYPos[i-1].y+13;
   }
 
-  // Draw end labels (value only, no name)
   ctx.font='bold 11px JetBrains Mono, monospace';ctx.textAlign='left';
-  for(const ep of endYPositions){
+  for(const ep of endYPos){
     ctx.fillStyle=ep.color;
     const suffix=chartMode==='chg'?'%':'';
     ctx.fillText(`${ep.val.toFixed(1)}${suffix}`,W-pad.r+4,ep.y+4);
@@ -1610,9 +1597,101 @@ function renderChart(container,data,baseValue,benchKeys){
     const meta=BENCH_META[tk]||{color:'#888',label:tk};
     ctx.fillStyle=meta.color;ctx.fillText(`── ${meta.label}`,lx,18);lx+=90;
   }
-  if(chartMode==='norm'){
-    ctx.fillStyle='#555';ctx.fillText(`(base=${fmtUSD(baseValue)})`,lx,18);
+
+  // ===== BOTTOM CHART: Purchase Amount + Top 5 =====
+  const y2Top=H1+gap;
+  const cH2=H2-pad2.t-pad2.b;
+
+  // Y range for bottom chart
+  let y2Max=0;
+  for(const d of data){
+    let sum=0;
+    for(const tk of top5)sum+=d['h_'+tk]||0;
+    if(d.purchasedAmt>y2Max)y2Max=d.purchasedAmt;
+    if(sum>y2Max)y2Max=sum;
   }
+  y2Max=Math.ceil(y2Max*1.1);
+  if(y2Max===0)y2Max=100;
+
+  function yPos2(v){return y2Top+pad2.t+(1-v/y2Max)*cH2}
+
+  // Grid
+  ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
+  for(let i=0;i<=4;i++){
+    const v=y2Max*i/4;
+    const y=yPos2(v);
+    ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+    ctx.fillStyle='#888';ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='right';
+    const label=v>=1e6?(v/1e6).toFixed(0)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v.toFixed(0);
+    ctx.fillText('$'+label,pad.l-6,y+3);
+  }
+
+  // Stacked area for top 5 holdings
+  if(top5.length>0){
+    // Draw stacked areas from bottom up
+    for(let ti=top5.length-1;ti>=0;ti--){
+      ctx.fillStyle=HOLD_COLORS[ti%HOLD_COLORS.length]+'30'; // 30 = alpha
+      ctx.strokeStyle=HOLD_COLORS[ti%HOLD_COLORS.length];ctx.lineWidth=1;
+      ctx.beginPath();
+      // Bottom edge
+      ctx.moveTo(xPos(0),yPos2(0));
+      // Top edge: sum of this ticker and below
+      for(let i=0;i<data.length;i++){
+        let sum=0;
+        for(let j=0;j<=ti;j++)sum+=data[i]['h_'+top5[j]]||0;
+        ctx.lineTo(xPos(i),yPos2(sum));
+      }
+      // Close back along bottom
+      ctx.lineTo(xPos(data.length-1),yPos2(0));
+      ctx.closePath();ctx.fill();
+      // Line on top
+      ctx.beginPath();
+      for(let i=0;i<data.length;i++){
+        let sum=0;
+        for(let j=0;j<=ti;j++)sum+=data[i]['h_'+top5[j]]||0;
+        if(i===0)ctx.moveTo(xPos(i),yPos2(sum));
+        else ctx.lineTo(xPos(i),yPos2(sum));
+      }
+      ctx.stroke();
+    }
+  }
+
+  // Purchase amount line (dashed white)
+  ctx.strokeStyle='#ccc';ctx.lineWidth=1.5;ctx.setLineDash([6,3]);ctx.beginPath();
+  ctx.moveTo(xPos(0),yPos2(data[0].purchasedAmt));
+  for(let i=1;i<data.length;i++)ctx.lineTo(xPos(i),yPos2(data[i].purchasedAmt));
+  ctx.stroke();ctx.setLineDash([]);
+
+  // End labels for bottom chart
+  const lastPurch=data[data.length-1].purchasedAmt;
+  ctx.font='bold 10px JetBrains Mono, monospace';ctx.textAlign='left';
+  ctx.fillStyle='#ccc';
+  ctx.fillText('$'+(lastPurch/1e3).toFixed(0)+'K',W-pad.r+4,yPos2(lastPurch)+3);
+
+  // Top 5 end labels
+  const endLabels2=[];
+  for(let ti=0;ti<top5.length;ti++){
+    let sum=0;
+    for(let j=0;j<=ti;j++)sum+=data[data.length-1]['h_'+top5[j]]||0;
+    endLabels2.push({y:yPos2(sum),label:top5[ti],color:HOLD_COLORS[ti%HOLD_COLORS.length]});
+  }
+
+  // Bottom chart legend
+  ctx.font='10px JetBrains Mono, monospace';
+  let lx2=pad.l;
+  ctx.fillStyle='#ccc';ctx.fillText('--- Purchase',lx2,y2Top+12);lx2+=90;
+  for(let i=0;i<top5.length;i++){
+    ctx.fillStyle=HOLD_COLORS[i%HOLD_COLORS.length];
+    ctx.fillText(`■ ${top5[i]}`,lx2,y2Top+12);lx2+=70;
+  }
+
+  // Shared X axis labels (below bottom chart)
+  ctx.fillStyle='#888';ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='center';
+  const xLabelStep=Math.max(1,Math.floor(data.length/8));
+  for(let i=0;i<data.length;i+=xLabelStep){
+    ctx.fillText(data[i].date.slice(2),xPos(i),y2Top+H2-pad2.b+16);
+  }
+  ctx.fillText(data[data.length-1].date.slice(2),xPos(data.length-1),y2Top+H2-pad2.b+16);
 
   container.innerHTML='';
   container.appendChild(canvas);
