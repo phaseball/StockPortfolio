@@ -1464,6 +1464,12 @@ function redrawChart(){
     if(lookups[tk])baseBench[tk]=findPrice(lookups[tk],snaps[0].date);
   }
 
+  // In chg% mode, skip snapshots where purchasedAmt is 0 or near-zero
+  if(chartMode==='chg'){
+    snaps=snaps.filter(s=>s.purchasedAmt>0);
+    if(snaps.length<2){el.innerHTML='<p style="color:var(--text2)">Change% 데이터가 부족합니다</p>';return}
+  }
+
   // Determine top 5 tickers by final holdings value
   const finalHoldings=snaps[snaps.length-1].holdings||{};
   const top5=Object.entries(finalHoldings).sort((a,b)=>b[1]-a[1]).slice(0,5).map(e=>e[0]);
