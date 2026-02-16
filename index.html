@@ -1557,6 +1557,33 @@ function redrawChart(){
         totalValue=state.cash+holdingsAtState*ratio;
       }
     }
+    entry.totalValue=totalValue;
+
+    // Market-value-based group values (for % mode): scale each group's cost basis by TQQQ ratio
+    if(stateDate&&stateDate!==date&&tqqqLookup){
+      const tqAtState=findPrice(tqqqLookup,stateDate);
+      const tqNow=findPrice(tqqqLookup,date);
+      if(tqAtState&&tqNow&&tqAtState>0){
+        const ratio=tqNow/tqAtState;
+        for(const g of HOLD_GROUPS){
+          let mktSum=0;
+          for(const tk of g.tickers){
+            if(state.positions[tk])mktSum+=state.positions[tk].qty*state.positions[tk].avgCost;
+          }
+          entry['mv_'+g.label]=mktSum*ratio;
+        }
+      }else{
+        for(const g of HOLD_GROUPS)entry['mv_'+g.label]=entry['g_'+g.label];
+      }
+    }else{
+      // On tx date, market value ≈ cost basis (best approx with tx prices)
+      // But use state.totalValue to derive: holdings market value = totalValue - cash
+      const holdMkt=state.totalValue-state.cash;
+      const holdCost=totalCostBasis||1;
+      for(const g of HOLD_GROUPS){
+        entry['mv_'+g.label]=entry['g_'+g.label]*(holdMkt/holdCost);
+      }
+    }
 
     if(chartMode==='norm'){
       if(di===0){entry._baseValue=totalValue}
@@ -1593,10 +1620,10 @@ function redrawChart(){
   // Store baseValue for legend
   const baseValue=chartData.length>0&&chartData[0]._baseValue?chartData[0]._baseValue:1;
 
-  renderCharts(el,chartData,[...chartBenches],groupLabels);
+  renderCharts(el,chartData,[...chartBenches],groupLabels,baseValue);
 }
 
-function renderCharts(container,data,benchKeys,groupLabels){
+function renderCharts(container,data,benchKeys,groupLabels,baseValue){
   const W=Math.min(container.clientWidth||800,1200);
   const H1=350, H2=200, gap=30;
   const totalH=H1+gap+H2;
@@ -1693,6 +1720,9 @@ function renderCharts(container,data,benchKeys,groupLabels){
     const meta=BENCH_META[tk]||{color:'#888',label:tk};
     ctx.fillStyle=meta.color;ctx.fillText(`── ${meta.label}`,lx,18);lx+=90;
   }
+  if(chartMode==='norm'&&baseValue>1){
+    ctx.fillStyle='#555';ctx.fillText(`(base=${fmtUSD(baseValue)})`,lx,18);
+  }
 
   // ===== BOTTOM CHART: Holdings + Cash (individual lines or %) =====
   const y2Top=H1+gap;
@@ -1752,9 +1782,10 @@ function renderCharts(container,data,benchKeys,groupLabels){
     for(let i=0;i<data.length;i++){
       let val;
       if(isPct){
-        const totalAsset=data[i].cash+groupLabels.reduce((s,g)=>s+(data[i]['g_'+g]||0),0);
-        const raw=gl==='cash'?data[i].cash:(data[i]['g_'+gl]||0);
-        val=totalAsset>0?(raw/totalAsset*100):0;
+        // Use market-value based: mv_ for groups, cash for cash, totalValue as denominator
+        const tv=data[i].totalValue||1;
+        const raw=gl==='cash'?data[i].cash:(data[i]['mv_'+gl]||0);
+        val=tv>0?(raw/tv*100):0;
       }else{
         val=gl==='cash'?data[i].cash:(data[i]['g_'+gl]||0);
       }
@@ -1871,9 +1902,9 @@ function renderCharts(container,data,benchKeys,groupLabels){
       const color=cm.allColors[i];
       let val;
       if(cm.isPct){
-        const totalAsset=d.cash+cm.groupLabels.reduce((s,g)=>s+(d['g_'+g]||0),0);
-        const raw=gl==='cash'?d.cash:(d['g_'+gl]||0);
-        val=totalAsset>0?(raw/totalAsset*100):0;
+        const tv=d.totalValue||1;
+        const raw=gl==='cash'?d.cash:(d['mv_'+gl]||0);
+        val=tv>0?(raw/tv*100):0;
         html+=`<div style="color:${color}">${gl}: ${val.toFixed(1)}%</div>`;
       }else{
         val=gl==='cash'?d.cash:(d['g_'+gl]||0);
