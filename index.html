@@ -1678,6 +1678,12 @@ function renderCharts(container,data,benchKeys,groupLabels){
   }
 
   // Draw individual lines for each group + cash
+  // Clip to chart area for % mode
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(pad.l,y2Top+pad2.t,cW,cH2);
+  ctx.clip();
+
   const endLabels2=[];
   for(let gi=0;gi<allLabels.length;gi++){
     const gl=allLabels[gi];
@@ -1687,7 +1693,6 @@ function renderCharts(container,data,benchKeys,groupLabels){
     for(let i=0;i<data.length;i++){
       let val;
       if(isPct){
-        // % of total asset
         const totalAsset=data[i].cash+groupLabels.reduce((s,g)=>s+(data[i]['g_'+g]||0),0);
         const raw=gl==='cash'?data[i].cash:(data[i]['g_'+gl]||0);
         val=totalAsset>0?(raw/totalAsset*100):0;
@@ -1699,7 +1704,7 @@ function renderCharts(container,data,benchKeys,groupLabels){
       lastVal=val;
     }
     ctx.stroke();
-    if(lastVal>0||gl==='cash')endLabels2.push({y:yPos2(lastVal),val:lastVal,color,label:gl});
+    if(lastVal>0||gl==='cash')endLabels2.push({y:yPos2(Math.min(lastVal,y2Max)),val:lastVal,color,label:gl});
   }
 
   // Purchase amount line (dashed white) — only in abs mode
@@ -1711,6 +1716,8 @@ function renderCharts(container,data,benchKeys,groupLabels){
     const lastPurch=data[data.length-1].purchasedAmt;
     endLabels2.push({y:yPos2(lastPurch),val:lastPurch,color:'#fff',label:'purch'});
   }
+
+  ctx.restore(); // remove clip
 
   // Spread end labels
   endLabels2.sort((a,b)=>a.y-b.y);
@@ -1747,7 +1754,93 @@ function renderCharts(container,data,benchKeys,groupLabels){
   ctx.fillText(data[data.length-1].date.slice(2),xPos(data.length-1),y2Top+H2-pad2.b+16);
 
   container.innerHTML='';
-  container.appendChild(canvas);
+  // Wrapper for canvas + tooltip
+  const wrap=document.createElement('div');
+  wrap.style.cssText='position:relative;display:inline-block';
+  wrap.appendChild(canvas);
+
+  // Tooltip div
+  const tip=document.createElement('div');
+  tip.style.cssText='display:none;position:absolute;pointer-events:none;background:rgba(20,22,28,0.95);border:1px solid #444;border-radius:6px;padding:8px 10px;font:11px/1.6 "JetBrains Mono",monospace;color:#ddd;z-index:10;white-space:nowrap';
+  wrap.appendChild(tip);
+
+  // Vertical crosshair line
+  const vline=document.createElement('div');
+  vline.style.cssText=`display:none;position:absolute;top:${pad.t}px;width:1px;background:rgba(255,255,255,0.2);pointer-events:none;height:${totalH-pad.t-pad2.b}px`;
+  wrap.appendChild(vline);
+
+  // Store chart metadata for hover
+  const chartMeta={data,W,totalH,pad,pad2,H1,H2,gap,cW,y1Min,y1Max,y2Max,y2Top,cH1,cH2,
+    benchKeys,groupLabels,allLabels,allColors,isPct,mode:chartMode};
+
+  canvas.addEventListener('mousemove',function(e){
+    const rect=canvas.getBoundingClientRect();
+    const mx=(e.clientX-rect.left);
+    const my=(e.clientY-rect.top);
+    const cm=chartMeta;
+
+    // Find nearest data index
+    if(mx<cm.pad.l||mx>cm.W-cm.pad.r){tip.style.display='none';vline.style.display='none';return}
+    const frac=(mx-cm.pad.l)/cm.cW;
+    const idx=Math.round(frac*(cm.data.length-1));
+    if(idx<0||idx>=cm.data.length){tip.style.display='none';vline.style.display='none';return}
+
+    const d=cm.data[idx];
+    const xPx=cm.pad.l+(idx/(cm.data.length-1||1))*cm.cW;
+
+    // Show crosshair
+    vline.style.display='block';
+    vline.style.left=xPx+'px';
+
+    // Build tooltip content
+    let html=`<div style="color:#888;margin-bottom:4px">${d.date}</div>`;
+
+    // Top chart values
+    const suffix=cm.mode==='chg'?'%':'';
+    html+=`<div style="color:#4fc3f7">Portfolio: ${d.portfolio.toFixed(1)}${suffix}</div>`;
+    for(const tk of cm.benchKeys){
+      const meta=BENCH_META[tk]||{color:'#888',label:tk};
+      if(d[tk]!=null)html+=`<div style="color:${meta.color}">${meta.label}: ${d[tk].toFixed(1)}${suffix}</div>`;
+    }
+
+    // Divider
+    html+='<div style="border-top:1px solid #333;margin:4px 0"></div>';
+
+    // Bottom chart values
+    for(let i=0;i<cm.allLabels.length;i++){
+      const gl=cm.allLabels[i];
+      const color=cm.allColors[i];
+      let val;
+      if(cm.isPct){
+        const totalAsset=d.cash+cm.groupLabels.reduce((s,g)=>s+(d['g_'+g]||0),0);
+        const raw=gl==='cash'?d.cash:(d['g_'+gl]||0);
+        val=totalAsset>0?(raw/totalAsset*100):0;
+        html+=`<div style="color:${color}">${gl}: ${val.toFixed(1)}%</div>`;
+      }else{
+        val=gl==='cash'?d.cash:(d['g_'+gl]||0);
+        if(val>0)html+=`<div style="color:${color}">${gl}: $${(val/1e3).toFixed(1)}K</div>`;
+      }
+    }
+    if(!cm.isPct&&d.purchasedAmt>0){
+      html+=`<div style="color:#fff">purch: $${(d.purchasedAmt/1e3).toFixed(1)}K</div>`;
+    }
+
+    tip.innerHTML=html;
+    tip.style.display='block';
+    // Position tooltip
+    let tx=xPx+12;
+    if(tx+tip.offsetWidth>cm.W-10)tx=xPx-tip.offsetWidth-12;
+    let ty=Math.max(10,my-tip.offsetHeight/2);
+    tip.style.left=tx+'px';
+    tip.style.top=ty+'px';
+  });
+
+  canvas.addEventListener('mouseleave',function(){
+    tip.style.display='none';
+    vline.style.display='none';
+  });
+
+  container.appendChild(wrap);
 }
 
 // ================ TICKER HISTORY ================
