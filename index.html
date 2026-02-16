@@ -193,7 +193,7 @@ table.t tr:hover td{background:var(--accentBg)}
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn on" onclick="toggleBench('TQQQ',this)">TQQQ</button>
         <button class="cbtn" onclick="toggleBench('QQQ',this)">QQQ</button>
-        <button class="cbtn" onclick="toggleBench('SOXL',this)">SOX</button>
+        <button class="cbtn" onclick="toggleBench('%5ESOX',this)">SOX</button>
         <button class="cbtn" onclick="toggleBench('IWM',this)">Russell</button>
       </div>
       <div class="chart-grp" style="margin-left:8px">
@@ -1298,7 +1298,7 @@ let chartBenches=new Set(['TQQQ']);
 const BENCH_META={
   TQQQ:{color:'#888',label:'TQQQ'},
   QQQ:{color:'#ab47bc',label:'QQQ'},
-  SOXL:{color:'#66bb6a',label:'SOX'},
+  '%5ESOX':{color:'#66bb6a',label:'SOX'},
   IWM:{color:'#ffa726',label:'Russell'}
 };
 const HOLD_COLORS=['#4fc3f7','#ff7043','#ab47bc','#66bb6a','#ffa726','#ef5350','#78909c','#fff176'];
@@ -1306,7 +1306,7 @@ const HOLD_GROUPS=[
   {label:'tsla',tickers:['TSLL','TSLA','TER','XPEV']},
   {label:'nvd+amd',tickers:['AMDL','AMD','NVDL','NVDA']},
   {label:'tqqq',tickers:['TQQQ']},
-  {label:'sox+mu',tickers:['SOXL','MU','SNDK']},
+  {label:'soxl+mu',tickers:['SOXL','MU','SNDK']},
   {label:'ggll+avgo',tickers:['GGLL','AVGO','AVL']},
   {label:'cls',tickers:['CLS','CRDO','CIEN']},
   {label:'fslr+gev',tickers:['FSLR','GEV','CAT','BE']},
@@ -1650,7 +1650,7 @@ function renderCharts(container,data,benchKeys,groupLabels){
   for(const d of data){
     const totalAsset=d.cash+groupLabels.reduce((s,gl)=>s+(d['g_'+gl]||0),0);
     if(isPct){
-      y2Max=100;
+      y2Max=35;
     }else{
       for(const gl of groupLabels){const v=d['g_'+gl]||0;if(v>y2Max)y2Max=v}
       if(d.cash>y2Max)y2Max=d.cash;
