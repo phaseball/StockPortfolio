@@ -1297,7 +1297,17 @@ const BENCH_META={
   SOXL:{color:'#66bb6a',label:'SOXL'},
   IWM:{color:'#ffa726',label:'Russell'}
 };
-const HOLD_COLORS=['#4fc3f7','#ff7043','#ab47bc','#66bb6a','#ffa726'];
+const HOLD_COLORS=['#4fc3f7','#ff7043','#ab47bc','#66bb6a','#ffa726','#ef5350','#78909c'];
+// Custom holding groups for bottom chart
+const HOLD_GROUPS=[
+  {label:'tsla',tickers:['TSLL','TSLA']},
+  {label:'nvd+amd',tickers:['AMDL','AMD','NVDL','NVDA']},
+  {label:'tqqq',tickers:['TQQQ']},
+  {label:'soxl+mu',tickers:['SOXL','MU','SNDK']},
+  {label:'ggll+avgo',tickers:['GGLL','AVGO','AVL']},
+  {label:'cls',tickers:['CLS','CRDO','CIEN']},
+  {label:'fslr+gev',tickers:['FSLR','GEV','CAT']},
+];
 
 function setChartPeriod(p,btn){
   chartPeriod=p;
@@ -1468,18 +1478,20 @@ function redrawChart(){
 
   // baseBench only needed for norm mode
 
-  // Determine top 5 tickers by final holdings value
-  const finalHoldings=snaps[snaps.length-1].holdings||{};
-  const top5=Object.entries(finalHoldings).sort((a,b)=>b[1]-a[1]).slice(0,5).map(e=>e[0]);
-
-  // Build chart data
+  // Build chart data with holding groups
+  const groupLabels=HOLD_GROUPS.map(g=>g.label);
   const chartData=[];
-  for(const snap of snaps){
+  for(let si=0;si<snaps.length;si++){
+    const snap=snaps[si];
     const dateLabel='20'+snap.date.slice(0,2)+'.'+snap.date.slice(2,4)+'.'+snap.date.slice(4,6);
     const entry={date:dateLabel,purchasedAmt:snap.purchasedAmt};
 
-    // Per-ticker holdings for bottom chart
-    for(const tk of top5)entry['h_'+tk]=snap.holdings[tk]||0;
+    // Per-group holdings for bottom chart
+    for(const g of HOLD_GROUPS){
+      let sum=0;
+      for(const tk of g.tickers)sum+=(snap.holdings[tk]||0);
+      entry['g_'+g.label]=sum;
+    }
 
     if(chartMode==='norm'){
       entry.portfolio=(snap.totalValue/baseValue)*100;
@@ -1489,10 +1501,7 @@ function redrawChart(){
         entry[tk]=p?((p/baseBench[tk])*100):null;
       }
     }else{
-      // Change% mode: daily change of total value / purchase amount
-      // Measures investment earning rate, discarding cash
-      // Need previous snapshot's totalValue
-      const prevIdx=snaps.indexOf(snap)-1;
+      const prevIdx=si-1;
       if(prevIdx>=0&&snap.purchasedAmt>0){
         const prevSnap=snaps[prevIdx];
         const dailyChg=snap.totalValue-prevSnap.totalValue;
@@ -1500,28 +1509,25 @@ function redrawChart(){
       }else{
         entry.portfolio=null;
       }
-      // Benchmarks: daily change% of price
       for(const tk of chartBenches){
         if(!lookups[tk])continue;
         const p=findPrice(lookups[tk],snap.date);
-        const prevIdx2=snaps.indexOf(snap)-1;
-        if(prevIdx2>=0){
-          const pp=findPrice(lookups[tk],snaps[prevIdx2].date);
+        if(prevIdx>=0){
+          const pp=findPrice(lookups[tk],snaps[prevIdx].date);
           entry[tk]=(p&&pp&&pp>0)?((p-pp)/pp*100):null;
         }else{
           entry[tk]=null;
         }
       }
     }
-    // Skip entries with null portfolio in chg% mode
     if(chartMode==='chg'&&entry.portfolio==null)continue;
     chartData.push(entry);
   }
 
-  renderCharts(el,chartData,[...chartBenches],top5);
+  renderCharts(el,chartData,[...chartBenches],groupLabels);
 }
 
-function renderCharts(container,data,benchKeys,top5){
+function renderCharts(container,data,benchKeys,groupLabels){
   const W=Math.min(container.clientWidth||800,1200);
   const H1=350, H2=200, gap=30;
   const totalH=H1+gap+H2;
@@ -1619,7 +1625,7 @@ function renderCharts(container,data,benchKeys,top5){
     ctx.fillStyle=meta.color;ctx.fillText(`── ${meta.label}`,lx,18);lx+=90;
   }
 
-  // ===== BOTTOM CHART: Purchase Amount + Top 5 =====
+  // ===== BOTTOM CHART: Purchase Amount + Holding Groups =====
   const y2Top=H1+gap;
   const cH2=H2-pad2.t-pad2.b;
 
@@ -1627,7 +1633,7 @@ function renderCharts(container,data,benchKeys,top5){
   let y2Max=0;
   for(const d of data){
     let sum=0;
-    for(const tk of top5)sum+=d['h_'+tk]||0;
+    for(const gl of groupLabels)sum+=d['g_'+gl]||0;
     if(d.purchasedAmt>y2Max)y2Max=d.purchasedAmt;
     if(sum>y2Max)y2Max=sum;
   }
@@ -1647,29 +1653,24 @@ function renderCharts(container,data,benchKeys,top5){
     ctx.fillText('$'+label,pad.l-6,y+3);
   }
 
-  // Stacked area for top 5 holdings
-  if(top5.length>0){
-    // Draw stacked areas from bottom up
-    for(let ti=top5.length-1;ti>=0;ti--){
-      ctx.fillStyle=HOLD_COLORS[ti%HOLD_COLORS.length]+'30'; // 30 = alpha
+  // Stacked area for holding groups
+  if(groupLabels.length>0){
+    for(let ti=groupLabels.length-1;ti>=0;ti--){
+      ctx.fillStyle=HOLD_COLORS[ti%HOLD_COLORS.length]+'30';
       ctx.strokeStyle=HOLD_COLORS[ti%HOLD_COLORS.length];ctx.lineWidth=1;
       ctx.beginPath();
-      // Bottom edge
       ctx.moveTo(xPos(0),yPos2(0));
-      // Top edge: sum of this ticker and below
       for(let i=0;i<data.length;i++){
         let sum=0;
-        for(let j=0;j<=ti;j++)sum+=data[i]['h_'+top5[j]]||0;
+        for(let j=0;j<=ti;j++)sum+=data[i]['g_'+groupLabels[j]]||0;
         ctx.lineTo(xPos(i),yPos2(sum));
       }
-      // Close back along bottom
       ctx.lineTo(xPos(data.length-1),yPos2(0));
       ctx.closePath();ctx.fill();
-      // Line on top
       ctx.beginPath();
       for(let i=0;i<data.length;i++){
         let sum=0;
-        for(let j=0;j<=ti;j++)sum+=data[i]['h_'+top5[j]]||0;
+        for(let j=0;j<=ti;j++)sum+=data[i]['g_'+groupLabels[j]]||0;
         if(i===0)ctx.moveTo(xPos(i),yPos2(sum));
         else ctx.lineTo(xPos(i),yPos2(sum));
       }
@@ -1689,21 +1690,13 @@ function renderCharts(container,data,benchKeys,top5){
   ctx.fillStyle='#ccc';
   ctx.fillText('$'+(lastPurch/1e3).toFixed(0)+'K',W-pad.r+4,yPos2(lastPurch)+3);
 
-  // Top 5 end labels
-  const endLabels2=[];
-  for(let ti=0;ti<top5.length;ti++){
-    let sum=0;
-    for(let j=0;j<=ti;j++)sum+=data[data.length-1]['h_'+top5[j]]||0;
-    endLabels2.push({y:yPos2(sum),label:top5[ti],color:HOLD_COLORS[ti%HOLD_COLORS.length]});
-  }
-
   // Bottom chart legend
   ctx.font='10px JetBrains Mono, monospace';
   let lx2=pad.l;
   ctx.fillStyle='#ccc';ctx.fillText('--- Purchase',lx2,y2Top+12);lx2+=90;
-  for(let i=0;i<top5.length;i++){
+  for(let i=0;i<groupLabels.length;i++){
     ctx.fillStyle=HOLD_COLORS[i%HOLD_COLORS.length];
-    ctx.fillText(`■ ${top5[i]}`,lx2,y2Top+12);lx2+=70;
+    ctx.fillText(`■ ${groupLabels[i]}`,lx2,y2Top+12);lx2+=75;
   }
 
   // Shared X axis labels (below bottom chart)
