@@ -107,9 +107,9 @@ table.t tr:hover td{background:var(--accentBg)}
 /* Holdings card v2 */
 .hold-row{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
 .hold-row:hover{border-color:var(--accent)}
-.hold-top{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
+.hold-top{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.2fr 1.2fr 0.8fr;gap:2px;align-items:baseline;margin-bottom:6px}
 .hold-ticker{font-size:15px;font-weight:700;color:var(--text3);font-family:'JetBrains Mono',monospace}
-.hold-qty{font-size:12px;color:var(--text2);margin-left:auto}
+.hold-qty{font-size:12px;color:var(--text2);text-align:right;grid-column:4/7}
 .hold-fiscal{font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace}
 .hold-grid{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.2fr 1.2fr 0.8fr;gap:2px;font-size:11px}
 .hold-grid .lbl{color:var(--text3);font-size:10px}
@@ -1054,18 +1054,26 @@ function renderOverview(){
         html+=renderHoldCard(m.ticker,qtyStr,avgPrice,m.currentPrice,m.chgDay,m.chgWeek,m.unrealizedPL,plCls,m.marketValue,m.purchasedAmt,realPL,realCls,realPLYtd,realYtdCls);
       }
     }
-    // Closed positions (all brokers merged)
-    const closedMerged={};
+    // Closed positions (all brokers: only show if closed in ALL brokers that traded it)
+    // Group by ticker, collect per-broker info
+    const tickerBrokers={};
     for(const hv of Object.values(holdMap)){
-      if(hv.totalQty>0)continue;
-      if(hv.realizedPL===0&&hv.realizedPLThisYear===0)continue;
+      if(hv.realizedPL===0&&hv.realizedPLThisYear===0&&hv.totalQty===0)continue;
       const tk=hv.ticker;
-      if(!closedMerged[tk])closedMerged[tk]={ticker:tk,realPL:0,realPLYtd:0,brokers:[]};
-      closedMerged[tk].realPL+=hv.realizedPL;
-      closedMerged[tk].realPLYtd+=hv.realizedPLThisYear;
-      closedMerged[tk].brokers.push(hv.broker);
+      if(!tickerBrokers[tk])tickerBrokers[tk]=[];
+      tickerBrokers[tk].push(hv);
     }
-    const closedList=Object.values(closedMerged).sort((a,b)=>Math.abs(b.realPL)-Math.abs(a.realPL));
+    const closedList=[];
+    for(const[tk,entries]of Object.entries(tickerBrokers)){
+      // Only include if ALL broker entries have totalQty===0
+      const allClosed=entries.every(e=>e.totalQty===0);
+      if(!allClosed)continue;
+      const realPL=entries.reduce((s,e)=>s+e.realizedPL,0);
+      const realPLYtd=entries.reduce((s,e)=>s+e.realizedPLThisYear,0);
+      if(realPL===0&&realPLYtd===0)continue;
+      closedList.push({ticker:tk,realPL,realPLYtd,brokers:entries.map(e=>e.broker)});
+    }
+    closedList.sort((a,b)=>Math.abs(b.realPL)-Math.abs(a.realPL));
     if(closedList.length>0){
       html+=renderClosedSection(closedList);
     }
@@ -1088,11 +1096,11 @@ function renderOverview(){
         html+=renderHoldCard(h.ticker,qtyStr,h.avgPrice,h.currentPrice,h.chgDay,h.chgWeek,h.unrealizedPL,plCls,h.marketValue,h.purchasedAmt,realPL,realCls,realPLYtd,realYtdCls);
       }
     }
-    // Closed positions (single broker)
+    // Closed positions (this broker only)
     const closedList=[];
     for(const hv of Object.values(holdMap)){
-      if(hv.totalQty>0)continue;
       if(hv.broker!==f)continue;
+      if(hv.totalQty>0)continue;
       if(hv.realizedPL===0&&hv.realizedPLThisYear===0)continue;
       closedList.push({ticker:hv.ticker,realPL:hv.realizedPL,realPLYtd:hv.realizedPLThisYear,brokers:[hv.broker]});
     }
@@ -1174,6 +1182,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   return`<div class="hold-row" onclick="showHistory('${ticker}')">
     <div class="hold-top">
       <span class="hold-ticker">${ticker}</span>
+      <span></span>
       <span class="hold-fiscal">${fiscalLabel}</span>
       <span class="hold-qty">${qtyStr}</span>
     </div>
