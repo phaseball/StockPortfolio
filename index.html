@@ -749,7 +749,14 @@ async function saveFundamentalsToSheet(fundData){
     const token=await getAccessToken();
     const today=new Date().toISOString().slice(0,10);
 
-    // Clear existing data in fundamentals tab (keep header row if any)
+    // Write header row
+    try{
+      const hdrUrl=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fundamentals!A1:L1?valueInputOption=USER_ENTERED`;
+      await fetch(hdrUrl,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+        body:JSON.stringify({values:[['date','ticker','targetYear','epsNorm','numAnalysts','P/E 12m','EPS YoY%','revNorm','Rev YoY%','targetPrice','grades(SB/B/H/S/SS)','consensus']]})});
+    }catch(e){console.warn('Could not write header:',e)}
+
+    // Clear existing data below header
     try{
       const clearUrl=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fundamentals!A2:L1000:clear`;
       await fetch(clearUrl,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
@@ -1424,19 +1431,25 @@ async function showTotalValueChart(){
   }
   if(lastDate)takeSnapshot(lastDate);
 
-  // Today's value — add/update snapshot with live prices for top chart
+  // Today's value — always update with live prices
   if(cachedOverviewData){
     const{allHoldings,cashByBroker}=cachedOverviewData;
     let mktVal=0;const liveHoldings={};let costBasis=0;
     for(const h of allHoldings){mktVal+=h.marketValue;if(h.qty>0)liveHoldings[h.ticker]=h.marketValue;costBasis+=h.purchasedAmt||0}
     const todayCash=initialCashSS+cashByBroker['삼성']+initialCashKW+cashByBroker['키움'];
-    const todayDate=new Date().toISOString().slice(2,10).replace(/-/g,'');
+    const now=new Date();
+    const todayDate=String(now.getFullYear()).slice(2)+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
     if(chartSnapshots.length>0&&chartSnapshots[chartSnapshots.length-1].date===todayDate){
       // Transaction exists today — update with live data
       const last=chartSnapshots[chartSnapshots.length-1];
       last.totalValue=todayCash+mktVal;last.holdings=liveHoldings;last.purchasedAmt=costBasis;last.cash=todayCash;
+    }else if(chartSnapshots.length>0){
+      // No transaction today — update last snapshot's holdings with live prices (same qty, better prices)
+      // AND add today as a new point
+      const prev=chartSnapshots[chartSnapshots.length-1];
+      prev.holdings=liveHoldings;prev.totalValue=todayCash+mktVal;prev.cash=todayCash;prev.purchasedAmt=costBasis;
+      // Don't add separate today point — the last snapshot now has live data
     }else{
-      // No transaction today — add snapshot with live holdings
       chartSnapshots.push({date:todayDate,totalValue:todayCash+mktVal,purchasedAmt:costBasis,cash:todayCash,holdings:liveHoldings});
     }
   }
