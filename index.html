@@ -193,8 +193,8 @@ table.t tr:hover td{background:var(--accentBg)}
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn on" onclick="toggleBench('TQQQ',this)">TQQQ</button>
         <button class="cbtn" onclick="toggleBench('QQQ',this)">QQQ</button>
-        <button class="cbtn" onclick="toggleBench('%5ESOX',this)">SOX</button>
-        <button class="cbtn" onclick="toggleBench('IWM',this)">Russell</button>
+        <button class="cbtn on" onclick="toggleBench('%5ESOX',this)">SOX</button>
+        <button class="cbtn on" onclick="toggleBench('IWM',this)">Russell</button>
       </div>
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn on" onclick="setChartMode('norm',this)">Normalized</button>
@@ -1293,7 +1293,7 @@ let chartSnapshots=[];   // [{date, totalValue, purchasedAmt, holdings:{ticker:a
 let chartBenchData={};   // {TQQQ:[{date,close}], QQQ:[], ...}
 let chartPeriod='total';
 let chartMode='norm';    // 'norm' or 'chg'
-let chartBenches=new Set(['TQQQ']);
+let chartBenches=new Set(['TQQQ','%5ESOX','IWM']);
 
 const BENCH_META={
   TQQQ:{color:'#888',label:'TQQQ'},
@@ -1424,18 +1424,20 @@ async function showTotalValueChart(){
   }
   if(lastDate)takeSnapshot(lastDate);
 
-  // Today's value
+  // Today's value — add/update snapshot with live prices for top chart
   if(cachedOverviewData){
     const{allHoldings,cashByBroker}=cachedOverviewData;
-    let mktVal=0;const holdings={};let costBasis=0;
-    for(const h of allHoldings){mktVal+=h.marketValue;if(h.qty>0)holdings[h.ticker]=h.marketValue;costBasis+=h.purchasedAmt||0}
+    let mktVal=0;const liveHoldings={};let costBasis=0;
+    for(const h of allHoldings){mktVal+=h.marketValue;if(h.qty>0)liveHoldings[h.ticker]=h.marketValue;costBasis+=h.purchasedAmt||0}
     const todayCash=initialCashSS+cashByBroker['삼성']+initialCashKW+cashByBroker['키움'];
     const todayDate=new Date().toISOString().slice(2,10).replace(/-/g,'');
-    if(chartSnapshots.length===0||chartSnapshots[chartSnapshots.length-1].date!==todayDate){
-      chartSnapshots.push({date:todayDate,totalValue:todayCash+mktVal,purchasedAmt:costBasis,cash:todayCash,holdings});
-    }else{
+    if(chartSnapshots.length>0&&chartSnapshots[chartSnapshots.length-1].date===todayDate){
+      // Transaction exists today — update with live data
       const last=chartSnapshots[chartSnapshots.length-1];
-      last.totalValue=todayCash+mktVal;last.holdings=holdings;last.purchasedAmt=costBasis;last.cash=todayCash;
+      last.totalValue=todayCash+mktVal;last.holdings=liveHoldings;last.purchasedAmt=costBasis;last.cash=todayCash;
+    }else{
+      // No transaction today — add snapshot with live holdings
+      chartSnapshots.push({date:todayDate,totalValue:todayCash+mktVal,purchasedAmt:costBasis,cash:todayCash,holdings:liveHoldings});
     }
   }
 
@@ -1714,7 +1716,7 @@ function renderCharts(container,data,benchKeys,groupLabels){
     for(let i=1;i<data.length;i++)ctx.lineTo(xPos(i),yPos2(data[i].purchasedAmt));
     ctx.stroke();ctx.setLineDash([]);
     const lastPurch=data[data.length-1].purchasedAmt;
-    endLabels2.push({y:yPos2(lastPurch),val:lastPurch,color:'#fff',label:'purch'});
+    endLabels2.push({y:yPos2(lastPurch),val:lastPurch,color:'#fff',label:'총매수'});
   }
 
   ctx.restore(); // remove clip
@@ -1739,7 +1741,7 @@ function renderCharts(container,data,benchKeys,groupLabels){
   // Bottom chart legend
   ctx.font='10px JetBrains Mono, monospace';
   let lx2=pad.l;
-  if(!isPct){ctx.fillStyle='#fff';ctx.fillText('--- purch',lx2,y2Top+12);lx2+=72}
+  if(!isPct){ctx.fillStyle='#fff';ctx.fillText('--- 총매수',lx2,y2Top+12);lx2+=72}
   for(let i=0;i<allLabels.length;i++){
     ctx.fillStyle=allColors[i];
     ctx.fillText(`── ${allLabels[i]}`,lx2,y2Top+12);lx2+=75;
@@ -1822,7 +1824,7 @@ function renderCharts(container,data,benchKeys,groupLabels){
       }
     }
     if(!cm.isPct&&d.purchasedAmt>0){
-      html+=`<div style="color:#fff">purch: $${(d.purchasedAmt/1e3).toFixed(1)}K</div>`;
+      html+=`<div style="color:#fff">총매수: $${(d.purchasedAmt/1e3).toFixed(1)}K</div>`;
     }
 
     tip.innerHTML=html;
