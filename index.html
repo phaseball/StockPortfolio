@@ -691,7 +691,8 @@ async function refreshFundamentals(){
         // P/E = price / normalized EPS
         pe12m=(epsNorm&&epsNorm>0&&price)?price/epsNorm:null;
 
-        console.log(`${tk} interpolation: targetFrac=${targetFrac}, lo=${lo?.date}, hi=${hi?.date}, epsNorm=${epsNorm?.toFixed(3)}, revNorm=${revNorm?.toFixed(0)}`);
+        console.log(`${tk} interpolation: targetFrac=${targetFrac}, lo=${lo?.date}(frac=${lo?.frac},eps=${lo?.eps?.toFixed(3)},rev=${Math.round(lo?.rev||0)}), hi=${hi?.date}(frac=${hi?.frac},eps=${hi?.eps?.toFixed(3)},rev=${Math.round(hi?.rev||0)}), epsNorm=${epsNorm?.toFixed(3)}, epsYoy=${epsYoy12m?.toFixed(1)}%`);
+        console.log(`${tk} all entries:`,entries.map(e=>`${e.date}(frac=${e.frac.toFixed(3)},eps=${e.eps?.toFixed(3)},rev=${Math.round(e.rev||0)},nEps=${e.nEps})`).join(' | '));
       }
 
       // --- Price target ---
