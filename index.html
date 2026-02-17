@@ -571,28 +571,31 @@ async function debugEarnings(ticker){
   toast(`🔍 ${ticker} earnings 조회 중...`,'ok');
   console.log(`=== DEBUG EARNINGS for ${ticker} (past + future) ===`);
 
-  // Scan past 1 year AND future 1 year using 15-day windows
+  // 1 year limit: use 7-day safety margin
   const now=new Date();
   const yesterday=new Date(now.getTime()-86400000);
-  const oneYearAgo=new Date(now.getFullYear()-1,now.getMonth(),now.getDate()+1);
-  const oneYearFwd=new Date(now.getFullYear()+1,now.getMonth(),now.getDate()-1);
+  const pastLimit=new Date(now.getFullYear()-1,now.getMonth(),now.getDate()+7);
+  const futureLimit=new Date(now.getFullYear()+1,now.getMonth(),now.getDate()-7);
 
   const allResults=[];
   const seen=new Set();
 
-  // Past: scan backwards
+  // Past: scan backwards from yesterday to pastLimit
+  console.log(`Scanning PAST: ${pastLimit.toISOString().slice(0,10)} → ${yesterday.toISOString().slice(0,10)}`);
   let cursor=new Date(yesterday);
-  while(cursor>oneYearAgo){
+  while(cursor>pastLimit){
     const to=new Date(cursor);
     let from=new Date(cursor.getTime()-15*86400000);
-    if(from<oneYearAgo)from=new Date(oneYearAgo);
+    if(from<pastLimit)from=new Date(pastLimit);
     const fromStr=from.toISOString().slice(0,10);
     const toStr=to.toISOString().slice(0,10);
     if(fromStr>=toStr)break;
     try{
       const data=await fmpGet(`earnings-calendar?from=${fromStr}&to=${toStr}`);
       if(Array.isArray(data)){
-        for(const m of data.filter(e=>e.symbol===ticker)){
+        const matches=data.filter(e=>e.symbol===ticker);
+        if(matches.length>0)console.log(`  PAST ${fromStr}~${toStr}: ${matches.length} for ${ticker} (${data.length} total)`);
+        for(const m of matches){
           if(!seen.has(m.date)){seen.add(m.date);allResults.push(m)}
         }
       }
@@ -600,19 +603,22 @@ async function debugEarnings(ticker){
     cursor=new Date(from.getTime()-86400000);
   }
 
-  // Future: scan forwards
+  // Future: scan forwards from today to futureLimit
+  console.log(`Scanning FUTURE: ${now.toISOString().slice(0,10)} → ${futureLimit.toISOString().slice(0,10)}`);
   cursor=new Date(now);
-  while(cursor<oneYearFwd){
+  while(cursor<futureLimit){
     const from=new Date(cursor);
     let to=new Date(cursor.getTime()+15*86400000);
-    if(to>oneYearFwd)to=new Date(oneYearFwd);
+    if(to>futureLimit)to=new Date(futureLimit);
     const fromStr=from.toISOString().slice(0,10);
     const toStr=to.toISOString().slice(0,10);
     if(fromStr>=toStr)break;
     try{
       const data=await fmpGet(`earnings-calendar?from=${fromStr}&to=${toStr}`);
       if(Array.isArray(data)){
-        for(const m of data.filter(e=>e.symbol===ticker)){
+        const matches=data.filter(e=>e.symbol===ticker);
+        if(matches.length>0)console.log(`  FUTURE ${fromStr}~${toStr}: ${matches.length} for ${ticker} (${data.length} total)`);
+        for(const m of matches){
           if(!seen.has(m.date)){seen.add(m.date);allResults.push(m)}
         }
       }
@@ -636,7 +642,7 @@ async function fetchEarningsActuals(ticker){
   const now=new Date();
   const yesterday=new Date(now.getTime()-86400000);
   // Starter plan limit: exactly 1 year back from today
-  const oneYearAgo=new Date(now.getFullYear()-1,now.getMonth(),now.getDate()+1); // +1 day safety margin
+  const oneYearAgo=new Date(now.getFullYear()-1,now.getMonth(),now.getDate()+7); // 7-day safety margin
   const allResults=[];
   const seen=new Set();
   let cursor=new Date(yesterday);
