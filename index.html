@@ -1721,6 +1721,19 @@ async function showTotalValueChart(){
   }
   if(lastDate)captureState(lastDate,txPrices);
 
+  // Update latest state's totalValue using actual current market prices
+  // This ensures chart matches overview's totalAsset calculation
+  const latestDate=lastDate;
+  if(latestDate&&txDateStates[latestDate]){
+    const ls=txDateStates[latestDate];
+    let mktVal=0;
+    for(const[tk,p] of Object.entries(ls.positions)){
+      const curPrice=cachedPrices[tk]&&cachedPrices[tk].current?cachedPrices[tk].current:(txPrices[tk]||p.avgCost);
+      mktVal+=p.qty*curPrice;
+    }
+    ls.totalValue=ls.cash+mktVal;
+  }
+
   // Store final state for today
   chartTxStates=txDateStates;
   chartTxDates=Object.keys(txDateStates).sort();
@@ -1948,10 +1961,45 @@ function redrawChart(){
   // Store baseValue for legend
   const baseValue=chartData.length>0&&chartData[0]._baseValue?chartData[0]._baseValue:1;
 
-  renderCharts(el,chartData,[...chartBenches],groupLabels,baseValue,allMasterDates);
+  // Fix last data point: use actual current prices instead of TQQQ interpolation
+  // This ensures chart endpoint matches overview totalAsset exactly
+  // Compute actualTotalAsset for the true latest date (using current market prices)
+  let actualTotalAsset=null;
+  const trueLastDate=allMasterDates[allMasterDates.length-1];
+  const trueLastState=getStateAtDate(trueLastDate);
+  if(trueLastState){
+    let actualMktVal=0;
+    for(const[tk,pos] of Object.entries(trueLastState.positions)){
+      if(pos.qty>0){
+        const cp=cachedPrices[tk];
+        const price=cp&&cp.current?cp.current:pos.avgCost;
+        actualMktVal+=pos.qty*price;
+      }
+    }
+    actualTotalAsset=trueLastState.cash+actualMktVal;
+  }
+
+  // Also fix the last chart data entry if it's the true latest date
+  if(chartData.length>0){
+    const lastEntry=chartData[chartData.length-1];
+    const lastChartDate=masterDates[masterDates.length-1];
+    if(lastChartDate===trueLastDate&&actualTotalAsset!=null){
+      const oldTotal=lastEntry.totalValue;
+      lastEntry.totalValue=actualTotalAsset;
+      if(chartMode==='norm'&&chartData[0]._baseValue){
+        lastEntry.portfolio=(actualTotalAsset/chartData[0]._baseValue)*100;
+      }
+      if(chartMode==='chg'&&chartData[0]._baseValue){
+        lastEntry.portfolio=((actualTotalAsset/chartData[0]._baseValue)-1)*100;
+      }
+      console.log(`Chart endpoint fix: ${oldTotal.toFixed(0)} → ${actualTotalAsset.toFixed(0)} (actual prices)`);
+    }
+  }
+
+  renderCharts(el,chartData,[...chartBenches],groupLabels,baseValue,allMasterDates,actualTotalAsset);
 }
 
-function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDates){
+function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDates,actualTotalAsset){
   const W=Math.min(container.clientWidth||800,1200);
   const H1=350, H2=200, gap=30;
   const totalH=H1+gap+H2;
@@ -2313,21 +2361,27 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDa
   if(allMasterDates&&allMasterDates.length>1){
     const tqqqLk=chartBenchData['TQQQ']?{}:null;
     if(tqqqLk){for(const d of (chartBenchData['TQQQ']||[]))tqqqLk[d.date]=d.close}
+    const lastMasterDate=allMasterDates[allMasterDates.length-1];
     const yearMap={};
     for(const date of allMasterDates){
       const state=getStateAtDate(date);
       if(!state)continue;
-      // Compute totalValue same as chart
-      let totalValue=state.totalValue;
-      let stateDate=null;
-      for(let i=chartTxDates.length-1;i>=0;i--){
-        if(chartTxDates[i]<=date){stateDate=chartTxDates[i];break}
-      }
-      if(stateDate&&stateDate!==date&&tqqqLk){
-        const tqAt=tqqqLk[stateDate];
-        const tqNow=tqqqLk[date];
-        if(tqAt&&tqNow&&tqAt>0){
-          totalValue=state.cash+(state.totalValue-state.cash)*(tqNow/tqAt);
+      let totalValue;
+      // For the last date, use actual current prices if available
+      if(date===lastMasterDate&&actualTotalAsset!=null){
+        totalValue=actualTotalAsset;
+      }else{
+        totalValue=state.totalValue;
+        let stateDate=null;
+        for(let i=chartTxDates.length-1;i>=0;i--){
+          if(chartTxDates[i]<=date){stateDate=chartTxDates[i];break}
+        }
+        if(stateDate&&stateDate!==date&&tqqqLk){
+          const tqAt=tqqqLk[stateDate];
+          const tqNow=tqqqLk[date];
+          if(tqAt&&tqNow&&tqAt>0){
+            totalValue=state.cash+(state.totalValue-state.cash)*(tqNow/tqAt);
+          }
         }
       }
       const yr='20'+date.slice(0,2);
