@@ -588,39 +588,6 @@ async function debugEarnings(ticker){
 }
 
 // Fetch quarterly earnings actuals for a ticker using 15-day windows
-async function fetchEarningsActuals(ticker){
-  const now=new Date();
-  const yesterday=new Date(now.getTime()-86400000);
-  // Starter plan limit: exactly 1 year back from today
-  const oneYearAgo=new Date(now.getFullYear()-1,now.getMonth(),now.getDate()+7); // 7-day safety margin
-  const allResults=[];
-  const seen=new Set();
-  let cursor=new Date(yesterday);
-
-  while(cursor>oneYearAgo){
-    const to=new Date(cursor);
-    let from=new Date(cursor.getTime()-15*86400000);
-    if(from<oneYearAgo)from=new Date(oneYearAgo);
-    const fromStr=from.toISOString().slice(0,10);
-    const toStr=to.toISOString().slice(0,10);
-    if(fromStr>=toStr)break;
-    try{
-      const data=await fmpGet(`earnings-calendar?from=${fromStr}&to=${toStr}`);
-      if(Array.isArray(data)){
-        const matches=data.filter(e=>e.symbol===ticker);
-        for(const m of matches){
-          if(seen.has(m.date))continue;
-          seen.add(m.date);
-          allResults.push(m);
-        }
-      }
-    }catch(e){}
-    cursor=new Date(from.getTime()-86400000);
-  }
-  allResults.sort((a,b)=>a.date.localeCompare(b.date));
-  return allResults;
-}
-
 async function refreshFundamentals(){
   if(!FMP_KEY){toast('⚙️ 설정에서 FMP API Key를 입력하세요','err');return}
   const toastEl=document.getElementById('toast');
@@ -632,7 +599,7 @@ async function refreshFundamentals(){
     const held=getHeldTickers();
     const fundTickers=[...new Set(held.map(t=>getFundTicker(t)).filter(t=>t!==null))];
     console.log('Fund tickers to fetch:',fundTickers);
-    showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*3} API calls)`);
+    showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*4} API calls)`);
     if(!fundTickers.length){toast('펀더멘탈 데이터 대상 종목 없음','err');return}
 
     const newFund={};
@@ -668,71 +635,71 @@ async function refreshFundamentals(){
     let idx=0;
     for(const tk of fundTickers){
       idx++;
-      showFetching(`📊 ${tk} 추정치... (${idx}/${fundTickers.length})`);
+      showFetching(`📊 ${tk}... (${idx}/${fundTickers.length})`);
       console.log(`=== Fetching FMP data for ${tk} ===`);
-      // 3 API calls + earnings-calendar (15-day windows)
-      const [annual, ptConsensus, gradesData]=await Promise.all([
+      // 4 API calls: annual estimates, quarterly earnings, price target, grades
+      const [annual, quarterlyEarnings, ptConsensus, gradesData]=await Promise.all([
         fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
+        fmpGet(`earnings?symbol=${tk}`),
         fmpGet(`price-target-consensus?symbol=${tk}`),
         fmpGet(`grades-consensus?symbol=${tk}`)
       ]);
       console.log(`${tk} annual estimates:`,annual);
+      console.log(`${tk} quarterly earnings: ${Array.isArray(quarterlyEarnings)?quarterlyEarnings.length:0} entries`);
       console.log(`${tk} priceTarget:`,ptConsensus);
       console.log(`${tk} grades:`,gradesData);
 
-      // Fetch quarterly actuals from earnings-calendar (if not already in eps_actuals sheet)
-      if(!epsActualsMap[tk]||Object.keys(epsActualsMap[tk]).length===0){
-        showFetching(`📊 ${tk} 실적... (${idx}/${fundTickers.length})`);
-        const quarters=await fetchEarningsActuals(tk);
-        if(quarters.length>0){
-          // Detect fiscal year end month from analyst-estimates dates
-          let fyEndMonth=12;
-          if(Array.isArray(annual)&&annual.length>0){
-            const months=annual.map(e=>parseInt(e.date.slice(5,7))||12);
-            fyEndMonth=months[0]||12;
+      // Build quarterly EPS/Rev from /stable/earnings
+      // Uses epsActual where available, falls back to epsEstimated for future quarters
+      const qData=[];
+      if(Array.isArray(quarterlyEarnings)){
+        for(const q of quarterlyEarnings){
+          if(!q.date)continue;
+          const eps=q.epsActual!=null?q.epsActual:q.epsEstimated;
+          const rev=q.revenueActual!=null?q.revenueActual:q.revenueEstimated;
+          if(eps==null)continue;
+          qData.push({reportDate:q.date, eps, rev:rev||0, isActual:q.epsActual!=null});
+        }
+        qData.sort((a,b)=>a.reportDate.localeCompare(b.reportDate));
+      }
+
+      // Detect fiscal year end month from analyst-estimates
+      let fyEndMonth=12;
+      if(Array.isArray(annual)&&annual.length>0){
+        const months=annual.map(e=>parseInt(e.date.slice(5,7))||12);
+        fyEndMonth=months[0]||12;
+      }
+
+      // Group quarters into fiscal years (use actuals + estimates)
+      if(qData.length>0&&(!epsActualsMap[tk]||Object.keys(epsActualsMap[tk]).length===0)){
+        const byFY={};
+        for(const q of qData){
+          const qy=parseInt(q.reportDate.slice(0,4));
+          const qm=parseInt(q.reportDate.slice(5,7));
+          let fy;
+          if(fyEndMonth===12){
+            fy=qm<=3?qy-1:qy;
+          }else if(fyEndMonth<=3){
+            fy=qm<=(fyEndMonth+3)?qy:qy+1;
+          }else{
+            fy=qm<=(fyEndMonth+3)?qy:qy+1;
           }
-          // Group quarters by fiscal year and sum
-          const byFY={};
-          for(const q of quarters){
-            if(q.epsActual==null)continue;
-            const qDate=q.date;
-            const qy=parseInt(qDate.slice(0,4));
-            const qm=parseInt(qDate.slice(5,7));
-            // Map quarter to fiscal year: earnings reported in month qm
-            // For Dec FY companies, Q4 earnings reported ~Feb of next year
-            // Use a simple heuristic: group by calendar year of the fiscal period
-            // Better: count backwards from most recent to assign fiscal years
-            // For now, detect based on fyEndMonth
-            let fy;
-            if(fyEndMonth===12){
-              // Dec FY: earnings in Jan-Mar → previous calendar year
-              fy=qm<=3?qy-1:qy;
-            }else if(fyEndMonth===1){
-              // Jan FY (like NVDA): earnings in Feb-Apr → same year as FY end
-              fy=qm<=4?qy:qy+1;
-            }else{
-              // Other FY ends: rough mapping
-              fy=qm<=fyEndMonth+2?qy:qy+1;
-            }
-            const fyKey=`${fy}-${String(fyEndMonth).padStart(2,'0')}`;
-            if(!byFY[fyKey])byFY[fyKey]={eps:0,rev:0,count:0,quarters:[]};
-            byFY[fyKey].eps+=q.epsActual;
-            byFY[fyKey].rev+=(q.revenueActual||0);
-            byFY[fyKey].count++;
-            byFY[fyKey].quarters.push(`${qDate}:${q.epsActual}`);
-          }
-          // Store complete fiscal years (4 quarters)
-          if(!epsActualsMap[tk])epsActualsMap[tk]={};
-          for(const[fyKey,v] of Object.entries(byFY)){
-            if(v.count>=4){
-              epsActualsMap[tk][fyKey]={eps:v.eps,rev:v.rev>0?v.rev:null};
-              console.log(`${tk} ANNUAL ACTUAL (${v.count}Q): ${fyKey} eps=${v.eps.toFixed(3)} rev=${v.rev} [${v.quarters.join(', ')}]`);
-            }else{
-              console.log(`${tk} PARTIAL: ${fyKey} ${v.count}Q eps=${v.eps.toFixed(3)} [${v.quarters.join(', ')}]`);
-            }
+          const fyKey=`${fy}-${String(fyEndMonth).padStart(2,'0')}`;
+          if(!byFY[fyKey])byFY[fyKey]={eps:0,rev:0,count:0,actuals:0,quarters:[]};
+          byFY[fyKey].eps+=q.eps;
+          byFY[fyKey].rev+=q.rev;
+          byFY[fyKey].count++;
+          if(q.isActual)byFY[fyKey].actuals++;
+          byFY[fyKey].quarters.push(`${q.reportDate}:${q.eps}${q.isActual?'✓':'est'}`);
+        }
+        if(!epsActualsMap[tk])epsActualsMap[tk]={};
+        for(const[fyKey,v] of Object.entries(byFY)){
+          if(v.count>=4){
+            epsActualsMap[tk][fyKey]={eps:v.eps, rev:v.rev>0?v.rev:null};
+            console.log(`${tk} FY ${fyKey}: ${v.count}Q (${v.actuals} actual) eps=${v.eps.toFixed(3)} rev=${v.rev} [${v.quarters.join(', ')}]`);
           }
         }
-      }else{
+      }else if(epsActualsMap[tk]){
         console.log(`${tk} using eps_actuals from sheet:`,epsActualsMap[tk]);
       }
 
