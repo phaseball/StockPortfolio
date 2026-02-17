@@ -191,6 +191,7 @@ table.t tr:hover td{background:var(--accentBg)}
         <button class="cbtn" onclick="setChartPeriod('1y',this)">1Y</button>
         <button class="cbtn" onclick="setChartPeriod('6m',this)">6M</button>
         <button class="cbtn" onclick="setChartPeriod('3m',this)">3M</button>
+        <span id="yearButtons"></span>
       </div>
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn on" onclick="toggleBench('TQQQ',this)">TQQQ</button>
@@ -343,6 +344,7 @@ let allTransactions=[];
 let initialCashSS=0,initialCashKW=0;
 let cachedPrices={};
 let cachedFundamentals={};
+let fundHistory={}; // {ticker: [{date, epsNorm, revNorm, targetPrice}]}
 const CACHE_KEY_TX='cache_transactions';
 const CACHE_KEY_PRICES='cache_prices';
 const CACHE_KEY_FUND='cache_fundamentals';
@@ -477,6 +479,7 @@ function saveCache(){
     localStorage.setItem(CACHE_KEY_PRICES,JSON.stringify(cachedPrices));
     localStorage.setItem(CACHE_KEY_FUND,JSON.stringify(cachedFundamentals));
     localStorage.setItem(CACHE_KEY_CASH,JSON.stringify({ss:initialCashSS,kw:initialCashKW}));
+    localStorage.setItem('cache_fundHistory',JSON.stringify(fundHistory));
   }catch(e){}
 }
 function saveDataTimestamp(){
@@ -500,6 +503,8 @@ function restoreCache(){
     if(pr){cachedPrices=JSON.parse(pr)}
     const fd=localStorage.getItem(CACHE_KEY_FUND);
     if(fd){cachedFundamentals=JSON.parse(fd)}
+    const fh=localStorage.getItem('cache_fundHistory');
+    if(fh){fundHistory=JSON.parse(fh)}
     const ic=localStorage.getItem(CACHE_KEY_CASH);
     if(ic){const c=JSON.parse(ic);initialCashSS=c.ss||0;initialCashKW=c.kw||0}
     populateInitCashFields();
@@ -630,6 +635,34 @@ async function refreshFundamentals(){
         }
         console.log('eps_actuals loaded:',epsActualsMap);
       }catch(e){console.warn('eps_actuals tab not found or empty:',e)}
+    }
+
+    // Load fund_history for EPS change tracking (1w/1m)
+    if(SHEET_ID&&SA_KEY){
+      try{
+        showFetching('📊 Loading fund_history...');
+        const histRows=await sheetsGet('fund_history!A2:E5000');
+        fundHistory={};
+        if(Array.isArray(histRows)){
+          for(const r of histRows){
+            if(!r[0]||!r[1])continue;
+            const dt=String(r[0]).trim();
+            const tk=String(r[1]).trim().toUpperCase();
+            if(!fundHistory[tk])fundHistory[tk]=[];
+            fundHistory[tk].push({
+              date:dt,
+              epsNorm:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
+              revNorm:r[3]!=null&&r[3]!==''?parseFloat(r[3]):null,
+              targetPrice:r[4]!=null&&r[4]!==''?parseFloat(r[4]):null
+            });
+          }
+          // Sort each ticker's history by date
+          for(const tk of Object.keys(fundHistory)){
+            fundHistory[tk].sort((a,b)=>a.date.localeCompare(b.date));
+          }
+        }
+        console.log('fund_history loaded:',Object.keys(fundHistory).length,'tickers');
+      }catch(e){console.warn('fund_history not found:',e)}
     }
 
     let idx=0;
@@ -913,6 +946,27 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
       await fetch(url,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
         body:JSON.stringify({values:rows})});
     }
+
+    // Append to fund_history tab (historical tracking for EPS change 1w/1m)
+    try{
+      const histRows=[];
+      for(const[tk,d]of Object.entries(fundData)){
+        if(d.epsNorm!=null)histRows.push([today,tk,d.epsNorm.toFixed(4),d.revNorm?Math.round(d.revNorm):'',d.targetPrice||'']);
+      }
+      if(histRows.length>0){
+        // Ensure header exists
+        try{
+          const hdrUrl3=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:E1?valueInputOption=USER_ENTERED`;
+          await fetch(hdrUrl3,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+            body:JSON.stringify({values:[['date','ticker','epsNorm','revNorm','targetPrice']]})});
+        }catch(e){}
+        // Append rows
+        const appendUrl=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:E:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+        await fetch(appendUrl,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+          body:JSON.stringify({values:histRows})});
+        console.log(`Appended ${histRows.length} rows to fund_history`);
+      }
+    }catch(e){console.warn('Could not append to fund_history:',e)}
 
     // Save eps_actuals to sheet (API-fetched actuals, preserving manual entries)
     if(epsActualsMap&&Object.keys(epsActualsMap).length>0){
@@ -1380,9 +1434,44 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
       revRow=`${revB}B${yoy}`;
     }
 
-    // -- Col4: EPS estimate changes --
-    epsChg1w='<span style="color:var(--text3);font-size:10px">tracking...</span>';
-    epsChg1m='<span style="color:var(--text3);font-size:10px">tracking...</span>';
+    // -- Col4: EPS estimate changes from fund_history --
+    if(fund.epsNorm!=null){
+      const ftk=getFundTicker(ticker);
+      const hist=fundHistory[ftk]||[];
+      if(hist.length>=2){
+        const today=new Date().toISOString().slice(0,10);
+        const d1w=new Date(Date.now()-7*86400000).toISOString().slice(0,10);
+        const d1m=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+        // Find closest entry on or before target date
+        function findEps(targetDate){
+          let best=null;
+          for(const h of hist){
+            if(h.date<=targetDate&&h.epsNorm!=null)best=h;
+          }
+          return best;
+        }
+        const eps1w=findEps(d1w);
+        const eps1m=findEps(d1m);
+        const currentEps=fund.epsNorm;
+        if(eps1w&&eps1w.epsNorm>0){
+          const chg=((currentEps-eps1w.epsNorm)/eps1w.epsNorm*100);
+          const cls=chg>=0?'c-up':'c-dn';
+          epsChg1w=`<span class="${cls}">${chg>=0?'+':''}${chg.toFixed(1)}%</span> <span style="color:var(--text3);font-size:9px">1w</span>`;
+        }else{
+          epsChg1w='<span style="color:var(--text3);font-size:10px">1w —</span>';
+        }
+        if(eps1m&&eps1m.epsNorm>0){
+          const chg=((currentEps-eps1m.epsNorm)/eps1m.epsNorm*100);
+          const cls=chg>=0?'c-up':'c-dn';
+          epsChg1m=`<span class="${cls}">${chg>=0?'+':''}${chg.toFixed(1)}%</span> <span style="color:var(--text3);font-size:9px">1m</span>`;
+        }else{
+          epsChg1m='<span style="color:var(--text3);font-size:10px">1m —</span>';
+        }
+      }else{
+        epsChg1w='<span style="color:var(--text3);font-size:10px">1w —</span>';
+        epsChg1m='<span style="color:var(--text3);font-size:10px">1m —</span>';
+      }
+    }
 
     // -- Col5: Target price + Rating (light gray) --
     if(fund.targetPrice!=null&&fund.price>0){
@@ -1499,7 +1588,11 @@ let chartBottomMode='abs'; // 'abs' or 'pct'
 
 function setChartPeriod(p,btn){
   chartPeriod=p;
-  btn.parentElement.querySelectorAll('.cbtn').forEach(b=>b.classList.remove('on'));
+  // Clear all period buttons (main + year)
+  const grp=btn.closest('.chart-grp');
+  if(grp)grp.querySelectorAll('.cbtn').forEach(b=>b.classList.remove('on'));
+  const ybEl=document.getElementById('yearButtons');
+  if(ybEl)ybEl.querySelectorAll('.cbtn').forEach(b=>b.classList.remove('on'));
   btn.classList.add('on');
   redrawChart();
 }
@@ -1649,16 +1742,43 @@ function redrawChart(){
   const firstTxDate=chartTxDates[0];
   masterDates=masterDates.filter(d=>d>=firstTxDate);
 
+  // Populate year buttons
+  const years=new Set();
+  for(const d of masterDates)years.add('20'+d.slice(0,2));
+  const ybEl=document.getElementById('yearButtons');
+  if(ybEl){
+    let yhtml='';
+    for(const y of [...years].sort()){
+      const on=chartPeriod===y?'on':'';
+      yhtml+=`<button class="cbtn ${on}" onclick="setChartPeriod('${y}',this)" style="font-size:10px">${y}</button>`;
+    }
+    ybEl.innerHTML=yhtml;
+  }
+
   // Period filter
   if(chartPeriod!=='total'){
     const now=new Date();
-    let cutoff;
+    let cutoff,cutEnd=null;
     if(chartPeriod==='1y')cutoff=new Date(now.getFullYear()-1,now.getMonth(),now.getDate());
     else if(chartPeriod==='6m')cutoff=new Date(now.getFullYear(),now.getMonth()-6,now.getDate());
     else if(chartPeriod==='3m')cutoff=new Date(now.getFullYear(),now.getMonth()-3,now.getDate());
-    const cutStr=String(cutoff.getFullYear()).slice(2)+String(cutoff.getMonth()+1).padStart(2,'0')+String(cutoff.getDate()).padStart(2,'0');
-    const filtered=masterDates.filter(d=>d>=cutStr);
-    if(filtered.length>=2)masterDates=filtered;
+    else if(/^\d{4}$/.test(chartPeriod)){
+      // Year filter: e.g. "2025"
+      const yr=parseInt(chartPeriod);
+      cutoff=new Date(yr,0,1);
+      cutEnd=new Date(yr,11,31);
+    }
+    if(cutoff){
+      const cutStr=String(cutoff.getFullYear()).slice(2)+String(cutoff.getMonth()+1).padStart(2,'0')+String(cutoff.getDate()).padStart(2,'0');
+      let filtered;
+      if(cutEnd){
+        const endStr=String(cutEnd.getFullYear()).slice(2)+String(cutEnd.getMonth()+1).padStart(2,'0')+String(cutEnd.getDate()).padStart(2,'0');
+        filtered=masterDates.filter(d=>d>=cutStr&&d<=endStr);
+      }else{
+        filtered=masterDates.filter(d=>d>=cutStr);
+      }
+      if(filtered.length>=2)masterDates=filtered;
+    }
   }
 
   if(masterDates.length<2){el.innerHTML='<p style="color:var(--text2)">데이터가 부족합니다</p>';return}
@@ -1836,17 +1956,40 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue){
   }
   const yr1=y1Max-y1Min||1;
   y1Min=Math.floor(y1Min-yr1*0.05);y1Max=Math.ceil(y1Max+yr1*0.05);
+  if(y1Min<=0)y1Min=1; // log safety
 
-  function yPos1(v){return pad.t+(1-(v-y1Min)/(y1Max-y1Min))*cH1}
+  const useLog=chartMode==='norm';
+  const logMin=useLog?Math.log(y1Min):y1Min;
+  const logMax=useLog?Math.log(y1Max):y1Max;
+
+  function yPos1(v){
+    if(useLog){
+      const lv=Math.log(Math.max(v,0.1));
+      return pad.t+(1-(lv-logMin)/(logMax-logMin))*cH1;
+    }
+    return pad.t+(1-(v-y1Min)/(y1Max-y1Min))*cH1;
+  }
 
   // Grid
   ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
-  for(let i=0;i<=5;i++){
-    const v=y1Min+(y1Max-y1Min)*i/5;
-    const y=yPos1(v);
-    ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
-    ctx.fillStyle='#888';ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='right';
-    ctx.fillText(chartMode==='chg'?v.toFixed(0)+'%':v.toFixed(0),pad.l-6,y+3);
+  if(useLog){
+    // Log scale grid: evenly spaced in log space
+    for(let i=0;i<=5;i++){
+      const lv=logMin+(logMax-logMin)*i/5;
+      const v=Math.exp(lv);
+      const y=yPos1(v);
+      ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+      ctx.fillStyle='#888';ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='right';
+      ctx.fillText(v.toFixed(0),pad.l-6,y+3);
+    }
+  }else{
+    for(let i=0;i<=5;i++){
+      const v=y1Min+(y1Max-y1Min)*i/5;
+      const y=yPos1(v);
+      ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+      ctx.fillStyle='#888';ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='right';
+      ctx.fillText(v.toFixed(0)+'%',pad.l-6,y+3);
+    }
   }
 
   // Baseline
@@ -2121,6 +2264,38 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue){
   });
 
   container.appendChild(wrap);
+
+  // Annual summary table: yearly total value change
+  if(data.length>1){
+    // Group data by year, find first and last totalValue per year
+    const yearMap={};
+    for(const d of data){
+      const yr=d.date.slice(0,4); // "2024" etc
+      if(!yearMap[yr])yearMap[yr]={first:d.totalValue,last:d.totalValue,firstDate:d.date,lastDate:d.date};
+      yearMap[yr].last=d.totalValue;
+      yearMap[yr].lastDate=d.date;
+    }
+    const sortedYears=Object.keys(yearMap).sort();
+    if(sortedYears.length>0){
+      let thtml='<table style="width:auto;margin-top:10px;border-collapse:collapse;font:11px/1.6 \'JetBrains Mono\',monospace">';
+      thtml+='<tr style="color:var(--text3);font-size:10px"><th style="padding:2px 10px;text-align:left">연도</th><th style="padding:2px 10px;text-align:right">시작</th><th style="padding:2px 10px;text-align:right">종료</th><th style="padding:2px 10px;text-align:right">변동</th><th style="padding:2px 10px;text-align:right">수익률</th></tr>';
+      for(let yi=0;yi<sortedYears.length;yi++){
+        const yr=sortedYears[yi];
+        const yd=yearMap[yr];
+        // Start value: either first data point of year or last value of previous year
+        const startVal=yi>0?yearMap[sortedYears[yi-1]].last:yd.first;
+        const endVal=yd.last;
+        const chg=endVal-startVal;
+        const pct=startVal>0?((endVal/startVal-1)*100):0;
+        const cls=chg>=0?'c-up':'c-dn';
+        thtml+=`<tr><td style="padding:2px 10px">${yr}</td><td style="padding:2px 10px;text-align:right">${fmtUSD(startVal)}</td><td style="padding:2px 10px;text-align:right">${fmtUSD(endVal)}</td><td style="padding:2px 10px;text-align:right" class="${cls}">${chg>=0?'+':''}${fmtUSD(chg)}</td><td style="padding:2px 10px;text-align:right" class="${cls}">${pct>=0?'+':''}${pct.toFixed(1)}%</td></tr>`;
+      }
+      thtml+='</table>';
+      const tableDiv=document.createElement('div');
+      tableDiv.innerHTML=thtml;
+      container.appendChild(tableDiv);
+    }
+  }
 }
 
 // ================ TICKER HISTORY ================
