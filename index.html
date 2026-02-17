@@ -576,28 +576,115 @@ async function refreshFundamentals(){
     const held=getHeldTickers();
     const fundTickers=[...new Set(held.map(t=>getFundTicker(t)).filter(t=>t!==null))];
     console.log('Fund tickers to fetch:',fundTickers);
-    showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*5} API calls)`);
+    showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*4} API calls)`);
     if(!fundTickers.length){toast('펀더멘탈 데이터 대상 종목 없음','err');return}
 
     const newFund={};
+
+    // Load actual EPS/Rev from eps_actuals sheet tab
+    // Format: ticker | date(YYYY-MM) | eps | rev
+    // e.g.: AMD | 2024-12 | 3.31 | 25785000000
+    let epsActualsMap={}; // {ticker: {dateKey: {eps, rev}}}
+    if(SHEET_ID&&SA_KEY){
+      try{
+        showFetching('📊 Loading eps_actuals from sheet...');
+        const rows=await sheetsGet('eps_actuals!A2:D200');
+        if(Array.isArray(rows)){
+          for(const r of rows){
+            if(!r[0]||!r[1])continue;
+            const tk=String(r[0]).trim().toUpperCase();
+            const dateKey=String(r[1]).trim(); // "2024-12"
+            if(!epsActualsMap[tk])epsActualsMap[tk]={};
+            epsActualsMap[tk][dateKey]={
+              eps:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
+              rev:r[3]!=null&&r[3]!==''?parseFloat(r[3]):null
+            };
+          }
+        }
+        console.log('eps_actuals loaded:',epsActualsMap);
+      }catch(e){console.warn('eps_actuals tab not found or empty:',e)}
+    }
+
     let idx=0;
     for(const tk of fundTickers){
       idx++;
       showFetching(`📊 Fetching ${tk}... (${idx}/${fundTickers.length})`);
       console.log(`=== Fetching FMP data for ${tk} ===`);
-      // 5 calls per ticker: annual estimates, income statement, key metrics, price target, grades
-      const [annual, incomeStmt, keyMetrics, ptConsensus, gradesData]=await Promise.all([
+      // 4 calls per ticker: annual estimates, earnings calendar (actuals), price target, grades
+      const [annual, earningsCal, ptConsensus, gradesData]=await Promise.all([
         fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
-        fmpGet(`income-statement?symbol=${tk}&period=annual&limit=5`),
-        fmpGet(`key-metrics?symbol=${tk}&period=annual&limit=5`),
+        fmpGet(`earnings-calendar?symbol=${tk}`),
         fmpGet(`price-target-consensus?symbol=${tk}`),
         fmpGet(`grades-consensus?symbol=${tk}`)
       ]);
       console.log(`${tk} annual estimates:`,annual);
-      console.log(`${tk} income actuals:`,incomeStmt);
-      console.log(`${tk} key metrics:`,keyMetrics);
+      console.log(`${tk} earnings calendar:`,earningsCal);
       console.log(`${tk} priceTarget:`,ptConsensus);
       console.log(`${tk} grades:`,gradesData);
+
+      // Build actual EPS from earnings-calendar (quarterly actuals → annual sum)
+      // earnings-calendar returns: {date, symbol, eps (actual), epsEstimated, revenue, revenueEstimated, fiscalDateEnding}
+      if(Array.isArray(earningsCal)&&earningsCal.length>0){
+        // Group by fiscal year: use fiscalDateEnding to determine fiscal year end month
+        // Then sum quarterly eps actuals into annual
+        const qByYear={}; // "YYYY-MM" (fiscal year end) -> [{eps, rev, quarter}]
+        for(const eq of earningsCal){
+          if(eq.eps==null)continue; // skip if no actual yet
+          const fd=eq.fiscalDateEnding||eq.date;
+          if(!fd)continue;
+          const y=parseInt(fd.slice(0,4));
+          const m=parseInt(fd.slice(5,7))||12;
+          // Determine fiscal year: use the fiscal year end month from the latest entry
+          // Group quarters into fiscal years by their fiscal date ending year+month
+          const fyKey=`${y}-${String(m).padStart(2,'0')}`;
+          if(!qByYear[fyKey])qByYear[fyKey]=[];
+          qByYear[fyKey].push({eps:eq.eps, rev:eq.revenue||0, date:fd});
+          console.log(`${tk} EARNINGS-CAL: ${fd} epsActual=${eq.eps} epsEst=${eq.epsEstimated} rev=${eq.revenue}`);
+        }
+
+        // Find fiscal year pattern: most entries will share the same end month
+        // Sum 4 quarters into annual, only if we have all 4 quarters
+        // Actually, earnings-calendar entries are per-quarter with their own fiscal date ending
+        // We need to group by fiscal YEAR (not quarter)
+        // The fiscal year end month can be detected from the most recent entry
+        const allFiscalDates=earningsCal.filter(e=>e.fiscalDateEnding).map(e=>e.fiscalDateEnding).sort();
+        let fyEndMonth=12; // default Dec
+        if(allFiscalDates.length>0){
+          // Find the month that appears as fiscal year end (largest month in any year)
+          const months=allFiscalDates.map(d=>parseInt(d.slice(5,7)));
+          // The fiscal year end month is the max month that appears
+          fyEndMonth=Math.max(...new Set(months));
+        }
+
+        // Group quarters by fiscal year
+        const annualActuals={}; // "YYYY-MM" -> {epsSum, revSum, count}
+        for(const eq of earningsCal){
+          if(eq.eps==null)continue;
+          const fd=eq.fiscalDateEnding||eq.date;
+          if(!fd)continue;
+          const qy=parseInt(fd.slice(0,4));
+          const qm=parseInt(fd.slice(5,7));
+          // Determine which fiscal year this quarter belongs to
+          // If fiscal year ends in month fyEndMonth, quarters with month > fyEndMonth belong to next FY
+          const fy=qm<=fyEndMonth?qy:(qy+1);
+          const fyKey=`${fy}-${String(fyEndMonth).padStart(2,'0')}`;
+          if(!annualActuals[fyKey])annualActuals[fyKey]={epsSum:0,revSum:0,count:0};
+          annualActuals[fyKey].epsSum+=eq.eps;
+          annualActuals[fyKey].revSum+=(eq.revenue||0);
+          annualActuals[fyKey].count++;
+        }
+
+        // Only use fiscal years with all 4 quarters reported
+        for(const[fyKey,v] of Object.entries(annualActuals)){
+          if(v.count>=4){
+            if(!epsActualsMap[tk])epsActualsMap[tk]={};
+            epsActualsMap[tk][fyKey]={eps:v.epsSum, rev:v.revSum>0?v.revSum:null};
+            console.log(`${tk} ANNUAL ACTUAL (${v.count}Q): ${fyKey} eps=${v.epsSum.toFixed(3)} rev=${v.revSum}`);
+          }else{
+            console.log(`${tk} PARTIAL YEAR: ${fyKey} has ${v.count} quarters, eps so far=${v.epsSum.toFixed(3)}`);
+          }
+        }
+      }
 
       // Price: try cached price for this ticker, or find from Yahoo quote
       let price=0;
@@ -640,64 +727,20 @@ async function refreshFundamentals(){
       const targetFrac=targetYear+(targetMonth/12);
 
       if(Array.isArray(annual)&&annual.length>=2){
-        // Build actuals lookup: use key-metrics for better EPS, income-statement for revenue
-        const actuals={};
+        // Actuals from eps_actuals Google Sheet tab (user-maintained adjusted EPS & Rev)
+        const tkActuals=epsActualsMap[tk]||{};
 
-        // Key metrics: has various per-share metrics
-        const kmByDate={};
-        if(Array.isArray(keyMetrics)){
-          for(const km of keyMetrics){
-            const d=km.date;if(!d)continue;
-            kmByDate[d]=km;
-            console.log(`${tk} KEY-METRICS: ${d} earningsYield=${km.earningsYield} peRatio=${km.peRatio} netIncomePerShare=${km.netIncomePerShare}`);
-          }
-        }
-
-        if(Array.isArray(incomeStmt)){
-          for(const is of incomeStmt){
-            const d=is.date||is.calendarYear;
-            if(!d)continue;
-            const y=parseInt(String(d).slice(0,4));
-            const m=parseInt(String(d).slice(5,7))||12;
-            const frac=y+(m/12);
-
-            // Log all EPS-related fields
-            console.log(`${tk} INCOME-STMT: ${d} eps=${is.eps} epsdiluted=${is.epsdiluted} netIncome=${is.netIncome} weightedAvgShsOut=${is.weightedAverageShsOut} weightedAvgShsOutDil=${is.weightedAverageShsOutDil}`);
-
-            // Try to get adjusted EPS: netIncomePerShare from key-metrics is often closer to adjusted
-            const km=kmByDate[d];
-            let bestEps=is.epsdiluted||is.eps||0;
-            // If key-metrics has netIncomePerShare, use it as a candidate
-            if(km&&km.netIncomePerShare){
-              console.log(`${tk} KM netIncomePerShare for ${d}: ${km.netIncomePerShare} vs income eps: ${bestEps}`);
-              // netIncomePerShare from key-metrics is typically GAAP too
-              // The best proxy for adjusted EPS: use income statement but log for comparison
-            }
-
-            actuals[d]={frac, eps:bestEps, rev:is.revenue||0, date:d};
-            console.log(`${tk} ACTUAL USED: ${d} frac=${frac.toFixed(3)} eps=${bestEps} rev=${is.revenue}`);
-          }
-        }
-
-        // Parse estimate entries
+        // Parse estimate entries, replacing past values with actuals if available
         const entries=annual.map(e=>{
           const y=parseInt(e.date.slice(0,4));
           const m=parseInt(e.date.slice(5,7))||12;
           const frac=y+(m/12);
-          // Check if we have actuals for this fiscal period
-          // Match by date string or by closest frac
-          let actualMatch=actuals[e.date];
-          if(!actualMatch){
-            // Try matching by fiscal year end (find actual within 0.1 frac)
-            for(const a of Object.values(actuals)){
-              if(Math.abs(a.frac-frac)<0.1){actualMatch=a;break}
-            }
-          }
-          const useActual=actualMatch&&frac<=targetFrac; // Only use actuals for past/current periods
-          const eps=useActual?actualMatch.eps:(e.epsAvg||0);
-          const rev=useActual?actualMatch.rev:(e.revenueAvg||0);
-          const src=useActual?'actual':'est';
-          console.log(`${tk} entry: ${e.date} frac=${frac.toFixed(3)} eps=${eps.toFixed(3)}(${src}) rev=${Math.round(rev)}(${src}) nEps=${e.numAnalystsEps||0}`);
+          const dateKey=e.date.slice(0,7); // "2024-12" or "2025-01"
+          const actual=tkActuals[dateKey];
+          const eps=(actual&&actual.eps!=null)?actual.eps:(e.epsAvg||0);
+          const rev=(actual&&actual.rev!=null)?actual.rev:(e.revenueAvg||0);
+          const src=actual?'actual':'est';
+          console.log(`${tk} entry: ${e.date} frac=${frac.toFixed(3)} eps=${eps}(${src}) rev=${Math.round(rev)}(${src}) nEps=${e.numAnalystsEps||0}`);
           return{frac, eps, rev,
             nEps:e.numAnalystsEps||0, nRev:e.numAnalystsRevenue||0, date:e.date, src};
         }).sort((a,b)=>a.frac-b.frac);
@@ -813,7 +856,14 @@ async function saveFundamentalsToSheet(fundData){
     const token=await getAccessToken();
     const today=new Date().toISOString().slice(0,10);
 
-    // Write header row
+    // Ensure eps_actuals tab has header
+    try{
+      const hdrUrl2=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/eps_actuals!A1:D1?valueInputOption=USER_ENTERED`;
+      await fetch(hdrUrl2,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+        body:JSON.stringify({values:[['ticker','date(YYYY-MM)','adj_eps','revenue']]})});
+    }catch(e){console.warn('Could not write eps_actuals header:',e)}
+
+    // Write header row for fundamentals
     try{
       const hdrUrl=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fundamentals!A1:L1?valueInputOption=USER_ENTERED`;
       await fetch(hdrUrl,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
