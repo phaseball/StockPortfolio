@@ -1794,6 +1794,11 @@ function redrawChart(){
       if(cutEnd){
         const endStr=String(cutEnd.getFullYear()).slice(2)+String(cutEnd.getMonth()+1).padStart(2,'0')+String(cutEnd.getDate()).padStart(2,'0');
         filtered=masterDates.filter(d=>d>=cutStr&&d<=endStr);
+        // For year filter: prepend last trading day of previous year as starting point
+        const prevDay=masterDates.filter(d=>d<cutStr);
+        if(prevDay.length>0){
+          filtered=[prevDay[prevDay.length-1],...filtered];
+        }
       }else{
         filtered=masterDates.filter(d=>d>=cutStr);
       }
