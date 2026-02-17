@@ -204,11 +204,11 @@ table.t tr:hover td{background:var(--accentBg)}
         <button class="cbtn" onclick="setChartMode('chg',this)">Change%</button>
       </div>
       <div class="chart-grp" style="margin-left:8px">
-        <button class="cbtn on" onclick="setBottomMode('abs',this)">$</button>
-        <button class="cbtn" onclick="setBottomMode('pct',this)">%</button>
+        <button class="cbtn" onclick="setBottomMode('abs',this)">$</button>
+        <button class="cbtn on" onclick="setBottomMode('pct',this)">%</button>
       </div>
     </div>
-    <div id="chartContent"><p style="color:var(--text2);text-align:center;padding:32px">로딩 중...</p></div>
+    <div id="chartContent" style="padding-bottom:40px"><p style="color:var(--text2);text-align:center;padding:32px">로딩 중...</p></div>
   </div>
 
   <!-- ==================== TICKER HISTORY ==================== -->
@@ -1251,6 +1251,24 @@ function renderOverview(){
   const realCls=totalRealizedPL>=0?'up':'dn';
   const realYtdCls=totalRealizedPLThisYear>=0?'up':'dn';
 
+  // Compute portfolio-level daily change (weighted by market value)
+  let prevDayMktTotal=0, curDayMktTotal=0;
+  for(const h of holdings){
+    const p=cachedPrices[h.ticker];
+    if(p&&p.prevClose&&p.current&&h.qty>0){
+      prevDayMktTotal+=h.qty*p.prevClose;
+      curDayMktTotal+=h.qty*p.current;
+    }else{
+      prevDayMktTotal+=h.marketValue;
+      curDayMktTotal+=h.marketValue;
+    }
+  }
+  const portfolioDayChgPct=prevDayMktTotal>0?((curDayMktTotal-prevDayMktTotal)/prevDayMktTotal*100):0;
+  const portfolioDayChgAmt=curDayMktTotal-prevDayMktTotal;
+  const dayChgCls=portfolioDayChgPct>=0?'c-up':'c-dn';
+  const dayTriangle=portfolioDayChgPct>=0?'▲':'▼';
+  const totalDayChgAmt=portfolioDayChgAmt; // for total value card too
+
   html+=`<div class="summary-grid">`;
 
   // Top-left: 평가손익
@@ -1258,7 +1276,7 @@ function renderOverview(){
   html+=`<div class="sum-card">
     <div class="label">📈 평가손익</div>
     <div style="display:flex;align-items:center;gap:20px">
-      <div class="value ${vdCls}" style="white-space:nowrap">${vdSign}${fmtUSD(valueDiff)} <span style="font-size:13px">(${valueDiffPct>=0?'+':''}${valueDiffPct.toFixed(1)}%)</span></div>
+      <div class="value ${vdCls}" style="white-space:nowrap">${vdSign}${fmtUSD(valueDiff)} <span style="font-size:13px">(${valueDiffPct>=0?'+':''}${valueDiffPct.toFixed(1)}%)</span> <span class="${dayChgCls}" style="font-size:11px">${dayTriangle}${Math.abs(portfolioDayChgPct).toFixed(1)}%</span></div>
       <div style="font-size:10px;color:var(--text2);line-height:1.6;font-family:'JetBrains Mono',monospace;white-space:nowrap;text-align:right">market <span style="display:inline-block;text-align:right">${fmtUSD(totalMarketValue)}</span><br>purcha <span style="display:inline-block;text-align:right">${fmtUSD(totalPurchased)}</span></div>
     </div>
   </div>`;
@@ -1268,7 +1286,7 @@ function renderOverview(){
     <div class="label">💵 Cash</div>
     <div style="display:flex;align-items:center;gap:20px">
       <div class="value" style="white-space:nowrap">${fmtUSD(cash)}</div>
-      <div style="font-size:10px;color:var(--text2);font-family:'JetBrains Mono',monospace;white-space:nowrap">(${cashPct.toFixed(0)}% of asset)</div>
+      <div style="font-size:14px;color:var(--text2);font-family:'JetBrains Mono',monospace;white-space:nowrap;font-weight:600">(${cashPct.toFixed(0)}% of asset)</div>
     </div>
   </div>`;
 
@@ -1277,7 +1295,7 @@ function renderOverview(){
   html+=`<div class="sum-card" onclick="showTotalValueChart()" style="cursor:pointer">
     <div class="label">💰 Total Value <span style="font-size:10px;color:var(--text3)">📈 클릭</span></div>
     <div style="display:flex;align-items:center;gap:20px">
-      <div class="value ${earnCls}" style="white-space:nowrap">${earnSign}${fmtUSD(totalEarning)} <span style="font-size:13px">(${earnPct>=0?'+':''}${earnPct.toFixed(1)}%)</span></div>
+      <div class="value ${earnCls}" style="white-space:nowrap">${earnSign}${fmtUSD(totalEarning)} <span style="font-size:13px">(${earnPct>=0?'+':''}${earnPct.toFixed(1)}%)</span> <span class="${dayChgCls}" style="font-size:11px">${dayTriangle}${fmtUSD(Math.abs(totalDayChgAmt))}</span></div>
       <div style="font-size:10px;color:var(--text2);line-height:1.6;font-family:'JetBrains Mono',monospace;white-space:nowrap;text-align:right">asset&nbsp;&nbsp; <span style="display:inline-block;text-align:right">${fmtUSD(totalAsset)}</span><br>initial <span style="display:inline-block;text-align:right">${fmtUSD(initCash)}</span></div>
     </div>
   </div>`;
@@ -1584,7 +1602,7 @@ const HOLD_GROUPS=[
   {label:'cls',tickers:['CLS','CRDO','CIEN']},
   {label:'fslr+gev',tickers:['FSLR','GEV','CAT','BE']},
 ];
-let chartBottomMode='abs'; // 'abs' or 'pct'
+let chartBottomMode='pct'; // 'abs' or 'pct'
 
 function setChartPeriod(p,btn){
   chartPeriod=p;
