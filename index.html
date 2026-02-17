@@ -1755,6 +1755,8 @@ function redrawChart(){
     ybEl.innerHTML=yhtml;
   }
 
+  const allMasterDates=[...masterDates]; // save before period filter
+
   // Period filter
   if(chartPeriod!=='total'){
     const now=new Date();
@@ -1923,10 +1925,10 @@ function redrawChart(){
   // Store baseValue for legend
   const baseValue=chartData.length>0&&chartData[0]._baseValue?chartData[0]._baseValue:1;
 
-  renderCharts(el,chartData,[...chartBenches],groupLabels,baseValue);
+  renderCharts(el,chartData,[...chartBenches],groupLabels,baseValue,allMasterDates);
 }
 
-function renderCharts(container,data,benchKeys,groupLabels,baseValue){
+function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDates){
   const W=Math.min(container.clientWidth||800,1200);
   const H1=350, H2=200, gap=30;
   const totalH=H1+gap+H2;
@@ -2047,7 +2049,11 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue){
     ctx.fillStyle=meta.color;ctx.fillText(`── ${meta.label}`,lx,18);lx+=90;
   }
   if(chartMode==='norm'&&baseValue>1){
-    ctx.fillStyle='#555';ctx.fillText(`(base=${fmtUSD(baseValue)})`,lx,18);
+    ctx.fillStyle='#555';ctx.fillText(`(base=${fmtUSD(baseValue)})`,lx,18);lx+=140;
+  }
+  if(useLog){
+    ctx.fillStyle='#555';ctx.font='9px JetBrains Mono, monospace';
+    ctx.fillText('log scale',W-pad.r-45,18);
   }
 
   // ===== BOTTOM CHART: Holdings + Cash (individual lines or %) =====
@@ -2265,25 +2271,55 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue){
 
   container.appendChild(wrap);
 
-  // Annual summary table: yearly total value change
+  // Period summary line (for the chosen period / chart data)
   if(data.length>1){
-    // Group data by year, find first and last totalValue per year
+    const startVal=data[0].totalValue;
+    const endVal=data[data.length-1].totalValue;
+    const chg=endVal-startVal;
+    const pct=startVal>0?((endVal/startVal-1)*100):0;
+    const cls=chg>=0?'c-up':'c-dn';
+    const periodLabel=chartPeriod==='total'?'Total':(chartPeriod==='1y'?'1Y':chartPeriod==='6m'?'6M':chartPeriod==='3m'?'3M':chartPeriod);
+    const periodDiv=document.createElement('div');
+    periodDiv.style.cssText='font:12px/1.8 "JetBrains Mono",monospace;padding:8px 0 0 0;color:#aaa';
+    periodDiv.innerHTML=`<span style="color:#666">${periodLabel} (${data[0].date} → ${data[data.length-1].date})</span>  ${fmtUSD(startVal)} → ${fmtUSD(endVal)}  <span class="${cls}" style="font-weight:600">${chg>=0?'+':''}${fmtUSD(chg)} (${pct>=0?'+':''}${pct.toFixed(1)}%)</span>`;
+    container.appendChild(periodDiv);
+  }
+
+  // Annual summary table: use ALL dates (not filtered by period)
+  // Build totalValue for each market day from allMasterDates
+  if(allMasterDates&&allMasterDates.length>1){
+    const tqqqLk=chartBenchData['TQQQ']?{}:null;
+    if(tqqqLk){for(const d of (chartBenchData['TQQQ']||[]))tqqqLk[d.date]=d.close}
     const yearMap={};
-    for(const d of data){
-      const yr=d.date.slice(0,4); // "2024" etc
-      if(!yearMap[yr])yearMap[yr]={first:d.totalValue,last:d.totalValue,firstDate:d.date,lastDate:d.date};
-      yearMap[yr].last=d.totalValue;
-      yearMap[yr].lastDate=d.date;
+    for(const date of allMasterDates){
+      const state=getStateAtDate(date);
+      if(!state)continue;
+      // Compute totalValue same as chart
+      let totalValue=state.totalValue;
+      let stateDate=null;
+      for(let i=chartTxDates.length-1;i>=0;i--){
+        if(chartTxDates[i]<=date){stateDate=chartTxDates[i];break}
+      }
+      if(stateDate&&stateDate!==date&&tqqqLk){
+        const tqAt=tqqqLk[stateDate];
+        const tqNow=tqqqLk[date];
+        if(tqAt&&tqNow&&tqAt>0){
+          totalValue=state.cash+(state.totalValue-state.cash)*(tqNow/tqAt);
+        }
+      }
+      const yr='20'+date.slice(0,2);
+      if(!yearMap[yr])yearMap[yr]={first:totalValue,last:totalValue};
+      yearMap[yr].last=totalValue;
     }
-    const sortedYears=Object.keys(yearMap).sort();
+    const sortedYears=Object.keys(yearMap).sort().reverse(); // newest first
     if(sortedYears.length>0){
-      let thtml='<table style="width:auto;margin-top:10px;border-collapse:collapse;font:11px/1.6 \'JetBrains Mono\',monospace">';
+      let thtml='<table style="width:auto;margin-top:6px;border-collapse:collapse;font:11px/1.6 \'JetBrains Mono\',monospace">';
       thtml+='<tr style="color:var(--text3);font-size:10px"><th style="padding:2px 10px;text-align:left">연도</th><th style="padding:2px 10px;text-align:right">시작</th><th style="padding:2px 10px;text-align:right">종료</th><th style="padding:2px 10px;text-align:right">변동</th><th style="padding:2px 10px;text-align:right">수익률</th></tr>';
-      for(let yi=0;yi<sortedYears.length;yi++){
-        const yr=sortedYears[yi];
+      const yearsByAsc=Object.keys(yearMap).sort();
+      for(const yr of sortedYears){
         const yd=yearMap[yr];
-        // Start value: either first data point of year or last value of previous year
-        const startVal=yi>0?yearMap[sortedYears[yi-1]].last:yd.first;
+        const ascIdx=yearsByAsc.indexOf(yr);
+        const startVal=ascIdx>0?yearMap[yearsByAsc[ascIdx-1]].last:yd.first;
         const endVal=yd.last;
         const chg=endVal-startVal;
         const pct=startVal>0?((endVal/startVal-1)*100):0;
