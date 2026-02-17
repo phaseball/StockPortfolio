@@ -170,6 +170,7 @@ table.t tr:hover td{background:var(--accentBg)}
       <div style="display:flex;gap:4px;align-items:center">
         <button class="btn btn-s btn-sm" onclick="refreshPrices()" title="현재가 업데이트">🔄 Price</button>
         <button class="btn btn-s btn-sm" onclick="refreshFundamentals()" title="P/E, EPS 업데이트">🔄 Fund.</button>
+        <button class="btn btn-s btn-sm" onclick="debugEarnings('AMD')" title="AMD EPS 디버그" style="font-size:9px">🔍 EPS</button>
       </div>
     </div>
     <div style="text-align:right;font-size:10px;color:var(--text3);margin-bottom:8px;margin-top:-8px">
@@ -563,6 +564,76 @@ async function fmpGet(endpoint){
     const d=await r.json();
     return d;
   }catch(e){console.warn(`FMP fetch failed for ${endpoint}: ${e.message}`);return null}
+}
+
+async function debugEarnings(ticker){
+  if(!FMP_KEY){toast('FMP Key 없음','err');return}
+  toast(`🔍 ${ticker} earnings 조회 중...`,'ok');
+  console.log(`=== DEBUG EARNINGS for ${ticker} ===`);
+
+  // Fetch 4 quarters: use 30-day windows around typical earnings dates
+  // Go back ~15 months to cover 4-5 quarters
+  const windows=[];
+  const now=new Date();
+  for(let i=0;i<6;i++){
+    const center=new Date(now.getFullYear(),now.getMonth()-3*i,15);
+    const from=new Date(center.getTime()-45*86400000);
+    const to=new Date(center.getTime()+45*86400000);
+    // Cap to date to yesterday
+    const toDate=to>now?new Date(now.getTime()-86400000):to;
+    if(from<new Date(now.getTime()-400*86400000))continue; // skip if >13 months ago
+    windows.push({
+      from:from.toISOString().slice(0,10),
+      to:toDate.toISOString().slice(0,10)
+    });
+  }
+
+  const allResults=[];
+  for(const w of windows){
+    console.log(`Fetching earnings-calendar from=${w.from} to=${w.to}`);
+    try{
+      const data=await fmpGet(`earnings-calendar?from=${w.from}&to=${w.to}`);
+      if(Array.isArray(data)){
+        const matches=data.filter(e=>e.symbol===ticker);
+        console.log(`  Found ${data.length} total, ${matches.length} for ${ticker}`);
+        for(const m of matches){
+          console.log(`  ${ticker}: date=${m.date} eps=${m.eps} epsEst=${m.epsEstimated} rev=${m.revenue} revEst=${m.revenueEstimated} fiscalEnd=${m.fiscalDateEnding} period=${m.updatedFromDate||m.period||''}`);
+          console.log('  Full entry:',JSON.stringify(m));
+          allResults.push(m);
+        }
+      }else{
+        console.log('  No data or not array:', data);
+      }
+    }catch(e){console.error(`  Error:`,e)}
+  }
+
+  console.log(`=== ${ticker} TOTAL QUARTERS FOUND: ${allResults.length} ===`);
+  for(const r of allResults){
+    console.log(`  ${r.date} | eps=${r.eps} | rev=${r.revenue} | fiscalEnd=${r.fiscalDateEnding}`);
+  }
+
+  // Sum into annual
+  if(allResults.length>0){
+    const byFY={};
+    for(const r of allResults){
+      const fd=r.fiscalDateEnding||r.date;
+      const y=parseInt(fd.slice(0,4));
+      const m=parseInt(fd.slice(5,7))||12;
+      // Detect fiscal year end: use the month from the latest fiscal date
+      const fy=fd.slice(0,4)+'-'+String(m).padStart(2,'0');
+      // Group by calendar year of fiscal end
+      const fyYear=y;
+      if(!byFY[fyYear])byFY[fyYear]=[];
+      byFY[fyYear].push({eps:r.eps,rev:r.revenue,date:fd});
+    }
+    for(const[fy,qs] of Object.entries(byFY)){
+      const epsSum=qs.reduce((s,q)=>s+(q.eps||0),0);
+      const revSum=qs.reduce((s,q)=>s+(q.rev||0),0);
+      console.log(`  FY${fy}: ${qs.length}Q, epsSum=${epsSum.toFixed(3)}, revSum=${revSum}`);
+    }
+  }
+
+  toast(`✅ ${ticker}: ${allResults.length} quarters found (see console)`,'ok');
 }
 
 async function refreshFundamentals(){
