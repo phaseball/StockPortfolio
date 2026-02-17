@@ -576,7 +576,7 @@ async function refreshFundamentals(){
     const held=getHeldTickers();
     const fundTickers=[...new Set(held.map(t=>getFundTicker(t)).filter(t=>t!==null))];
     console.log('Fund tickers to fetch:',fundTickers);
-    showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*3} API calls)`);
+    showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*4} API calls)`);
     if(!fundTickers.length){toast('펀더멘탈 데이터 대상 종목 없음','err');return}
 
     const newFund={};
@@ -585,13 +585,15 @@ async function refreshFundamentals(){
       idx++;
       showFetching(`📊 Fetching ${tk}... (${idx}/${fundTickers.length})`);
       console.log(`=== Fetching FMP data for ${tk} ===`);
-      // 3 calls per ticker: annual estimates, price target, grades
-      const [annual, ptConsensus, gradesData]=await Promise.all([
+      // 4 calls per ticker: annual estimates, income statement (actuals), price target, grades
+      const [annual, incomeStmt, ptConsensus, gradesData]=await Promise.all([
         fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
+        fmpGet(`income-statement?symbol=${tk}&period=annual&limit=5`),
         fmpGet(`price-target-consensus?symbol=${tk}`),
         fmpGet(`grades-consensus?symbol=${tk}`)
       ]);
-      console.log(`${tk} annual:`,annual);
+      console.log(`${tk} annual estimates:`,annual);
+      console.log(`${tk} income actuals:`,incomeStmt);
       console.log(`${tk} priceTarget:`,ptConsensus);
       console.log(`${tk} grades:`,gradesData);
 
@@ -636,12 +638,43 @@ async function refreshFundamentals(){
       const targetFrac=targetYear+(targetMonth/12);
 
       if(Array.isArray(annual)&&annual.length>=2){
-        // Parse each entry into {fracYear, eps, rev, nEps, nRev, date}
+        // Build actuals lookup from income statement
+        const actuals={};
+        if(Array.isArray(incomeStmt)){
+          for(const is of incomeStmt){
+            // income-statement has: date, eps (diluted EPS), revenue
+            // Also has period like "FY", calendarYear
+            const d=is.date||is.calendarYear;
+            if(!d)continue;
+            const y=parseInt(String(d).slice(0,4));
+            const m=parseInt(String(d).slice(5,7))||12;
+            const frac=y+(m/12);
+            actuals[d]={frac, eps:is.eps||0, rev:is.revenue||0, date:d};
+            console.log(`${tk} ACTUAL: ${d} frac=${frac.toFixed(3)} eps=${is.eps} rev=${is.revenue}`);
+          }
+        }
+
+        // Parse estimate entries
         const entries=annual.map(e=>{
           const y=parseInt(e.date.slice(0,4));
           const m=parseInt(e.date.slice(5,7))||12;
-          return{frac:y+(m/12), eps:e.epsAvg||0, rev:e.revenueAvg||0,
-            nEps:e.numAnalystsEps||0, nRev:e.numAnalystsRevenue||0, date:e.date};
+          const frac=y+(m/12);
+          // Check if we have actuals for this fiscal period
+          // Match by date string or by closest frac
+          let actualMatch=actuals[e.date];
+          if(!actualMatch){
+            // Try matching by fiscal year end (find actual within 0.1 frac)
+            for(const a of Object.values(actuals)){
+              if(Math.abs(a.frac-frac)<0.1){actualMatch=a;break}
+            }
+          }
+          const useActual=actualMatch&&frac<=targetFrac; // Only use actuals for past/current periods
+          const eps=useActual?actualMatch.eps:(e.epsAvg||0);
+          const rev=useActual?actualMatch.rev:(e.revenueAvg||0);
+          const src=useActual?'actual':'est';
+          console.log(`${tk} entry: ${e.date} frac=${frac.toFixed(3)} eps=${eps.toFixed(3)}(${src}) rev=${Math.round(rev)}(${src}) nEps=${e.numAnalystsEps||0}`);
+          return{frac, eps, rev,
+            nEps:e.numAnalystsEps||0, nRev:e.numAnalystsRevenue||0, date:e.date, src};
         }).sort((a,b)=>a.frac-b.frac);
 
         // Find two entries that bracket targetFrac for interpolation
