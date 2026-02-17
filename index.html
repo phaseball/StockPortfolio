@@ -569,53 +569,100 @@ async function fmpGet(endpoint){
 async function debugEarnings(ticker){
   if(!FMP_KEY){toast('FMP Key 없음','err');return}
   toast(`🔍 ${ticker} earnings 조회 중...`,'ok');
-  console.log(`=== DEBUG EARNINGS for ${ticker} ===`);
+  console.log(`=== DEBUG EARNINGS for ${ticker} (past + future) ===`);
 
-  // Use tight 15-day windows to stay well under result limits
-  // Scan every 2 weeks going back 13 months
+  // Scan past 1 year AND future 1 year using 15-day windows
   const now=new Date();
   const yesterday=new Date(now.getTime()-86400000);
-  const windows=[];
-  let cursor=new Date(yesterday);
-  const limit=new Date(now.getTime()-400*86400000); // ~13 months back
-  while(cursor>limit){
-    const to=new Date(cursor);
-    const from=new Date(cursor.getTime()-15*86400000);
-    windows.push({from:from.toISOString().slice(0,10),to:to.toISOString().slice(0,10)});
-    cursor=new Date(from.getTime()-86400000); // next window starts 1 day before this from
-  }
+  const oneYearAgo=new Date(now.getFullYear()-1,now.getMonth(),now.getDate()+1);
+  const oneYearFwd=new Date(now.getFullYear()+1,now.getMonth(),now.getDate()-1);
 
   const allResults=[];
   const seen=new Set();
-  for(const w of windows){
+
+  // Past: scan backwards
+  let cursor=new Date(yesterday);
+  while(cursor>oneYearAgo){
+    const to=new Date(cursor);
+    let from=new Date(cursor.getTime()-15*86400000);
+    if(from<oneYearAgo)from=new Date(oneYearAgo);
+    const fromStr=from.toISOString().slice(0,10);
+    const toStr=to.toISOString().slice(0,10);
+    if(fromStr>=toStr)break;
     try{
-      const data=await fmpGet(`earnings-calendar?from=${w.from}&to=${w.to}`);
+      const data=await fmpGet(`earnings-calendar?from=${fromStr}&to=${toStr}`);
       if(Array.isArray(data)){
-        const matches=data.filter(e=>e.symbol===ticker);
-        if(matches.length>0){
-          console.log(`Found ${matches.length} for ${ticker} in ${w.from}~${w.to} (${data.length} total)`);
-          for(const m of matches){
-            if(seen.has(m.date))continue;
-            seen.add(m.date);
-            console.log(`  ${ticker}: date=${m.date} epsActual=${m.epsActual} epsEst=${m.epsEstimated} revActual=${m.revenueActual} revEst=${m.revenueEstimated} lastUpdated=${m.lastUpdated}`);
-            allResults.push(m);
-          }
+        for(const m of data.filter(e=>e.symbol===ticker)){
+          if(!seen.has(m.date)){seen.add(m.date);allResults.push(m)}
         }
       }
-    }catch(e){console.error(`  Error for ${w.from}~${w.to}:`,e)}
+    }catch(e){}
+    cursor=new Date(from.getTime()-86400000);
   }
 
-  console.log(`=== ${ticker} TOTAL QUARTERS FOUND: ${allResults.length} ===`);
+  // Future: scan forwards
+  cursor=new Date(now);
+  while(cursor<oneYearFwd){
+    const from=new Date(cursor);
+    let to=new Date(cursor.getTime()+15*86400000);
+    if(to>oneYearFwd)to=new Date(oneYearFwd);
+    const fromStr=from.toISOString().slice(0,10);
+    const toStr=to.toISOString().slice(0,10);
+    if(fromStr>=toStr)break;
+    try{
+      const data=await fmpGet(`earnings-calendar?from=${fromStr}&to=${toStr}`);
+      if(Array.isArray(data)){
+        for(const m of data.filter(e=>e.symbol===ticker)){
+          if(!seen.has(m.date)){seen.add(m.date);allResults.push(m)}
+        }
+      }
+    }catch(e){}
+    cursor=new Date(to.getTime()+86400000);
+  }
+
   allResults.sort((a,b)=>a.date.localeCompare(b.date));
-  let epsSum=0,revSum=0,count=0;
+  console.log(`=== ${ticker} ALL QUARTERS: ${allResults.length} ===`);
   for(const r of allResults){
     const hasActual=r.epsActual!=null;
-    console.log(`  ${r.date} | epsActual=${r.epsActual} | revActual=${r.revenueActual} | epsEst=${r.epsEstimated} | revEst=${r.revenueEstimated}${hasActual?' ✓':' (no actual)'}`);
-    if(hasActual){epsSum+=r.epsActual;revSum+=(r.revenueActual||0);count++}
+    const label=hasActual?'ACTUAL':'EST';
+    console.log(`  ${r.date} [${label}] epsActual=${r.epsActual} epsEst=${r.epsEstimated} revActual=${r.revenueActual} revEst=${r.revenueEstimated}`);
   }
-  console.log(`  TOTAL with actuals: ${count}Q, epsSum=${epsSum.toFixed(3)}, revSum=${revSum}`);
 
-  toast(`✅ ${ticker}: ${allResults.length} entries, ${count} with actuals (see console)`,'ok');
+  toast(`✅ ${ticker}: ${allResults.length} quarters (see console)`,'ok');
+}
+
+// Fetch quarterly earnings actuals for a ticker using 15-day windows
+async function fetchEarningsActuals(ticker){
+  const now=new Date();
+  const yesterday=new Date(now.getTime()-86400000);
+  // Starter plan limit: exactly 1 year back from today
+  const oneYearAgo=new Date(now.getFullYear()-1,now.getMonth(),now.getDate()+1); // +1 day safety margin
+  const allResults=[];
+  const seen=new Set();
+  let cursor=new Date(yesterday);
+
+  while(cursor>oneYearAgo){
+    const to=new Date(cursor);
+    let from=new Date(cursor.getTime()-15*86400000);
+    if(from<oneYearAgo)from=new Date(oneYearAgo);
+    const fromStr=from.toISOString().slice(0,10);
+    const toStr=to.toISOString().slice(0,10);
+    if(fromStr>=toStr)break;
+    try{
+      const data=await fmpGet(`earnings-calendar?from=${fromStr}&to=${toStr}`);
+      if(Array.isArray(data)){
+        const matches=data.filter(e=>e.symbol===ticker);
+        for(const m of matches){
+          if(seen.has(m.date))continue;
+          seen.add(m.date);
+          allResults.push(m);
+        }
+      }
+    }catch(e){}
+    cursor=new Date(from.getTime()-86400000);
+  }
+  allResults.sort((a,b)=>a.date.localeCompare(b.date));
+  return allResults;
 }
 
 async function refreshFundamentals(){
@@ -641,17 +688,21 @@ async function refreshFundamentals(){
     if(SHEET_ID&&SA_KEY){
       try{
         showFetching('📊 Loading eps_actuals from sheet...');
-        const rows=await sheetsGet('eps_actuals!A2:D200');
+        const rows=await sheetsGet('eps_actuals!A2:E200');
         if(Array.isArray(rows)){
           for(const r of rows){
             if(!r[0]||!r[1])continue;
             const tk=String(r[0]).trim().toUpperCase();
-            const dateKey=String(r[1]).trim(); // "2024-12"
+            const dateKey=String(r[1]).trim();
+            const source=r[4]||'manual';
+            // Load all entries (manual override api if same key)
             if(!epsActualsMap[tk])epsActualsMap[tk]={};
-            epsActualsMap[tk][dateKey]={
-              eps:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
-              rev:r[3]!=null&&r[3]!==''?parseFloat(r[3]):null
-            };
+            if(!epsActualsMap[tk][dateKey]||source==='manual'){
+              epsActualsMap[tk][dateKey]={
+                eps:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
+                rev:r[3]!=null&&r[3]!==''?parseFloat(r[3]):null
+              };
+            }
           }
         }
         console.log('eps_actuals loaded:',epsActualsMap);
@@ -661,11 +712,9 @@ async function refreshFundamentals(){
     let idx=0;
     for(const tk of fundTickers){
       idx++;
-      showFetching(`📊 Fetching ${tk}... (${idx}/${fundTickers.length})`);
+      showFetching(`📊 ${tk} 추정치... (${idx}/${fundTickers.length})`);
       console.log(`=== Fetching FMP data for ${tk} ===`);
-      // 3 calls per ticker: annual estimates, price target, grades
-      // Actual past EPS: from eps_actuals Google Sheet tab (user-maintained)
-      // earnings-calendar API only returns ~1 quarter on Starter plan, insufficient for annual
+      // 3 API calls + earnings-calendar (15-day windows)
       const [annual, ptConsensus, gradesData]=await Promise.all([
         fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
         fmpGet(`price-target-consensus?symbol=${tk}`),
@@ -674,6 +723,62 @@ async function refreshFundamentals(){
       console.log(`${tk} annual estimates:`,annual);
       console.log(`${tk} priceTarget:`,ptConsensus);
       console.log(`${tk} grades:`,gradesData);
+
+      // Fetch quarterly actuals from earnings-calendar (if not already in eps_actuals sheet)
+      if(!epsActualsMap[tk]||Object.keys(epsActualsMap[tk]).length===0){
+        showFetching(`📊 ${tk} 실적... (${idx}/${fundTickers.length})`);
+        const quarters=await fetchEarningsActuals(tk);
+        if(quarters.length>0){
+          // Detect fiscal year end month from analyst-estimates dates
+          let fyEndMonth=12;
+          if(Array.isArray(annual)&&annual.length>0){
+            const months=annual.map(e=>parseInt(e.date.slice(5,7))||12);
+            fyEndMonth=months[0]||12;
+          }
+          // Group quarters by fiscal year and sum
+          const byFY={};
+          for(const q of quarters){
+            if(q.epsActual==null)continue;
+            const qDate=q.date;
+            const qy=parseInt(qDate.slice(0,4));
+            const qm=parseInt(qDate.slice(5,7));
+            // Map quarter to fiscal year: earnings reported in month qm
+            // For Dec FY companies, Q4 earnings reported ~Feb of next year
+            // Use a simple heuristic: group by calendar year of the fiscal period
+            // Better: count backwards from most recent to assign fiscal years
+            // For now, detect based on fyEndMonth
+            let fy;
+            if(fyEndMonth===12){
+              // Dec FY: earnings in Jan-Mar → previous calendar year
+              fy=qm<=3?qy-1:qy;
+            }else if(fyEndMonth===1){
+              // Jan FY (like NVDA): earnings in Feb-Apr → same year as FY end
+              fy=qm<=4?qy:qy+1;
+            }else{
+              // Other FY ends: rough mapping
+              fy=qm<=fyEndMonth+2?qy:qy+1;
+            }
+            const fyKey=`${fy}-${String(fyEndMonth).padStart(2,'0')}`;
+            if(!byFY[fyKey])byFY[fyKey]={eps:0,rev:0,count:0,quarters:[]};
+            byFY[fyKey].eps+=q.epsActual;
+            byFY[fyKey].rev+=(q.revenueActual||0);
+            byFY[fyKey].count++;
+            byFY[fyKey].quarters.push(`${qDate}:${q.epsActual}`);
+          }
+          // Store complete fiscal years (4 quarters)
+          if(!epsActualsMap[tk])epsActualsMap[tk]={};
+          for(const[fyKey,v] of Object.entries(byFY)){
+            if(v.count>=4){
+              epsActualsMap[tk][fyKey]={eps:v.eps,rev:v.rev>0?v.rev:null};
+              console.log(`${tk} ANNUAL ACTUAL (${v.count}Q): ${fyKey} eps=${v.eps.toFixed(3)} rev=${v.rev} [${v.quarters.join(', ')}]`);
+            }else{
+              console.log(`${tk} PARTIAL: ${fyKey} ${v.count}Q eps=${v.eps.toFixed(3)} [${v.quarters.join(', ')}]`);
+            }
+          }
+        }
+      }else{
+        console.log(`${tk} using eps_actuals from sheet:`,epsActualsMap[tk]);
+      }
 
       // Price: try cached price for this ticker, or find from Yahoo quote
       let price=0;
@@ -831,7 +936,7 @@ async function refreshFundamentals(){
     localStorage.setItem('cache_fundTimestamp',`${mm}-${dd} ${hh}:${mi}`);
     updateFundInfo();
 
-    await saveFundamentalsToSheet(newFund);
+    await saveFundamentalsToSheet(newFund,epsActualsMap);
     computeOverview();
     renderOverview();
     const count=Object.keys(newFund).length;
@@ -839,7 +944,7 @@ async function refreshFundamentals(){
   }catch(e){toast('Fundamentals 오류: '+e.message,'err');console.error(e)}
 }
 
-async function saveFundamentalsToSheet(fundData){
+async function saveFundamentalsToSheet(fundData,epsActualsMap){
   if(!SHEET_ID||!SA_KEY)return;
   try{
     const token=await getAccessToken();
@@ -849,7 +954,7 @@ async function saveFundamentalsToSheet(fundData){
     try{
       const hdrUrl2=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/eps_actuals!A1:D1?valueInputOption=USER_ENTERED`;
       await fetch(hdrUrl2,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-        body:JSON.stringify({values:[['ticker','date(YYYY-MM)','adj_eps','revenue']]})});
+        body:JSON.stringify({values:[['ticker','date(YYYY-MM)','adj_eps','revenue','source']]})});
     }catch(e){console.warn('Could not write eps_actuals header:',e)}
 
     // Write header row for fundamentals
@@ -884,6 +989,51 @@ async function saveFundamentalsToSheet(fundData){
       const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fundamentals!A2:L?valueInputOption=USER_ENTERED`;
       await fetch(url,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
         body:JSON.stringify({values:rows})});
+    }
+
+    // Save eps_actuals to sheet (API-fetched actuals, preserving manual entries)
+    if(epsActualsMap&&Object.keys(epsActualsMap).length>0){
+      try{
+        // Read existing sheet to preserve manual entries
+        let existingManual={};
+        try{
+          const existing=await sheetsGet('eps_actuals!A2:E200');
+          if(Array.isArray(existing)){
+            for(const r of existing){
+              if(r[4]==='manual'){
+                const tk=String(r[0]).trim().toUpperCase();
+                const dk=String(r[1]).trim();
+                if(!existingManual[tk])existingManual[tk]={};
+                existingManual[tk][dk]={eps:parseFloat(r[2])||null,rev:parseFloat(r[3])||null};
+              }
+            }
+          }
+        }catch(e){}
+
+        // Build rows: manual entries first, then API actuals
+        const epsRows=[];
+        // Manual entries (from sheet)
+        for(const[tk,dates] of Object.entries(existingManual)){
+          for(const[dk,v] of Object.entries(dates)){
+            epsRows.push([tk,dk,v.eps!=null?v.eps:'',v.rev!=null?v.rev:'','manual']);
+          }
+        }
+        // API-fetched actuals
+        for(const[tk,dates] of Object.entries(epsActualsMap)){
+          for(const[dk,v] of Object.entries(dates)){
+            if(existingManual[tk]&&existingManual[tk][dk])continue; // don't overwrite manual
+            epsRows.push([tk,dk,v.eps!=null?v.eps:'',v.rev!=null?v.rev:'','api']);
+          }
+        }
+        if(epsRows.length>0){
+          const clearUrl=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/eps_actuals!A2:E1000:clear`;
+          await fetch(clearUrl,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
+          const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/eps_actuals!A2:E?valueInputOption=USER_ENTERED`;
+          await fetch(url,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+            body:JSON.stringify({values:epsRows})});
+          console.log(`Saved ${epsRows.length} eps_actuals entries to sheet`);
+        }
+      }catch(e){console.warn('Could not save eps_actuals:',e)}
     }
   }catch(e){console.error('Failed to save fundamentals to sheet:',e)}
 }
