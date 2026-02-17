@@ -571,69 +571,51 @@ async function debugEarnings(ticker){
   toast(`🔍 ${ticker} earnings 조회 중...`,'ok');
   console.log(`=== DEBUG EARNINGS for ${ticker} ===`);
 
-  // Fetch 4 quarters: use 30-day windows around typical earnings dates
-  // Go back ~15 months to cover 4-5 quarters
-  const windows=[];
+  // Use tight 15-day windows to stay well under result limits
+  // Scan every 2 weeks going back 13 months
   const now=new Date();
-  for(let i=0;i<6;i++){
-    const center=new Date(now.getFullYear(),now.getMonth()-3*i,15);
-    const from=new Date(center.getTime()-45*86400000);
-    const to=new Date(center.getTime()+45*86400000);
-    // Cap to date to yesterday
-    const toDate=to>now?new Date(now.getTime()-86400000):to;
-    if(from<new Date(now.getTime()-400*86400000))continue; // skip if >13 months ago
-    windows.push({
-      from:from.toISOString().slice(0,10),
-      to:toDate.toISOString().slice(0,10)
-    });
+  const yesterday=new Date(now.getTime()-86400000);
+  const windows=[];
+  let cursor=new Date(yesterday);
+  const limit=new Date(now.getTime()-400*86400000); // ~13 months back
+  while(cursor>limit){
+    const to=new Date(cursor);
+    const from=new Date(cursor.getTime()-15*86400000);
+    windows.push({from:from.toISOString().slice(0,10),to:to.toISOString().slice(0,10)});
+    cursor=new Date(from.getTime()-86400000); // next window starts 1 day before this from
   }
 
   const allResults=[];
+  const seen=new Set();
   for(const w of windows){
-    console.log(`Fetching earnings-calendar from=${w.from} to=${w.to}`);
     try{
       const data=await fmpGet(`earnings-calendar?from=${w.from}&to=${w.to}`);
       if(Array.isArray(data)){
         const matches=data.filter(e=>e.symbol===ticker);
-        console.log(`  Found ${data.length} total, ${matches.length} for ${ticker}`);
-        for(const m of matches){
-          console.log(`  ${ticker}: date=${m.date} eps=${m.eps} epsEst=${m.epsEstimated} rev=${m.revenue} revEst=${m.revenueEstimated} fiscalEnd=${m.fiscalDateEnding} period=${m.updatedFromDate||m.period||''}`);
-          console.log('  Full entry:',JSON.stringify(m));
-          allResults.push(m);
+        if(matches.length>0){
+          console.log(`Found ${matches.length} for ${ticker} in ${w.from}~${w.to} (${data.length} total)`);
+          for(const m of matches){
+            if(seen.has(m.date))continue;
+            seen.add(m.date);
+            console.log(`  ${ticker}: date=${m.date} epsActual=${m.epsActual} epsEst=${m.epsEstimated} revActual=${m.revenueActual} revEst=${m.revenueEstimated} lastUpdated=${m.lastUpdated}`);
+            allResults.push(m);
+          }
         }
-      }else{
-        console.log('  No data or not array:', data);
       }
-    }catch(e){console.error(`  Error:`,e)}
+    }catch(e){console.error(`  Error for ${w.from}~${w.to}:`,e)}
   }
 
   console.log(`=== ${ticker} TOTAL QUARTERS FOUND: ${allResults.length} ===`);
+  allResults.sort((a,b)=>a.date.localeCompare(b.date));
+  let epsSum=0,revSum=0,count=0;
   for(const r of allResults){
-    console.log(`  ${r.date} | eps=${r.eps} | rev=${r.revenue} | fiscalEnd=${r.fiscalDateEnding}`);
+    const hasActual=r.epsActual!=null;
+    console.log(`  ${r.date} | epsActual=${r.epsActual} | revActual=${r.revenueActual} | epsEst=${r.epsEstimated} | revEst=${r.revenueEstimated}${hasActual?' ✓':' (no actual)'}`);
+    if(hasActual){epsSum+=r.epsActual;revSum+=(r.revenueActual||0);count++}
   }
+  console.log(`  TOTAL with actuals: ${count}Q, epsSum=${epsSum.toFixed(3)}, revSum=${revSum}`);
 
-  // Sum into annual
-  if(allResults.length>0){
-    const byFY={};
-    for(const r of allResults){
-      const fd=r.fiscalDateEnding||r.date;
-      const y=parseInt(fd.slice(0,4));
-      const m=parseInt(fd.slice(5,7))||12;
-      // Detect fiscal year end: use the month from the latest fiscal date
-      const fy=fd.slice(0,4)+'-'+String(m).padStart(2,'0');
-      // Group by calendar year of fiscal end
-      const fyYear=y;
-      if(!byFY[fyYear])byFY[fyYear]=[];
-      byFY[fyYear].push({eps:r.eps,rev:r.revenue,date:fd});
-    }
-    for(const[fy,qs] of Object.entries(byFY)){
-      const epsSum=qs.reduce((s,q)=>s+(q.eps||0),0);
-      const revSum=qs.reduce((s,q)=>s+(q.rev||0),0);
-      console.log(`  FY${fy}: ${qs.length}Q, epsSum=${epsSum.toFixed(3)}, revSum=${revSum}`);
-    }
-  }
-
-  toast(`✅ ${ticker}: ${allResults.length} quarters found (see console)`,'ok');
+  toast(`✅ ${ticker}: ${allResults.length} entries, ${count} with actuals (see console)`,'ok');
 }
 
 async function refreshFundamentals(){
@@ -647,7 +629,7 @@ async function refreshFundamentals(){
     const held=getHeldTickers();
     const fundTickers=[...new Set(held.map(t=>getFundTicker(t)).filter(t=>t!==null))];
     console.log('Fund tickers to fetch:',fundTickers);
-    showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*4} API calls)`);
+    showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*3} API calls)`);
     if(!fundTickers.length){toast('펀더멘탈 데이터 대상 종목 없음','err');return}
 
     const newFund={};
@@ -681,81 +663,17 @@ async function refreshFundamentals(){
       idx++;
       showFetching(`📊 Fetching ${tk}... (${idx}/${fundTickers.length})`);
       console.log(`=== Fetching FMP data for ${tk} ===`);
-      // 4 calls per ticker: annual estimates, earnings calendar (actuals), price target, grades
-      const [annual, earningsCal, ptConsensus, gradesData]=await Promise.all([
+      // 3 calls per ticker: annual estimates, price target, grades
+      // Actual past EPS: from eps_actuals Google Sheet tab (user-maintained)
+      // earnings-calendar API only returns ~1 quarter on Starter plan, insufficient for annual
+      const [annual, ptConsensus, gradesData]=await Promise.all([
         fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
-        fmpGet(`earnings-calendar?symbol=${tk}&from=${new Date(Date.now()-330*86400000).toISOString().slice(0,10)}&to=${new Date(Date.now()-86400000).toISOString().slice(0,10)}`),
         fmpGet(`price-target-consensus?symbol=${tk}`),
         fmpGet(`grades-consensus?symbol=${tk}`)
       ]);
       console.log(`${tk} annual estimates:`,annual);
-      console.log(`${tk} earnings calendar:`,earningsCal);
       console.log(`${tk} priceTarget:`,ptConsensus);
       console.log(`${tk} grades:`,gradesData);
-
-      // Build actual EPS from earnings-calendar (quarterly actuals → annual sum)
-      // earnings-calendar returns: {date, symbol, eps (actual), epsEstimated, revenue, revenueEstimated, fiscalDateEnding}
-      if(Array.isArray(earningsCal)&&earningsCal.length>0){
-        // Group by fiscal year: use fiscalDateEnding to determine fiscal year end month
-        // Then sum quarterly eps actuals into annual
-        const qByYear={}; // "YYYY-MM" (fiscal year end) -> [{eps, rev, quarter}]
-        for(const eq of earningsCal){
-          if(eq.eps==null)continue; // skip if no actual yet
-          const fd=eq.fiscalDateEnding||eq.date;
-          if(!fd)continue;
-          const y=parseInt(fd.slice(0,4));
-          const m=parseInt(fd.slice(5,7))||12;
-          // Determine fiscal year: use the fiscal year end month from the latest entry
-          // Group quarters into fiscal years by their fiscal date ending year+month
-          const fyKey=`${y}-${String(m).padStart(2,'0')}`;
-          if(!qByYear[fyKey])qByYear[fyKey]=[];
-          qByYear[fyKey].push({eps:eq.eps, rev:eq.revenue||0, date:fd});
-          console.log(`${tk} EARNINGS-CAL: ${fd} epsActual=${eq.eps} epsEst=${eq.epsEstimated} rev=${eq.revenue}`);
-        }
-
-        // Find fiscal year pattern: most entries will share the same end month
-        // Sum 4 quarters into annual, only if we have all 4 quarters
-        // Actually, earnings-calendar entries are per-quarter with their own fiscal date ending
-        // We need to group by fiscal YEAR (not quarter)
-        // The fiscal year end month can be detected from the most recent entry
-        const allFiscalDates=earningsCal.filter(e=>e.fiscalDateEnding).map(e=>e.fiscalDateEnding).sort();
-        let fyEndMonth=12; // default Dec
-        if(allFiscalDates.length>0){
-          // Find the month that appears as fiscal year end (largest month in any year)
-          const months=allFiscalDates.map(d=>parseInt(d.slice(5,7)));
-          // The fiscal year end month is the max month that appears
-          fyEndMonth=Math.max(...new Set(months));
-        }
-
-        // Group quarters by fiscal year
-        const annualActuals={}; // "YYYY-MM" -> {epsSum, revSum, count}
-        for(const eq of earningsCal){
-          if(eq.eps==null)continue;
-          const fd=eq.fiscalDateEnding||eq.date;
-          if(!fd)continue;
-          const qy=parseInt(fd.slice(0,4));
-          const qm=parseInt(fd.slice(5,7));
-          // Determine which fiscal year this quarter belongs to
-          // If fiscal year ends in month fyEndMonth, quarters with month > fyEndMonth belong to next FY
-          const fy=qm<=fyEndMonth?qy:(qy+1);
-          const fyKey=`${fy}-${String(fyEndMonth).padStart(2,'0')}`;
-          if(!annualActuals[fyKey])annualActuals[fyKey]={epsSum:0,revSum:0,count:0};
-          annualActuals[fyKey].epsSum+=eq.eps;
-          annualActuals[fyKey].revSum+=(eq.revenue||0);
-          annualActuals[fyKey].count++;
-        }
-
-        // Only use fiscal years with all 4 quarters reported
-        for(const[fyKey,v] of Object.entries(annualActuals)){
-          if(v.count>=4){
-            if(!epsActualsMap[tk])epsActualsMap[tk]={};
-            epsActualsMap[tk][fyKey]={eps:v.epsSum, rev:v.revSum>0?v.revSum:null};
-            console.log(`${tk} ANNUAL ACTUAL (${v.count}Q): ${fyKey} eps=${v.epsSum.toFixed(3)} rev=${v.revSum}`);
-          }else{
-            console.log(`${tk} PARTIAL YEAR: ${fyKey} has ${v.count} quarters, eps so far=${v.epsSum.toFixed(3)}`);
-          }
-        }
-      }
 
       // Price: try cached price for this ticker, or find from Yahoo quote
       let price=0;
