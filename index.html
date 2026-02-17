@@ -613,7 +613,7 @@ async function refreshFundamentals(){
       // 4 calls per ticker: annual estimates, earnings calendar (actuals), price target, grades
       const [annual, earningsCal, ptConsensus, gradesData]=await Promise.all([
         fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
-        fmpGet(`earnings-calendar?symbol=${tk}`),
+        fmpGet(`earnings-calendar?symbol=${tk}&from=${new Date(Date.now()-365*86400000).toISOString().slice(0,10)}&to=${new Date().toISOString().slice(0,10)}`),
         fmpGet(`price-target-consensus?symbol=${tk}`),
         fmpGet(`grades-consensus?symbol=${tk}`)
       ]);
