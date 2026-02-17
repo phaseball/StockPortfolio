@@ -188,6 +188,7 @@ table.t tr:hover td{background:var(--accentBg)}
       <div class="chart-grp">
         <button class="cbtn on" onclick="setChartPeriod('total',this)">Total</button>
         <button class="cbtn" onclick="setChartPeriod('1y',this)">1Y</button>
+        <button class="cbtn" onclick="setChartPeriod('6m',this)">6M</button>
         <button class="cbtn" onclick="setChartPeriod('3m',this)">3M</button>
       </div>
       <div class="chart-grp" style="margin-left:8px">
@@ -1478,6 +1479,7 @@ function redrawChart(){
     const now=new Date();
     let cutoff;
     if(chartPeriod==='1y')cutoff=new Date(now.getFullYear()-1,now.getMonth(),now.getDate());
+    else if(chartPeriod==='6m')cutoff=new Date(now.getFullYear(),now.getMonth()-6,now.getDate());
     else if(chartPeriod==='3m')cutoff=new Date(now.getFullYear(),now.getMonth()-3,now.getDate());
     const cutStr=String(cutoff.getFullYear()).slice(2)+String(cutoff.getMonth()+1).padStart(2,'0')+String(cutoff.getDate()).padStart(2,'0');
     const filtered=masterDates.filter(d=>d>=cutStr);
@@ -1559,30 +1561,36 @@ function redrawChart(){
     }
     entry.totalValue=totalValue;
 
-    // Market-value-based group values (for % mode): scale each group's cost basis by TQQQ ratio
+    // Market-value-based group values (for % mode)
+    // On tx date: derive per-group market value proportional to cost basis share of holdings
+    // Between tx dates: scale those by TQQQ movement
+    const holdMktAtState=state.totalValue-state.cash;
+    const holdCostAtState=totalCostBasis||1;
+    // Per-group market value at state date = group_cost_basis * (total_holdings_mkt / total_cost_basis)
+    const mktRatio=holdMktAtState/holdCostAtState;
+
     if(stateDate&&stateDate!==date&&tqqqLookup){
       const tqAtState=findPrice(tqqqLookup,stateDate);
       const tqNow=findPrice(tqqqLookup,date);
       if(tqAtState&&tqNow&&tqAtState>0){
-        const ratio=tqNow/tqAtState;
+        const priceRatio=tqNow/tqAtState;
         for(const g of HOLD_GROUPS){
-          let mktSum=0;
-          for(const tk of g.tickers){
-            if(state.positions[tk])mktSum+=state.positions[tk].qty*state.positions[tk].avgCost;
-          }
-          entry['mv_'+g.label]=mktSum*ratio;
+          const groupMktAtState=entry['g_'+g.label]*mktRatio;
+          entry['mv_'+g.label]=groupMktAtState*priceRatio;
         }
+        // Cash for % mode: totalValue - sum(mv_)
+        let sumMv=0;
+        for(const g of HOLD_GROUPS)sumMv+=entry['mv_'+g.label];
+        entry.mvCash=totalValue-sumMv;
       }else{
-        for(const g of HOLD_GROUPS)entry['mv_'+g.label]=entry['g_'+g.label];
+        for(const g of HOLD_GROUPS)entry['mv_'+g.label]=entry['g_'+g.label]*mktRatio;
+        entry.mvCash=state.cash;
       }
     }else{
-      // On tx date, market value ≈ cost basis (best approx with tx prices)
-      // But use state.totalValue to derive: holdings market value = totalValue - cash
-      const holdMkt=state.totalValue-state.cash;
-      const holdCost=totalCostBasis||1;
       for(const g of HOLD_GROUPS){
-        entry['mv_'+g.label]=entry['g_'+g.label]*(holdMkt/holdCost);
+        entry['mv_'+g.label]=entry['g_'+g.label]*mktRatio;
       }
+      entry.mvCash=state.cash;
     }
 
     if(chartMode==='norm'){
@@ -1782,9 +1790,9 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue){
     for(let i=0;i<data.length;i++){
       let val;
       if(isPct){
-        // Use market-value based: mv_ for groups, cash for cash, totalValue as denominator
+        // Use market-value based: mv_ for groups, mvCash for cash, totalValue as denominator
         const tv=data[i].totalValue||1;
-        const raw=gl==='cash'?data[i].cash:(data[i]['mv_'+gl]||0);
+        const raw=gl==='cash'?(data[i].mvCash!=null?data[i].mvCash:data[i].cash):(data[i]['mv_'+gl]||0);
         val=tv>0?(raw/tv*100):0;
       }else{
         val=gl==='cash'?data[i].cash:(data[i]['g_'+gl]||0);
@@ -1903,7 +1911,7 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue){
       let val;
       if(cm.isPct){
         const tv=d.totalValue||1;
-        const raw=gl==='cash'?d.cash:(d['mv_'+gl]||0);
+        const raw=gl==='cash'?(d.mvCash!=null?d.mvCash:d.cash):(d['mv_'+gl]||0);
         val=tv>0?(raw/tv*100):0;
         html+=`<div style="color:${color}">${gl}: ${val.toFixed(1)}%</div>`;
       }else{
