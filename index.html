@@ -676,16 +676,20 @@ async function refreshFundamentals(){
           const closer=Math.abs(targetFrac-lo.frac)<Math.abs(targetFrac-hi.frac)?lo:hi;
           numAnalystsEps=closer.nEps||null;
           numAnalystsRev=closer.nRev||null;
+
+          // EPS YoY: compare the two bracketing fiscal years directly
+          // e.g. for AMD: Dec 2026 EPS vs Dec 2025 EPS
+          // For non-Dec fiscal years: use the two entries directly
+          epsYoy12m=(lo.eps&&hi.eps&&lo.eps!==0)?((hi.eps-lo.eps)/Math.abs(lo.eps)*100):null;
+          revYoy12m=(lo.rev&&hi.rev&&lo.rev!==0)?((hi.rev-lo.rev)/Math.abs(lo.rev)*100):null;
         }
         if(loP&&hiP){
           epsPrevNorm=lerp(loP,hiP,prevTargetFrac,'eps');
           revPrevNorm=lerp(loP,hiP,prevTargetFrac,'rev');
         }
 
-        // P/E and YoY
+        // P/E = price / normalized EPS
         pe12m=(epsNorm&&epsNorm>0&&price)?price/epsNorm:null;
-        epsYoy12m=(epsPrevNorm&&epsNorm&&epsPrevNorm!==0)?((epsNorm-epsPrevNorm)/Math.abs(epsPrevNorm)*100):null;
-        revYoy12m=(revPrevNorm&&revNorm&&revPrevNorm!==0)?((revNorm-revPrevNorm)/Math.abs(revPrevNorm)*100):null;
 
         console.log(`${tk} interpolation: targetFrac=${targetFrac}, lo=${lo?.date}, hi=${hi?.date}, epsNorm=${epsNorm?.toFixed(3)}, revNorm=${revNorm?.toFixed(0)}`);
       }
@@ -1196,7 +1200,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
 
     // -- Col3: P/E with YoY + Revenue with YoY --
     if(fund.pe12m!=null){
-      const yoy=fund.epsYoy12m!=null?` (${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}% YOY)`:'';
+      const yoy=fund.epsYoy12m!=null?` <span style="color:var(--text3);font-size:9px">EPS</span>${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%`:'';
       peRow=`${fund.pe12m.toFixed(1)}${yoy}`;
     }
     if(fund.revNorm!=null){
@@ -1857,6 +1861,13 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue){
   wrap.style.cssText='position:relative;display:inline-block';
   wrap.appendChild(canvas);
 
+  // Group descriptions below chart
+  const groupDesc=document.createElement('div');
+  groupDesc.style.cssText='font:9px/1.6 "JetBrains Mono",monospace;color:#666;padding:4px 0 0 '+pad.l+'px';
+  const descParts=HOLD_GROUPS.map((g,i)=>`<span style="color:${HOLD_COLORS[i%HOLD_COLORS.length]}">${g.label}</span>=${g.tickers.join('+')}`);
+  groupDesc.innerHTML=descParts.join(', ');
+  wrap.appendChild(groupDesc);
+
   // Tooltip div
   const tip=document.createElement('div');
   tip.style.cssText='display:none;position:absolute;pointer-events:none;background:rgba(20,22,28,0.95);border:1px solid #444;border-radius:6px;padding:8px 10px;font:11px/1.6 "JetBrains Mono",monospace;color:#ddd;z-index:10;white-space:nowrap';
@@ -2004,7 +2015,21 @@ function showHistory(ticker){
     dateGroups[date].sort((a,b)=>(parseInt(a.seq)||0)-(parseInt(b.seq)||0));
   }
 
-  let html=`<div class="tbl-wrap"><table class="t"><tr><th>날짜</th><th>증권사</th><th>종목</th><th>매매</th><th>수량</th><th>단가</th><th>금액</th><th>실현</th></tr>`;
+  let html='';
+
+  // Per-ticker purchase amount chart (only when viewing single ticker)
+  if(ticker){
+    html+=`<div style="margin-bottom:12px">
+      <div class="chart-grp" style="margin-bottom:8px">
+        <button class="cbtn on" onclick="drawHistoryChart('${ticker}','total',this)">Total</button>
+        <button class="cbtn" onclick="drawHistoryChart('${ticker}','1y',this)">1Y</button>
+        <button class="cbtn" onclick="drawHistoryChart('${ticker}','6m',this)">6M</button>
+      </div>
+      <div id="historyChartArea"></div>
+    </div>`;
+  }
+
+  html+=`<div class="tbl-wrap"><table class="t"><tr><th>날짜</th><th>증권사</th><th>종목</th><th>매매</th><th>수량</th><th>단가</th><th>금액</th><th>실현</th></tr>`;
 
   for(const date of dates){
     const dTxs=dateGroups[date];
@@ -2060,6 +2085,130 @@ function showHistory(ticker){
   html+=`</table></div>`;
   el.innerHTML=html;
   switchTab('history');
+
+  // Draw chart after DOM is ready
+  if(ticker)setTimeout(()=>drawHistoryChart(ticker,'total'),50);
+}
+
+function drawHistoryChart(ticker,period,btn){
+  if(btn){btn.parentElement.querySelectorAll('.cbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on')}
+  const container=document.getElementById('historyChartArea');
+  if(!container)return;
+
+  // Build purchase amount over time for this ticker (sum across brokers)
+  const tkTxs=allTransactions.filter(t=>t.ticker===ticker).sort((a,b)=>a.date.localeCompare(b.date)||(parseInt(a.seq)||0)-(parseInt(b.seq)||0));
+  if(tkTxs.length===0){container.innerHTML='';return}
+
+  let qty=0,cost=0;
+  const snapshots=[]; // [{date, purchAmt}]
+  let lastDate=null;
+  for(const tx of tkTxs){
+    if(tx.qty>0){cost+=tx.qty*tx.price;qty+=tx.qty}
+    else if(tx.qty<0){
+      const sq=Math.abs(tx.qty);
+      if(qty>0)cost-=cost/qty*sq;
+      qty-=sq;if(qty<=0){qty=0;cost=0}
+    }
+    if(tx.date!==lastDate){
+      if(lastDate)snapshots.push({date:lastDate,purchAmt:cost});
+      lastDate=tx.date;
+    }
+  }
+  if(lastDate)snapshots.push({date:lastDate,purchAmt:cost});
+  // Add today
+  const now=new Date();
+  const todayDate=String(now.getFullYear()).slice(2)+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
+  if(snapshots.length>0&&snapshots[snapshots.length-1].date!==todayDate){
+    snapshots.push({date:todayDate,purchAmt:snapshots[snapshots.length-1].purchAmt});
+  }
+
+  // Period filter
+  let data=[...snapshots];
+  if(period!=='total'){
+    let cutoff;
+    if(period==='1y')cutoff=new Date(now.getFullYear()-1,now.getMonth(),now.getDate());
+    else if(period==='6m')cutoff=new Date(now.getFullYear(),now.getMonth()-6,now.getDate());
+    const cutStr=String(cutoff.getFullYear()).slice(2)+String(cutoff.getMonth()+1).padStart(2,'0')+String(cutoff.getDate()).padStart(2,'0');
+    // Find last snapshot before cutoff for starting value
+    let startVal=0;
+    for(let i=data.length-1;i>=0;i--){if(data[i].date<=cutStr){startVal=data[i].purchAmt;break}}
+    data=data.filter(d=>d.date>=cutStr);
+    if(data.length===0||data[0].date>cutStr){data.unshift({date:cutStr,purchAmt:startVal})}
+  }
+  if(data.length<1){container.innerHTML='';return}
+
+  const W=Math.min(container.clientWidth||600,800);
+  const H=150;
+  const pad={t:20,r:45,b:30,l:50};
+  const cW=W-pad.l-pad.r, cH=H-pad.t-pad.b;
+
+  const canvas=document.createElement('canvas');
+  canvas.width=W*2;canvas.height=H*2;
+  canvas.style.width=W+'px';canvas.style.height=H+'px';
+  const ctx=canvas.getContext('2d');
+  ctx.scale(2,2);
+  ctx.fillStyle='#1a1d23';ctx.fillRect(0,0,W,H);
+
+  let yMax=0;
+  for(const d of data)if(d.purchAmt>yMax)yMax=d.purchAmt;
+  yMax=Math.ceil(yMax*1.15)||100;
+
+  function xPos(i){return pad.l+(i/(data.length-1||1))*cW}
+  function yPos(v){return pad.t+(1-v/yMax)*cH}
+
+  // Grid
+  ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
+  for(let i=0;i<=3;i++){
+    const v=yMax*i/3;
+    const y=yPos(v);
+    ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+    ctx.fillStyle='#888';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='right';
+    const label=v>=1e3?'$'+(v/1e3).toFixed(0)+'K':'$'+v.toFixed(0);
+    ctx.fillText(label,pad.l-4,y+3);
+  }
+
+  // Step line (purchase amount is step function)
+  ctx.strokeStyle='#4fc3f7';ctx.lineWidth=2;ctx.beginPath();
+  for(let i=0;i<data.length;i++){
+    if(i===0){ctx.moveTo(xPos(i),yPos(data[i].purchAmt))}
+    else{
+      // Horizontal then vertical (step)
+      ctx.lineTo(xPos(i),yPos(data[i-1].purchAmt));
+      ctx.lineTo(xPos(i),yPos(data[i].purchAmt));
+    }
+  }
+  ctx.stroke();
+
+  // Fill area
+  ctx.fillStyle='rgba(79,195,247,0.1)';ctx.beginPath();
+  ctx.moveTo(xPos(0),yPos(0));
+  for(let i=0;i<data.length;i++){
+    if(i>0){ctx.lineTo(xPos(i),yPos(data[i-1].purchAmt))}
+    ctx.lineTo(xPos(i),yPos(data[i].purchAmt));
+  }
+  ctx.lineTo(xPos(data.length-1),yPos(0));ctx.closePath();ctx.fill();
+
+  // X labels
+  ctx.fillStyle='#888';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='center';
+  const xStep=Math.max(1,Math.floor(data.length/6));
+  for(let i=0;i<data.length;i+=xStep){
+    const d=data[i].date;
+    ctx.fillText(d.slice(0,2)+'.'+d.slice(2,4)+'.'+d.slice(4,6),xPos(i),H-pad.b+14);
+  }
+  const lastD=data[data.length-1].date;
+  ctx.fillText(lastD.slice(0,2)+'.'+lastD.slice(2,4)+'.'+lastD.slice(4,6),xPos(data.length-1),H-pad.b+14);
+
+  // End value label
+  const lastVal=data[data.length-1].purchAmt;
+  ctx.font='bold 10px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle='#4fc3f7';
+  ctx.fillText('$'+(lastVal/1e3).toFixed(1)+'K',W-pad.r+4,yPos(lastVal)+4);
+
+  // Title
+  ctx.font='10px JetBrains Mono, monospace';ctx.fillStyle='#888';ctx.textAlign='left';
+  ctx.fillText(`${ticker} 매입금액`,pad.l,14);
+
+  container.innerHTML='';
+  container.appendChild(canvas);
 }
 
 // ================ IMPORT ================
