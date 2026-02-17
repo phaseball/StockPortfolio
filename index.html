@@ -576,7 +576,7 @@ async function refreshFundamentals(){
     const held=getHeldTickers();
     const fundTickers=[...new Set(held.map(t=>getFundTicker(t)).filter(t=>t!==null))];
     console.log('Fund tickers to fetch:',fundTickers);
-    showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*4} API calls)`);
+    showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*5} API calls)`);
     if(!fundTickers.length){toast('펀더멘탈 데이터 대상 종목 없음','err');return}
 
     const newFund={};
@@ -585,15 +585,17 @@ async function refreshFundamentals(){
       idx++;
       showFetching(`📊 Fetching ${tk}... (${idx}/${fundTickers.length})`);
       console.log(`=== Fetching FMP data for ${tk} ===`);
-      // 4 calls per ticker: annual estimates, income statement (actuals), price target, grades
-      const [annual, incomeStmt, ptConsensus, gradesData]=await Promise.all([
+      // 5 calls per ticker: annual estimates, income statement, key metrics, price target, grades
+      const [annual, incomeStmt, keyMetrics, ptConsensus, gradesData]=await Promise.all([
         fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
         fmpGet(`income-statement?symbol=${tk}&period=annual&limit=5`),
+        fmpGet(`key-metrics?symbol=${tk}&period=annual&limit=5`),
         fmpGet(`price-target-consensus?symbol=${tk}`),
         fmpGet(`grades-consensus?symbol=${tk}`)
       ]);
       console.log(`${tk} annual estimates:`,annual);
       console.log(`${tk} income actuals:`,incomeStmt);
+      console.log(`${tk} key metrics:`,keyMetrics);
       console.log(`${tk} priceTarget:`,ptConsensus);
       console.log(`${tk} grades:`,gradesData);
 
@@ -638,19 +640,42 @@ async function refreshFundamentals(){
       const targetFrac=targetYear+(targetMonth/12);
 
       if(Array.isArray(annual)&&annual.length>=2){
-        // Build actuals lookup from income statement
+        // Build actuals lookup: use key-metrics for better EPS, income-statement for revenue
         const actuals={};
+
+        // Key metrics: has various per-share metrics
+        const kmByDate={};
+        if(Array.isArray(keyMetrics)){
+          for(const km of keyMetrics){
+            const d=km.date;if(!d)continue;
+            kmByDate[d]=km;
+            console.log(`${tk} KEY-METRICS: ${d} earningsYield=${km.earningsYield} peRatio=${km.peRatio} netIncomePerShare=${km.netIncomePerShare}`);
+          }
+        }
+
         if(Array.isArray(incomeStmt)){
           for(const is of incomeStmt){
-            // income-statement has: date, eps (diluted EPS), revenue
-            // Also has period like "FY", calendarYear
             const d=is.date||is.calendarYear;
             if(!d)continue;
             const y=parseInt(String(d).slice(0,4));
             const m=parseInt(String(d).slice(5,7))||12;
             const frac=y+(m/12);
-            actuals[d]={frac, eps:is.eps||0, rev:is.revenue||0, date:d};
-            console.log(`${tk} ACTUAL: ${d} frac=${frac.toFixed(3)} eps=${is.eps} rev=${is.revenue}`);
+
+            // Log all EPS-related fields
+            console.log(`${tk} INCOME-STMT: ${d} eps=${is.eps} epsdiluted=${is.epsdiluted} netIncome=${is.netIncome} weightedAvgShsOut=${is.weightedAverageShsOut} weightedAvgShsOutDil=${is.weightedAverageShsOutDil}`);
+
+            // Try to get adjusted EPS: netIncomePerShare from key-metrics is often closer to adjusted
+            const km=kmByDate[d];
+            let bestEps=is.epsdiluted||is.eps||0;
+            // If key-metrics has netIncomePerShare, use it as a candidate
+            if(km&&km.netIncomePerShare){
+              console.log(`${tk} KM netIncomePerShare for ${d}: ${km.netIncomePerShare} vs income eps: ${bestEps}`);
+              // netIncomePerShare from key-metrics is typically GAAP too
+              // The best proxy for adjusted EPS: use income statement but log for comparison
+            }
+
+            actuals[d]={frac, eps:bestEps, rev:is.revenue||0, date:d};
+            console.log(`${tk} ACTUAL USED: ${d} frac=${frac.toFixed(3)} eps=${bestEps} rev=${is.revenue}`);
           }
         }
 
