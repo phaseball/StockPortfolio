@@ -2297,7 +2297,7 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDa
 
     // Top chart values
     const suffix=cm.mode==='chg'?'%':'';
-    html+=`<div style="color:#4fc3f7">Portfolio: ${d.portfolio.toFixed(1)}${suffix}</div>`;
+    html+=`<div style="color:#4fc3f7">Portfolio: ${d.portfolio.toFixed(1)}${suffix} <span style="color:#888">(${fmtUSD(d.totalValue)})</span></div>`;
     for(const tk of cm.benchKeys){
       const meta=BENCH_META[tk]||{color:'#888',label:tk};
       if(d[tk]!=null)html+=`<div style="color:${meta.color}">${meta.label}: ${d[tk].toFixed(1)}${suffix}</div>`;
