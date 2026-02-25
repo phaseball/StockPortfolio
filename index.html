@@ -2550,22 +2550,62 @@ function showHistory(ticker){
   if(ticker)setTimeout(()=>drawHistoryChart(ticker,'total'),50);
 }
 
-function drawHistoryChart(ticker,period,btn){
+let historyPriceCache={}; // ticker -> {YYMMDD: close}
+async function drawHistoryChart(ticker,period,btn){
   if(btn){btn.parentElement.querySelectorAll('.cbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on')}
   const container=document.getElementById('historyChartArea');
   if(!container)return;
+
+  // Fetch historical daily prices from Yahoo (cached)
+  if(!historyPriceCache[ticker]){
+    container.innerHTML='<p style="color:var(--text2);font-size:11px;padding:8px"><span class="spinner"></span> Loading price history...</p>';
+    try{
+      const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5y`;
+      const proxies=[u=>`https://corsproxy.io/?${encodeURIComponent(u)}`];
+      for(const mkP of proxies){
+        try{
+          const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(12000)});
+          if(!r.ok)continue;
+          const d=await r.json();
+          const ts=d.chart?.result?.[0]?.timestamp||[];
+          const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
+          const lookup={};
+          for(let i=0;i<ts.length;i++){
+            if(closes[i]==null)continue;
+            const dt=new Date(ts[i]*1000);
+            const key=String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
+            lookup[key]=closes[i];
+          }
+          if(Object.keys(lookup).length>0){historyPriceCache[ticker]=lookup;break}
+        }catch(e){continue}
+      }
+    }catch(e){console.warn(`${ticker} price fetch failed:`,e)}
+    if(!historyPriceCache[ticker])historyPriceCache[ticker]={};
+  }
+  const priceLookup=historyPriceCache[ticker];
+  function findClose(date){
+    if(priceLookup[date])return priceLookup[date];
+    const y=parseInt('20'+date.slice(0,2)),m=parseInt(date.slice(2,4))-1,d=parseInt(date.slice(4,6));
+    for(let off=1;off<=7;off++){
+      const dt=new Date(y,m,d-off);
+      const key=String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
+      if(priceLookup[key])return priceLookup[key];
+    }
+    return null;
+  }
 
   // Build data over time for this ticker
   const tkTxs=allTransactions.filter(t=>t.ticker===ticker).sort((a,b)=>a.date.localeCompare(b.date)||(parseInt(a.seq)||0)-(parseInt(b.seq)||0));
   if(tkTxs.length===0){container.innerHTML='';return}
 
   let qty=0,cost=0,cumRealized=0;
-  const snapshots=[]; // [{date, purchAmt, totalValue, realized}]
+  const snapshots=[];
   let lastDate=null;
+  let lastTxPrice=0;
   const pendingSnap=()=>{
     if(lastDate){
-      const cp=cachedPrices[ticker];
-      const mktPrice=cp&&cp.current?cp.current:(qty>0?cost/qty:0);
+      const yahooClose=findClose(lastDate);
+      const mktPrice=yahooClose||lastTxPrice||(qty>0?cost/qty:0);
       snapshots.push({date:lastDate, purchAmt:cost, totalValue:qty*mktPrice, realized:cumRealized, qty});
     }
   };
@@ -2574,6 +2614,7 @@ function drawHistoryChart(ticker,period,btn){
       pendingSnap();
       lastDate=tx.date;
     }
+    lastTxPrice=tx.price; // track last trade price
     if(tx.qty>0){cost+=tx.qty*tx.price;qty+=tx.qty}
     else if(tx.qty<0){
       const sq=Math.abs(tx.qty);
@@ -2585,19 +2626,39 @@ function drawHistoryChart(ticker,period,btn){
   }
   pendingSnap();
 
-  // Add today with current price
+  // Add today with current market price
   const now=new Date();
   const todayDate=String(now.getFullYear()).slice(2)+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
-  if(snapshots.length>0&&snapshots[snapshots.length-1].date!==todayDate){
+  if(snapshots.length>0){
     const last=snapshots[snapshots.length-1];
     const cp=cachedPrices[ticker];
-    const mktPrice=cp&&cp.current?cp.current:(last.qty>0?last.purchAmt/last.qty:0);
-    snapshots.push({date:todayDate, purchAmt:last.purchAmt, totalValue:last.qty*mktPrice, realized:last.realized, qty:last.qty});
+    const curPrice=cp&&cp.current?cp.current:lastTxPrice;
+    last.totalValue=last.qty*curPrice;
+    if(last.date!==todayDate){
+      snapshots.push({date:todayDate, purchAmt:last.purchAmt, totalValue:last.qty*curPrice, realized:last.realized, qty:last.qty});
+    }
   }
-  // Update all totalValue using actual current price (for consistency)
-  const cp=cachedPrices[ticker];
-  if(cp&&cp.current){
-    for(const s of snapshots)s.totalValue=s.qty*cp.current;
+
+  // Expand snapshots: insert daily Yahoo price points between tx dates for smooth 평가액 line
+  // purchAmt and realized stay flat between tx dates; only totalValue changes daily
+  if(Object.keys(priceLookup).length>0&&snapshots.length>=2){
+    const allYahooDates=Object.keys(priceLookup).sort();
+    const expanded=[];
+    for(let si=0;si<snapshots.length;si++){
+      expanded.push(snapshots[si]);
+      if(si<snapshots.length-1){
+        const fromDate=snapshots[si].date;
+        const toDate=snapshots[si+1].date;
+        const s=snapshots[si];
+        // Add daily points between fromDate and toDate (exclusive)
+        for(const yd of allYahooDates){
+          if(yd<=fromDate||yd>=toDate)continue;
+          expanded.push({date:yd, purchAmt:s.purchAmt, totalValue:s.qty*priceLookup[yd], realized:s.realized, qty:s.qty});
+        }
+      }
+    }
+    expanded.sort((a,b)=>a.date.localeCompare(b.date));
+    snapshots.length=0;snapshots.push(...expanded);
   }
 
   // Period filter
@@ -2656,11 +2717,11 @@ function drawHistoryChart(ticker,period,btn){
   for(let i=0;i<data.length;i++){if(i>0)ctx.lineTo(xPos(i),yPos1(data[i-1].purchAmt));ctx.lineTo(xPos(i),yPos1(data[i].purchAmt))}
   ctx.lineTo(xPos(data.length-1),yPos1(0));ctx.closePath();ctx.fill();
 
-  // Total value step line (green)
-  ctx.strokeStyle='#66bb6a';ctx.lineWidth=2;ctx.beginPath();
+  // Total value line (green) - smooth line with daily prices
+  ctx.strokeStyle='#66bb6a';ctx.lineWidth=1.5;ctx.beginPath();
   for(let i=0;i<data.length;i++){
     if(i===0)ctx.moveTo(xPos(i),yPos1(data[i].totalValue));
-    else{ctx.lineTo(xPos(i),yPos1(data[i-1].totalValue));ctx.lineTo(xPos(i),yPos1(data[i].totalValue))}
+    else ctx.lineTo(xPos(i),yPos1(data[i].totalValue));
   }
   ctx.stroke();
 
@@ -2704,11 +2765,11 @@ function drawHistoryChart(ticker,period,btn){
     ctx.moveTo(pad.l,yPos2(0));ctx.lineTo(W-pad.r,yPos2(0));ctx.stroke();ctx.setLineDash([]);
   }
 
-  // Realized P/L step line (orange)
-  ctx.strokeStyle='#ffa726';ctx.lineWidth=2;ctx.beginPath();
+  // Realized P/L line (orange)
+  ctx.strokeStyle='#ffa726';ctx.lineWidth=1.5;ctx.beginPath();
   for(let i=0;i<data.length;i++){
     if(i===0)ctx.moveTo(xPos(i),yPos2(data[i].realized));
-    else{ctx.lineTo(xPos(i),yPos2(data[i-1].realized));ctx.lineTo(xPos(i),yPos2(data[i].realized))}
+    else ctx.lineTo(xPos(i),yPos2(data[i].realized));
   }
   ctx.stroke();
   // Fill area
