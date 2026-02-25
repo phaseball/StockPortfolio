@@ -2555,31 +2555,49 @@ function drawHistoryChart(ticker,period,btn){
   const container=document.getElementById('historyChartArea');
   if(!container)return;
 
-  // Build purchase amount over time for this ticker (sum across brokers)
+  // Build data over time for this ticker
   const tkTxs=allTransactions.filter(t=>t.ticker===ticker).sort((a,b)=>a.date.localeCompare(b.date)||(parseInt(a.seq)||0)-(parseInt(b.seq)||0));
   if(tkTxs.length===0){container.innerHTML='';return}
 
-  let qty=0,cost=0;
-  const snapshots=[]; // [{date, purchAmt}]
+  let qty=0,cost=0,cumRealized=0;
+  const snapshots=[]; // [{date, purchAmt, totalValue, realized}]
   let lastDate=null;
+  const pendingSnap=()=>{
+    if(lastDate){
+      const cp=cachedPrices[ticker];
+      const mktPrice=cp&&cp.current?cp.current:(qty>0?cost/qty:0);
+      snapshots.push({date:lastDate, purchAmt:cost, totalValue:qty*mktPrice, realized:cumRealized, qty});
+    }
+  };
   for(const tx of tkTxs){
+    if(tx.date!==lastDate){
+      pendingSnap();
+      lastDate=tx.date;
+    }
     if(tx.qty>0){cost+=tx.qty*tx.price;qty+=tx.qty}
     else if(tx.qty<0){
       const sq=Math.abs(tx.qty);
+      const avgAtSale=qty>0?cost/qty:0;
+      cumRealized+=sq*(tx.price-avgAtSale)-tx.tax;
       if(qty>0)cost-=cost/qty*sq;
       qty-=sq;if(qty<=0){qty=0;cost=0}
     }
-    if(tx.date!==lastDate){
-      if(lastDate)snapshots.push({date:lastDate,purchAmt:cost});
-      lastDate=tx.date;
-    }
   }
-  if(lastDate)snapshots.push({date:lastDate,purchAmt:cost});
-  // Add today
+  pendingSnap();
+
+  // Add today with current price
   const now=new Date();
   const todayDate=String(now.getFullYear()).slice(2)+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
   if(snapshots.length>0&&snapshots[snapshots.length-1].date!==todayDate){
-    snapshots.push({date:todayDate,purchAmt:snapshots[snapshots.length-1].purchAmt});
+    const last=snapshots[snapshots.length-1];
+    const cp=cachedPrices[ticker];
+    const mktPrice=cp&&cp.current?cp.current:(last.qty>0?last.purchAmt/last.qty:0);
+    snapshots.push({date:todayDate, purchAmt:last.purchAmt, totalValue:last.qty*mktPrice, realized:last.realized, qty:last.qty});
+  }
+  // Update all totalValue using actual current price (for consistency)
+  const cp=cachedPrices[ticker];
+  if(cp&&cp.current){
+    for(const s of snapshots)s.totalValue=s.qty*cp.current;
   }
 
   // Period filter
@@ -2589,86 +2607,169 @@ function drawHistoryChart(ticker,period,btn){
     if(period==='1y')cutoff=new Date(now.getFullYear()-1,now.getMonth(),now.getDate());
     else if(period==='6m')cutoff=new Date(now.getFullYear(),now.getMonth()-6,now.getDate());
     const cutStr=String(cutoff.getFullYear()).slice(2)+String(cutoff.getMonth()+1).padStart(2,'0')+String(cutoff.getDate()).padStart(2,'0');
-    // Find last snapshot before cutoff for starting value
-    let startVal=0;
-    for(let i=data.length-1;i>=0;i--){if(data[i].date<=cutStr){startVal=data[i].purchAmt;break}}
+    let startSnap=null;
+    for(let i=data.length-1;i>=0;i--){if(data[i].date<=cutStr){startSnap=data[i];break}}
     data=data.filter(d=>d.date>=cutStr);
-    if(data.length===0||data[0].date>cutStr){data.unshift({date:cutStr,purchAmt:startVal})}
+    if(startSnap&&(data.length===0||data[0].date>cutStr)){data.unshift({...startSnap,date:cutStr})}
   }
   if(data.length<1){container.innerHTML='';return}
 
   const W=Math.min(container.clientWidth||600,800);
-  const H=150;
-  const pad={t:20,r:45,b:30,l:50};
-  const cW=W-pad.l-pad.r, cH=H-pad.t-pad.b;
+  const H1=130, H2=130, gap=20;
+  const totalH=H1+gap+H2;
+  const pad={t:20,r:45,b:14,l:50};
+  const cW=W-pad.l-pad.r;
 
   const canvas=document.createElement('canvas');
-  canvas.width=W*2;canvas.height=H*2;
-  canvas.style.width=W+'px';canvas.style.height=H+'px';
+  canvas.width=W*2;canvas.height=totalH*2;
+  canvas.style.width=W+'px';canvas.style.height=totalH+'px';
   const ctx=canvas.getContext('2d');
   ctx.scale(2,2);
-  ctx.fillStyle='#1a1d23';ctx.fillRect(0,0,W,H);
-
-  let yMax=0;
-  for(const d of data)if(d.purchAmt>yMax)yMax=d.purchAmt;
-  yMax=Math.ceil(yMax*1.15)||100;
+  ctx.fillStyle='#1a1d23';ctx.fillRect(0,0,W,totalH);
 
   function xPos(i){return pad.l+(i/(data.length-1||1))*cW}
-  function yPos(v){return pad.t+(1-v/yMax)*cH}
 
-  // Grid
+  // ===== CHART 1: Purchase Amount (step line) =====
+  const cH1=H1-pad.t-pad.b;
+  let y1Max=0;
+  for(const d of data)if(d.purchAmt>y1Max)y1Max=d.purchAmt;
+  y1Max=Math.ceil(y1Max*1.15)||100;
+  function yPos1(v){return pad.t+(1-v/y1Max)*cH1}
+
   ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
   for(let i=0;i<=3;i++){
-    const v=yMax*i/3;
-    const y=yPos(v);
+    const v=y1Max*i/3;const y=yPos1(v);
     ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
-    ctx.fillStyle='#888';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='right';
-    const label=v>=1e3?'$'+(v/1e3).toFixed(0)+'K':'$'+v.toFixed(0);
-    ctx.fillText(label,pad.l-4,y+3);
+    ctx.fillStyle='#666';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='right';
+    ctx.fillText(v>=1e3?'$'+(v/1e3).toFixed(0)+'K':'$'+v.toFixed(0),pad.l-4,y+3);
   }
 
-  // Step line (purchase amount is step function)
   ctx.strokeStyle='#4fc3f7';ctx.lineWidth=2;ctx.beginPath();
   for(let i=0;i<data.length;i++){
-    if(i===0){ctx.moveTo(xPos(i),yPos(data[i].purchAmt))}
-    else{
-      // Horizontal then vertical (step)
-      ctx.lineTo(xPos(i),yPos(data[i-1].purchAmt));
-      ctx.lineTo(xPos(i),yPos(data[i].purchAmt));
-    }
+    if(i===0)ctx.moveTo(xPos(i),yPos1(data[i].purchAmt));
+    else{ctx.lineTo(xPos(i),yPos1(data[i-1].purchAmt));ctx.lineTo(xPos(i),yPos1(data[i].purchAmt))}
+  }
+  ctx.stroke();
+  ctx.fillStyle='rgba(79,195,247,0.08)';ctx.beginPath();
+  ctx.moveTo(xPos(0),yPos1(0));
+  for(let i=0;i<data.length;i++){if(i>0)ctx.lineTo(xPos(i),yPos1(data[i-1].purchAmt));ctx.lineTo(xPos(i),yPos1(data[i].purchAmt))}
+  ctx.lineTo(xPos(data.length-1),yPos1(0));ctx.closePath();ctx.fill();
+
+  const lv1=data[data.length-1].purchAmt;
+  ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle='#4fc3f7';
+  ctx.fillText('$'+(lv1/1e3).toFixed(1)+'K',W-pad.r+4,yPos1(lv1)+3);
+
+  ctx.font='10px JetBrains Mono, monospace';ctx.fillStyle='#888';ctx.textAlign='left';
+  ctx.fillText(`${ticker} 매입금액`,pad.l,14);
+
+  // ===== CHART 2: Total Value + Realized P/L =====
+  const y2Top=H1+gap;
+  const cH2=H2-pad.t-pad.b;
+  let y2Max=0,y2Min=0;
+  for(const d of data){
+    const mx=Math.max(d.totalValue,d.realized,d.purchAmt);
+    const mn=Math.min(d.totalValue,d.realized,0);
+    if(mx>y2Max)y2Max=mx;
+    if(mn<y2Min)y2Min=mn;
+  }
+  const y2Range=y2Max-y2Min||100;
+  y2Max=y2Max+y2Range*0.1;y2Min=y2Min-y2Range*0.05;
+  function yPos2(v){return y2Top+pad.t+(1-(v-y2Min)/(y2Max-y2Min))*cH2}
+
+  ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
+  for(let i=0;i<=3;i++){
+    const v=y2Min+(y2Max-y2Min)*i/3;const y=yPos2(v);
+    ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+    ctx.fillStyle='#666';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='right';
+    ctx.fillText(v>=1e3||v<=-1e3?(v>=0?'':'')+'$'+(v/1e3).toFixed(0)+'K':'$'+v.toFixed(0),pad.l-4,y+3);
+  }
+  // Zero line
+  if(y2Min<0&&y2Max>0){
+    ctx.strokeStyle='#555';ctx.lineWidth=0.5;ctx.setLineDash([3,3]);ctx.beginPath();
+    ctx.moveTo(pad.l,yPos2(0));ctx.lineTo(W-pad.r,yPos2(0));ctx.stroke();ctx.setLineDash([]);
+  }
+
+  // Total value line (green)
+  ctx.strokeStyle='#66bb6a';ctx.lineWidth=2;ctx.beginPath();
+  for(let i=0;i<data.length;i++){
+    if(i===0)ctx.moveTo(xPos(i),yPos2(data[i].totalValue));
+    else{ctx.lineTo(xPos(i),yPos2(data[i-1].totalValue));ctx.lineTo(xPos(i),yPos2(data[i].totalValue))}
   }
   ctx.stroke();
 
-  // Fill area
-  ctx.fillStyle='rgba(79,195,247,0.1)';ctx.beginPath();
-  ctx.moveTo(xPos(0),yPos(0));
+  // Realized P/L line (orange)
+  ctx.strokeStyle='#ffa726';ctx.lineWidth=2;ctx.beginPath();
   for(let i=0;i<data.length;i++){
-    if(i>0){ctx.lineTo(xPos(i),yPos(data[i-1].purchAmt))}
-    ctx.lineTo(xPos(i),yPos(data[i].purchAmt));
+    if(i===0)ctx.moveTo(xPos(i),yPos2(data[i].realized));
+    else{ctx.lineTo(xPos(i),yPos2(data[i-1].realized));ctx.lineTo(xPos(i),yPos2(data[i].realized))}
   }
-  ctx.lineTo(xPos(data.length-1),yPos(0));ctx.closePath();ctx.fill();
+  ctx.stroke();
 
-  // X labels
+  // End labels
+  const lvV=data[data.length-1].totalValue;
+  const lvR=data[data.length-1].realized;
+  ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';
+  ctx.fillStyle='#66bb6a';ctx.fillText('$'+(lvV/1e3).toFixed(1)+'K',W-pad.r+4,yPos2(lvV)+3);
+  ctx.fillStyle='#ffa726';
+  let rY=yPos2(lvR)+3;if(Math.abs(rY-(yPos2(lvV)+3))<10)rY=yPos2(lvV)+13;
+  ctx.fillText((lvR>=0?'+':'-')+'$'+(Math.abs(lvR)/1e3).toFixed(1)+'K',W-pad.r+4,rY);
+
+  // Legend
+  ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
+  ctx.fillStyle='#66bb6a';ctx.fillText('── 평가액',pad.l,y2Top+12);
+  ctx.fillStyle='#ffa726';ctx.fillText('── 실현손익',pad.l+80,y2Top+12);
+
+  // X labels (shared for both charts)
   ctx.fillStyle='#888';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='center';
   const xStep=Math.max(1,Math.floor(data.length/6));
   for(let i=0;i<data.length;i+=xStep){
     const d=data[i].date;
-    ctx.fillText(d.slice(0,2)+'.'+d.slice(2,4)+'.'+d.slice(4,6),xPos(i),H-pad.b+14);
+    ctx.fillText(d.slice(0,2)+'.'+d.slice(2,4)+'.'+d.slice(4,6),xPos(i),totalH-2);
   }
   const lastD=data[data.length-1].date;
-  ctx.fillText(lastD.slice(0,2)+'.'+lastD.slice(2,4)+'.'+lastD.slice(4,6),xPos(data.length-1),H-pad.b+14);
+  ctx.fillText(lastD.slice(0,2)+'.'+lastD.slice(2,4)+'.'+lastD.slice(4,6),xPos(data.length-1),totalH-2);
 
-  // End value label
-  const lastVal=data[data.length-1].purchAmt;
-  ctx.font='bold 10px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle='#4fc3f7';
-  ctx.fillText('$'+(lastVal/1e3).toFixed(1)+'K',W-pad.r+4,yPos(lastVal)+4);
+  // Wrap with tooltip
+  const wrap=document.createElement('div');
+  wrap.style.cssText='position:relative;display:inline-block';
+  wrap.appendChild(canvas);
 
-  // Title
-  ctx.font='10px JetBrains Mono, monospace';ctx.fillStyle='#888';ctx.textAlign='left';
-  ctx.fillText(`${ticker} 매입금액`,pad.l,14);
+  const tip=document.createElement('div');
+  tip.style.cssText='display:none;position:absolute;pointer-events:none;background:rgba(20,22,28,0.95);border:1px solid #444;border-radius:6px;padding:6px 10px;font:11px/1.6 "JetBrains Mono",monospace;color:#ddd;z-index:10;white-space:nowrap';
+  wrap.appendChild(tip);
+
+  const vline=document.createElement('div');
+  vline.style.cssText=`display:none;position:absolute;top:${pad.t}px;width:1px;background:rgba(255,255,255,0.2);pointer-events:none;height:${totalH-pad.t-6}px`;
+  wrap.appendChild(vline);
+
+  canvas.addEventListener('mousemove',function(e){
+    const rect=canvas.getBoundingClientRect();
+    const mx=e.clientX-rect.left;
+    if(mx<pad.l||mx>W-pad.r){tip.style.display='none';vline.style.display='none';return}
+    const frac=(mx-pad.l)/cW;
+    const idx=Math.round(frac*(data.length-1));
+    if(idx<0||idx>=data.length)return;
+    const d=data[idx];
+    const dateStr=d.date.slice(0,2)+'.'+d.date.slice(2,4)+'.'+d.date.slice(4,6);
+    const fmtK=v=>(v>=0?'':'-')+'$'+(Math.abs(v)/1e3).toFixed(1)+'K';
+    let html=`<div style="color:#888">${dateStr}</div>`;
+    html+=`<div style="color:#4fc3f7">매입: ${fmtK(d.purchAmt)}</div>`;
+    html+=`<div style="color:#66bb6a">평가: ${fmtK(d.totalValue)}</div>`;
+    const pl=d.totalValue-d.purchAmt;
+    const plCls=pl>=0?'c-up':'c-dn';
+    html+=`<div class="${plCls}">평가손익: ${fmtK(pl)}</div>`;
+    html+=`<div style="color:#ffa726">실현: ${(d.realized>=0?'+':'')}${fmtK(d.realized)}</div>`;
+    tip.innerHTML=html;
+    tip.style.display='block';
+    const xPx=xPos(idx);
+    vline.style.display='block';vline.style.left=xPx+'px';
+    let tx2=xPx+12;if(tx2+tip.offsetWidth>W-10)tx2=xPx-tip.offsetWidth-12;
+    tip.style.left=tx2+'px';tip.style.top='10px';
+  });
+  canvas.addEventListener('mouseleave',function(){tip.style.display='none';vline.style.display='none'});
 
   container.innerHTML='';
-  container.appendChild(canvas);
+  container.appendChild(wrap);
 }
 
 // ================ IMPORT ================
@@ -2706,7 +2807,27 @@ async function doImport(){
   if(!groups.length){toast('파싱된 데이터 없음','err');return}
   if(!SHEET_ID||!SA_KEY){toast('Sheets 설정 필요','err');return}
   const logEl=document.getElementById('impLog');logEl.innerHTML='';
+
+  // Load existing dates per broker for dedup
+  const existingDates={};
+  for(const broker of ['삼성','키움']){
+    try{
+      const d=await sheetsGet(`${broker}!A:A`);
+      const dates=new Set();
+      if(d&&Array.isArray(d)){
+        for(const r of d){if(r[0]!=null&&r[0]!=='')dates.add(String(r[0]))}
+      }
+      existingDates[broker]=dates;
+    }catch(e){existingDates[broker]=new Set()}
+  }
+
   for(const g of groups){
+    // Check if this date already exists in the sheet
+    const dateNum=String(parseInt(g.date));
+    if(existingDates[g.broker]&&existingDates[g.broker].has(dateNum)){
+      addLog(logEl,`⏭ ${g.broker} ${fmtDate(g.date)}: 이미 존재 → 건너뜀`,'');
+      continue;
+    }
     const rate=TAX[g.broker];
     const rows=g.rows.map((r,i)=>{const tax=rd(Math.abs(r.qty)*r.price*rate),total=rd(Math.abs(r.qty)*r.price+tax);
       return[i===0?parseInt(g.date):'',r.ticker,r.qty,r.price,tax,total,'',r.seq]});
