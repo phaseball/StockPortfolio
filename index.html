@@ -2676,8 +2676,8 @@ async function drawHistoryChart(ticker,period,btn){
   if(data.length<1){container.innerHTML='';return}
 
   const W=Math.min(container.clientWidth||600,800);
-  const H1=130, H2=130, gap=20;
-  const totalH=H1+gap+H2;
+  const H1=130, H2=100, H3=100, gap=16;
+  const totalH=H1+gap+H2+gap+H3;
   const pad={t:20,r:45,b:14,l:50};
   const cW=W-pad.l-pad.r;
 
@@ -2785,7 +2785,72 @@ async function drawHistoryChart(ticker,period,btn){
   ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
   ctx.fillStyle='#ffa726';ctx.fillText('── 실현손익',pad.l,y2Top+12);
 
-  // X labels (shared for both charts)
+  // ===== CHART 3: 평가손익 + 실현손익 (total P/L) =====
+  const y3Top=H1+gap+H2+gap;
+  const cH3=H3-pad.t-pad.b;
+  let y3Max=0,y3Min=0;
+  for(const d of data){
+    const unrealized=d.totalValue-d.purchAmt;
+    const totalPL=unrealized+d.realized;
+    const mx=Math.max(unrealized,d.realized,totalPL);
+    const mn=Math.min(unrealized,d.realized,totalPL);
+    if(mx>y3Max)y3Max=mx;
+    if(mn<y3Min)y3Min=mn;
+  }
+  const y3Range=y3Max-y3Min||100;
+  y3Max+=y3Range*0.15;y3Min-=y3Range*0.1;
+  function yPos3(v){return y3Top+pad.t+(1-(v-y3Min)/(y3Max-y3Min))*cH3}
+
+  ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
+  for(let i=0;i<=3;i++){
+    const v=y3Min+(y3Max-y3Min)*i/3;const y=yPos3(v);
+    ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+    ctx.fillStyle='#666';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='right';
+    const lbl=Math.abs(v)>=1e3?(v>=0?'':'-')+'$'+(Math.abs(v)/1e3).toFixed(0)+'K':'$'+v.toFixed(0);
+    ctx.fillText(lbl,pad.l-4,y+3);
+  }
+  if(y3Min<0&&y3Max>0){
+    ctx.strokeStyle='#555';ctx.lineWidth=0.5;ctx.setLineDash([3,3]);ctx.beginPath();
+    ctx.moveTo(pad.l,yPos3(0));ctx.lineTo(W-pad.r,yPos3(0));ctx.stroke();ctx.setLineDash([]);
+  }
+
+  // 평가손익 line (unrealized, green dashed)
+  ctx.strokeStyle='#66bb6a';ctx.lineWidth=1;ctx.setLineDash([4,3]);ctx.beginPath();
+  for(let i=0;i<data.length;i++){
+    const v=data[i].totalValue-data[i].purchAmt;
+    if(i===0)ctx.moveTo(xPos(i),yPos3(v));else ctx.lineTo(xPos(i),yPos3(v));
+  }
+  ctx.stroke();ctx.setLineDash([]);
+
+  // 실현손익 line (orange dashed)
+  ctx.strokeStyle='#ffa726';ctx.lineWidth=1;ctx.setLineDash([4,3]);ctx.beginPath();
+  for(let i=0;i<data.length;i++){
+    if(i===0)ctx.moveTo(xPos(i),yPos3(data[i].realized));else ctx.lineTo(xPos(i),yPos3(data[i].realized));
+  }
+  ctx.stroke();ctx.setLineDash([]);
+
+  // 총손익 line (white, solid)
+  ctx.strokeStyle='#e0e0e0';ctx.lineWidth=2;ctx.beginPath();
+  for(let i=0;i<data.length;i++){
+    const v=(data[i].totalValue-data[i].purchAmt)+data[i].realized;
+    if(i===0)ctx.moveTo(xPos(i),yPos3(v));else ctx.lineTo(xPos(i),yPos3(v));
+  }
+  ctx.stroke();
+
+  // End labels
+  const lastUnreal=data[data.length-1].totalValue-data[data.length-1].purchAmt;
+  const lastTotal=lastUnreal+data[data.length-1].realized;
+  ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';
+  ctx.fillStyle='#e0e0e0';
+  ctx.fillText((lastTotal>=0?'+':'-')+'$'+(Math.abs(lastTotal)/1e3).toFixed(1)+'K',W-pad.r+4,yPos3(lastTotal)+3);
+
+  // Legend
+  ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
+  ctx.fillStyle='#e0e0e0';ctx.fillText('── 총손익',pad.l,y3Top+12);
+  ctx.fillStyle='#66bb6a';ctx.fillText('╌ 평가',pad.l+70,y3Top+12);
+  ctx.fillStyle='#ffa726';ctx.fillText('╌ 실현',pad.l+115,y3Top+12);
+
+  // X labels (shared for all charts)
   ctx.fillStyle='#888';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='center';
   const xStep=Math.max(1,Math.floor(data.length/6));
   for(let i=0;i<data.length;i+=xStep){
@@ -2825,6 +2890,9 @@ async function drawHistoryChart(ticker,period,btn){
     const plCls=pl>=0?'c-up':'c-dn';
     html+=`<div class="${plCls}">평가손익: ${fmtK(pl)}</div>`;
     html+=`<div style="color:#ffa726">실현: ${(d.realized>=0?'+':'')}${fmtK(d.realized)}</div>`;
+    const totalPL=pl+d.realized;
+    const tCls=totalPL>=0?'c-up':'c-dn';
+    html+=`<div class="${tCls}" style="border-top:1px solid #333;padding-top:2px;margin-top:2px">총손익: ${(totalPL>=0?'+':'')}${fmtK(totalPL)}</div>`;
     tip.innerHTML=html;
     tip.style.display='block';
     const xPx=xPos(idx);
