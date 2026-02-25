@@ -2629,10 +2629,10 @@ function drawHistoryChart(ticker,period,btn){
 
   function xPos(i){return pad.l+(i/(data.length-1||1))*cW}
 
-  // ===== CHART 1: Purchase Amount (step line) =====
+  // ===== CHART 1: Purchase Amount (blue) + Total Value (green) overlaid =====
   const cH1=H1-pad.t-pad.b;
   let y1Max=0;
-  for(const d of data)if(d.purchAmt>y1Max)y1Max=d.purchAmt;
+  for(const d of data){const mx=Math.max(d.purchAmt,d.totalValue);if(mx>y1Max)y1Max=mx}
   y1Max=Math.ceil(y1Max*1.15)||100;
   function yPos1(v){return pad.t+(1-v/y1Max)*cH1}
 
@@ -2644,36 +2644,50 @@ function drawHistoryChart(ticker,period,btn){
     ctx.fillText(v>=1e3?'$'+(v/1e3).toFixed(0)+'K':'$'+v.toFixed(0),pad.l-4,y+3);
   }
 
+  // Purchase amount step line (blue)
   ctx.strokeStyle='#4fc3f7';ctx.lineWidth=2;ctx.beginPath();
   for(let i=0;i<data.length;i++){
     if(i===0)ctx.moveTo(xPos(i),yPos1(data[i].purchAmt));
     else{ctx.lineTo(xPos(i),yPos1(data[i-1].purchAmt));ctx.lineTo(xPos(i),yPos1(data[i].purchAmt))}
   }
   ctx.stroke();
-  ctx.fillStyle='rgba(79,195,247,0.08)';ctx.beginPath();
+  ctx.fillStyle='rgba(79,195,247,0.06)';ctx.beginPath();
   ctx.moveTo(xPos(0),yPos1(0));
   for(let i=0;i<data.length;i++){if(i>0)ctx.lineTo(xPos(i),yPos1(data[i-1].purchAmt));ctx.lineTo(xPos(i),yPos1(data[i].purchAmt))}
   ctx.lineTo(xPos(data.length-1),yPos1(0));ctx.closePath();ctx.fill();
 
+  // Total value step line (green)
+  ctx.strokeStyle='#66bb6a';ctx.lineWidth=2;ctx.beginPath();
+  for(let i=0;i<data.length;i++){
+    if(i===0)ctx.moveTo(xPos(i),yPos1(data[i].totalValue));
+    else{ctx.lineTo(xPos(i),yPos1(data[i-1].totalValue));ctx.lineTo(xPos(i),yPos1(data[i].totalValue))}
+  }
+  ctx.stroke();
+
+  // End labels
   const lv1=data[data.length-1].purchAmt;
-  ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle='#4fc3f7';
-  ctx.fillText('$'+(lv1/1e3).toFixed(1)+'K',W-pad.r+4,yPos1(lv1)+3);
+  const lvV=data[data.length-1].totalValue;
+  ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';
+  ctx.fillStyle='#4fc3f7';ctx.fillText('$'+(lv1/1e3).toFixed(1)+'K',W-pad.r+4,yPos1(lv1)+3);
+  ctx.fillStyle='#66bb6a';
+  let vY=yPos1(lvV)+3;if(Math.abs(vY-(yPos1(lv1)+3))<10)vY=yPos1(lv1)-8;
+  ctx.fillText('$'+(lvV/1e3).toFixed(1)+'K',W-pad.r+4,vY);
 
-  ctx.font='10px JetBrains Mono, monospace';ctx.fillStyle='#888';ctx.textAlign='left';
-  ctx.fillText(`${ticker} 매입금액`,pad.l,14);
+  // Legend
+  ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
+  ctx.fillStyle='#4fc3f7';ctx.fillText('── 매입',pad.l,14);
+  ctx.fillStyle='#66bb6a';ctx.fillText('── 평가',pad.l+60,14);
 
-  // ===== CHART 2: Total Value + Realized P/L =====
+  // ===== CHART 2: Realized P/L alone =====
   const y2Top=H1+gap;
   const cH2=H2-pad.t-pad.b;
   let y2Max=0,y2Min=0;
   for(const d of data){
-    const mx=Math.max(d.totalValue,d.realized,d.purchAmt);
-    const mn=Math.min(d.totalValue,d.realized,0);
-    if(mx>y2Max)y2Max=mx;
-    if(mn<y2Min)y2Min=mn;
+    if(d.realized>y2Max)y2Max=d.realized;
+    if(d.realized<y2Min)y2Min=d.realized;
   }
   const y2Range=y2Max-y2Min||100;
-  y2Max=y2Max+y2Range*0.1;y2Min=y2Min-y2Range*0.05;
+  y2Max=y2Max+y2Range*0.15;y2Min=y2Min-y2Range*0.1;
   function yPos2(v){return y2Top+pad.t+(1-(v-y2Min)/(y2Max-y2Min))*cH2}
 
   ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
@@ -2681,7 +2695,8 @@ function drawHistoryChart(ticker,period,btn){
     const v=y2Min+(y2Max-y2Min)*i/3;const y=yPos2(v);
     ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
     ctx.fillStyle='#666';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='right';
-    ctx.fillText(v>=1e3||v<=-1e3?(v>=0?'':'')+'$'+(v/1e3).toFixed(0)+'K':'$'+v.toFixed(0),pad.l-4,y+3);
+    const lbl=Math.abs(v)>=1e3?(v>=0?'':'-')+'$'+(Math.abs(v)/1e3).toFixed(0)+'K':'$'+v.toFixed(0);
+    ctx.fillText(lbl,pad.l-4,y+3);
   }
   // Zero line
   if(y2Min<0&&y2Max>0){
@@ -2689,35 +2704,25 @@ function drawHistoryChart(ticker,period,btn){
     ctx.moveTo(pad.l,yPos2(0));ctx.lineTo(W-pad.r,yPos2(0));ctx.stroke();ctx.setLineDash([]);
   }
 
-  // Total value line (green)
-  ctx.strokeStyle='#66bb6a';ctx.lineWidth=2;ctx.beginPath();
-  for(let i=0;i<data.length;i++){
-    if(i===0)ctx.moveTo(xPos(i),yPos2(data[i].totalValue));
-    else{ctx.lineTo(xPos(i),yPos2(data[i-1].totalValue));ctx.lineTo(xPos(i),yPos2(data[i].totalValue))}
-  }
-  ctx.stroke();
-
-  // Realized P/L line (orange)
+  // Realized P/L step line (orange)
   ctx.strokeStyle='#ffa726';ctx.lineWidth=2;ctx.beginPath();
   for(let i=0;i<data.length;i++){
     if(i===0)ctx.moveTo(xPos(i),yPos2(data[i].realized));
     else{ctx.lineTo(xPos(i),yPos2(data[i-1].realized));ctx.lineTo(xPos(i),yPos2(data[i].realized))}
   }
   ctx.stroke();
+  // Fill area
+  ctx.fillStyle='rgba(255,167,38,0.08)';ctx.beginPath();
+  ctx.moveTo(xPos(0),yPos2(0));
+  for(let i=0;i<data.length;i++){if(i>0)ctx.lineTo(xPos(i),yPos2(data[i-1].realized));ctx.lineTo(xPos(i),yPos2(data[i].realized))}
+  ctx.lineTo(xPos(data.length-1),yPos2(0));ctx.closePath();ctx.fill();
 
-  // End labels
-  const lvV=data[data.length-1].totalValue;
   const lvR=data[data.length-1].realized;
-  ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';
-  ctx.fillStyle='#66bb6a';ctx.fillText('$'+(lvV/1e3).toFixed(1)+'K',W-pad.r+4,yPos2(lvV)+3);
-  ctx.fillStyle='#ffa726';
-  let rY=yPos2(lvR)+3;if(Math.abs(rY-(yPos2(lvV)+3))<10)rY=yPos2(lvV)+13;
-  ctx.fillText((lvR>=0?'+':'-')+'$'+(Math.abs(lvR)/1e3).toFixed(1)+'K',W-pad.r+4,rY);
+  ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle='#ffa726';
+  ctx.fillText((lvR>=0?'+':'-')+'$'+(Math.abs(lvR)/1e3).toFixed(1)+'K',W-pad.r+4,yPos2(lvR)+3);
 
-  // Legend
   ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
-  ctx.fillStyle='#66bb6a';ctx.fillText('── 평가액',pad.l,y2Top+12);
-  ctx.fillStyle='#ffa726';ctx.fillText('── 실현손익',pad.l+80,y2Top+12);
+  ctx.fillStyle='#ffa726';ctx.fillText('── 실현손익',pad.l,y2Top+12);
 
   // X labels (shared for both charts)
   ctx.fillStyle='#888';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='center';
@@ -2812,13 +2817,13 @@ async function doImport(){
   const existingDates={};
   for(const broker of ['삼성','키움']){
     try{
-      const d=await sheetsGet(`${broker}!A:A`);
+      const resp=await sheetsGet(`${broker}!A:A`);
       const dates=new Set();
-      if(d&&Array.isArray(d)){
-        for(const r of d){if(r[0]!=null&&r[0]!=='')dates.add(String(r[0]))}
-      }
+      const rows=resp&&resp.values?resp.values:(Array.isArray(resp)?resp:[]);
+      for(const r of rows){if(r[0]!=null&&r[0]!=='')dates.add(String(r[0]))}
       existingDates[broker]=dates;
-    }catch(e){existingDates[broker]=new Set()}
+      console.log(`${broker} existing dates:`,dates.size,'entries, sample:',[...dates].slice(0,5));
+    }catch(e){existingDates[broker]=new Set();console.warn(`${broker} date load failed:`,e)}
   }
 
   for(const g of groups){
