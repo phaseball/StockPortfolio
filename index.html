@@ -1711,16 +1711,17 @@ function saveDVCache(){
 async function loadDailyValuesFromSheet(){
   if(!SHEET_ID||!SA_KEY)return {};
   try{
-    const resp=await sheetsGet('daily_value!A:C');
+    const resp=await sheetsGet('daily_value!A:D');
     const rows=resp&&resp.values?resp.values:[];
     const map={};
     for(const r of rows){
       if(!r[0]||r[0]==='date')continue;
-      map[String(r[0])]={totalValue:parseFloat(r[1])||0, cash:parseFloat(r[2])||0};
+      const entry={totalValue:parseFloat(r[1])||0, cash:parseFloat(r[2])||0};
+      if(r[3]){try{entry.holdings=JSON.parse(r[3])}catch(e){}}
+      map[String(r[0])]=entry;
     }
     return map;
   }catch(e){
-    // Tab might not exist yet
     console.log('daily_value tab not found or empty, will create');
     return {};
   }
@@ -1740,15 +1741,13 @@ async function writeDailyValuesToSheet(newRows){
         method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
         body:JSON.stringify({requests:[{addSheet:{properties:{title:'daily_value'}}}]})
       });
-      // Write header
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent('daily_value!A1:C1')}?valueInputOption=USER_ENTERED`,{
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent('daily_value!A1:D1')}?valueInputOption=USER_ENTERED`,{
         method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-        body:JSON.stringify({range:'daily_value!A1:C1',majorDimension:'ROWS',values:[['date','totalValue','cash']]})
+        body:JSON.stringify({range:'daily_value!A1:D1',majorDimension:'ROWS',values:[['date','totalValue','cash','holdings']]})
       });
     }catch(e2){console.warn('Failed to create daily_value tab:',e2)}
   }
-  // Append rows
-  const range='daily_value!A:C';
+  const range='daily_value!A:D';
   await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{
     method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
     body:JSON.stringify({range,majorDimension:'ROWS',values:newRows})
@@ -1756,17 +1755,19 @@ async function writeDailyValuesToSheet(newRows){
 }
 
 async function fetchFmpHistory(ticker){
-  // FMP historical daily prices
+  // FMP historical daily prices — use adjClose (split-adjusted)
   if(!FMP_KEY)return {};
   try{
     const d=await fmpGet(`historical-price-eod/full?symbol=${ticker}`);
     if(!d||!Array.isArray(d))return {};
     const lookup={};
     for(const row of d){
-      if(!row.date||row.close==null)continue;
+      if(!row.date)continue;
+      const price=row.adjClose!=null?row.adjClose:row.close;
+      if(price==null)continue;
       const parts=row.date.split('-');
       const key=parts[0].slice(2)+parts[1]+parts[2];
-      lookup[key]=row.close;
+      lookup[key]=price;
     }
     return lookup;
   }catch(e){return {}}
@@ -1904,34 +1905,30 @@ async function computeDailyValues(el){
 
     const cash=cashSS+cashKW;
 
-    // Compute holdings value using close price
+    // Compute per-ticker holdings value using close price
     let holdingsValue=0;
-    const debugDates=new Set(['250421','250422','250423','250424','250425','250428','250429','250430','250501','250502','250601','250602','250603']);
-    const isDebug=debugDates.has(date);
-    if(isDebug)console.log(`--- ${date} ---`);
+    const tickerValues={}; // ticker -> qty*closePrice
     for(const[tk,qty] of Object.entries(positions)){
       if(qty<=0)continue;
       const closePrice=findClose(tk,date);
       let usedPrice;
       if(closePrice!=null){
-        holdingsValue+=qty*closePrice;
         usedPrice=closePrice;
       }else{
-        let lastPrice=0;
+        // Fallback: last transaction price
+        usedPrice=0;
         for(let i=chronoTx.length-1;i>=0;i--){
-          if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){lastPrice=chronoTx[i].price;break}
+          if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}
         }
-        holdingsValue+=qty*lastPrice;
-        usedPrice=lastPrice;
-        if(isDebug)console.warn(`  ${tk}: NO FMP DATA, fallback txPrice=${lastPrice.toFixed(2)}, qty=${qty}, val=${(qty*lastPrice).toFixed(0)}`);
       }
-      if(isDebug&&qty*usedPrice>5000)console.log(`  ${tk}: qty=${qty}, price=${usedPrice.toFixed(2)}, val=$${(qty*usedPrice).toFixed(0)}`);
+      const val=qty*usedPrice;
+      tickerValues[tk]=Math.round(val*100)/100;
+      holdingsValue+=val;
     }
-    if(isDebug)console.log(`  TOTAL: cash=${(cashSS+cashKW).toFixed(0)} + holdings=${holdingsValue.toFixed(0)} = ${((cashSS+cashKW)+holdingsValue).toFixed(0)}`);
 
     const totalValue=cash+holdingsValue;
-    stored[date]={totalValue, cash};
-    newRows.push([parseInt(date), Math.round(totalValue*100)/100, Math.round(cash*100)/100]);
+    stored[date]={totalValue, cash, holdings:tickerValues};
+    newRows.push([parseInt(date), Math.round(totalValue*100)/100, Math.round(cash*100)/100, JSON.stringify(tickerValues)]);
   }
 
   // Also ensure we process txDates that might be after the last marketDay
@@ -2205,7 +2202,6 @@ function redrawChart(dailyValues){
     if(dv[date]){
       totalValue=dv[date].totalValue;
     }else if(stateDate&&stateDate!==date&&tqqqLookup){
-      // Fallback: TQQQ interpolation if daily_value not available
       const tqAtState=findPrice(tqqqLookup,stateDate);
       const tqNow=findPrice(tqqqLookup,date);
       if(tqAtState&&tqNow&&tqAtState>0){
@@ -2215,18 +2211,32 @@ function redrawChart(dailyValues){
     }
     entry.totalValue=totalValue;
 
-    // Market-value-based group values (for % mode)
-    const holdMktVal=totalValue-state.cash;
-    const holdCostAtState=totalCostBasis||1;
-    const mktRatio=holdMktVal/holdCostAtState;
-
-    // Per-group market value proportional to cost basis share
-    for(const g of HOLD_GROUPS){
-      entry['mv_'+g.label]=entry['g_'+g.label]*mktRatio;
+    // Per-group market value: sum actual per-ticker values from daily_value
+    const dvHoldings=(dv[date]&&dv[date].holdings)?dv[date].holdings:null;
+    if(dvHoldings){
+      for(const g of HOLD_GROUPS){
+        let sum=0;
+        for(const tk of g.tickers){
+          if(dvHoldings[tk])sum+=dvHoldings[tk];
+        }
+        entry['mv_'+g.label]=sum;
+      }
+      // Cash = totalValue - sum of all holdings
+      let sumMv=0;
+      for(const g of HOLD_GROUPS)sumMv+=entry['mv_'+g.label];
+      entry.mvCash=totalValue-sumMv;
+    }else{
+      // Fallback: proportional approximation
+      const holdMktVal=totalValue-(dv[date]?dv[date].cash:state.cash);
+      const holdCostAtState=totalCostBasis||1;
+      const mktRatio=holdMktVal/holdCostAtState;
+      for(const g of HOLD_GROUPS){
+        entry['mv_'+g.label]=entry['g_'+g.label]*mktRatio;
+      }
+      let sumMv=0;
+      for(const g of HOLD_GROUPS)sumMv+=entry['mv_'+g.label];
+      entry.mvCash=totalValue-sumMv;
     }
-    let sumMv=0;
-    for(const g of HOLD_GROUPS)sumMv+=entry['mv_'+g.label];
-    entry.mvCash=totalValue-sumMv;
 
     if(chartMode==='norm'){
       const baseVal=initialCashSS+initialCashKW;
@@ -2279,20 +2289,6 @@ function redrawChart(dailyValues){
       }
     }
     actualTotalAsset=trueLastState.cash+actualMktVal;
-    console.log('=== CHART totalAsset DEBUG ===');
-    console.log('chart cash:',trueLastState.cash);
-    console.log('chart mktVal:',actualMktVal);
-    console.log('chart totalAsset:',actualTotalAsset);
-    console.log('chart positions:',JSON.stringify(Object.entries(trueLastState.positions).map(([tk,p])=>`${tk}:${p.qty}`).join(', ')));
-    // Compare with overview
-    if(cachedOverviewData){
-      const od=cachedOverviewData;
-      const ovCash=(initialCashSS+initialCashKW)+od.cashByBroker['삼성']+od.cashByBroker['키움'];
-      let ovMkt=0;
-      for(const h of od.allHoldings){ovMkt+=h.qty*(cachedPrices[h.ticker]?.current||0)}
-      console.log('overview cash:',ovCash,'mktVal:',ovMkt,'total:',ovCash+ovMkt);
-      console.log('DIFF cash:',trueLastState.cash-ovCash,'mktVal:',actualMktVal-ovMkt);
-    }
   }
 
   // Also fix the last chart data entry with actual current prices
