@@ -1957,6 +1957,23 @@ async function computeDailyValues(el){
   const lastDate=marketDays[marketDays.length-1];
   console.log(`daily_value summary: initCash=${initCash}, first(${firstDate})=${stored[firstDate]?.totalValue?.toFixed(0)}, last(${lastDate})=${stored[lastDate]?.totalValue?.toFixed(0)}`);
   
+  // Log split-affected tickers for verification
+  const splitTickers=new Set();
+  for(const tx of chronoTx){if(tx.split&&tx.split!=='')splitTickers.add(tx.ticker)}
+  if(splitTickers.size>0){
+    console.log('Split-affected tickers:',  [...splitTickers].join(', '));
+    for(const tk of splitTickers){
+      // Show a few sample dates
+      const dates=Object.keys(stored).sort().filter(d=>stored[d].holdings&&stored[d].holdings[tk]);
+      if(dates.length>0){
+        const samples=dates.slice(0,3).concat(dates.slice(-2));
+        for(const d of [...new Set(samples)]){
+          console.log(`  ${tk} ${d}: $${stored[d].holdings[tk]}`);
+        }
+      }
+    }
+  }
+  
   return stored;
 }
 
@@ -1969,7 +1986,7 @@ async function recalcDailyValues(){
   if(SHEET_ID&&SA_KEY){
     try{
       const token=await getAccessToken();
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent('daily_value!A2:C')}:clear`,{
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent('daily_value!A2:Z')}:clear`,{
         method:'POST',headers:{Authorization:`Bearer ${token}`}
       });
       console.log('Cleared daily_value Sheet');
