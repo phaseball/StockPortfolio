@@ -1878,6 +1878,28 @@ async function computeDailyValues(el){
       holdingsValue+=pos.qty*price;
     }
     const totalValue=state.cash+holdingsValue;
+    // Detect anomalies: >20% daily jump
+    const prevDate=missingDates[missingDates.indexOf(date)-1];
+    if(prevDate&&stored[prevDate]){
+      const prevVal=stored[prevDate].totalValue;
+      if(prevVal>0){
+        const pctChg=Math.abs(totalValue-prevVal)/prevVal*100;
+        if(pctChg>20){
+          console.warn(`ANOMALY ${date}: ${prevVal.toFixed(0)} → ${totalValue.toFixed(0)} (${pctChg.toFixed(1)}%)`);
+          // Log which tickers contributed most
+          for(const[tk,pos] of Object.entries(state.positions)){
+            if(pos.qty<=0)continue;
+            const hist=priceHistories[tk]||{};
+            const p1=hist[prevDate]||hist[date];
+            const p2=hist[date];
+            if(p1&&p2&&Math.abs(p2-p1)/p1>0.15){
+              console.warn(`  ${tk}: qty=${pos.qty}, price ${p1?.toFixed(2)}→${p2?.toFixed(2)}`);
+            }
+            if(!hist[date]&&!p2)console.warn(`  ${tk}: NO YAHOO DATA, using avgCost=${pos.avgCost.toFixed(2)}`);
+          }
+        }
+      }
+    }
     stored[date]={totalValue, cash:state.cash};
     newRows.push([parseInt(date), Math.round(totalValue*100)/100, Math.round(state.cash*100)/100]);
   }
@@ -2196,6 +2218,20 @@ function redrawChart(dailyValues){
       }
     }
     actualTotalAsset=trueLastState.cash+actualMktVal;
+    console.log('=== CHART totalAsset DEBUG ===');
+    console.log('chart cash:',trueLastState.cash);
+    console.log('chart mktVal:',actualMktVal);
+    console.log('chart totalAsset:',actualTotalAsset);
+    console.log('chart positions:',JSON.stringify(Object.entries(trueLastState.positions).map(([tk,p])=>`${tk}:${p.qty}`).join(', ')));
+    // Compare with overview
+    if(cachedOverviewData){
+      const od=cachedOverviewData;
+      const ovCash=(initialCashSS+initialCashKW)+od.cashByBroker['삼성']+od.cashByBroker['키움'];
+      let ovMkt=0;
+      for(const h of od.allHoldings){ovMkt+=h.qty*(cachedPrices[h.ticker]?.current||0)}
+      console.log('overview cash:',ovCash,'mktVal:',ovMkt,'total:',ovCash+ovMkt);
+      console.log('DIFF cash:',trueLastState.cash-ovCash,'mktVal:',actualMktVal-ovMkt);
+    }
   }
 
   // Also fix the last chart data entry with actual current prices
