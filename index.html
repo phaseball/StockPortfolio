@@ -2073,6 +2073,23 @@ function redrawChart(dailyValues){
   const firstTxDate=chartTxDates[0];
   masterDates=masterDates.filter(d=>d>=firstTxDate);
 
+  // Inject a synthetic "day 0" = one market day before first tx = initialCash
+  // This ensures the chart starts at exactly the deposited amount
+  const initCash=initialCashSS+initialCashKW;
+  const allTqqqDates=tqqqArr.map(d=>d.date).sort();
+  const preTxDays=allTqqqDates.filter(d=>d<firstTxDate);
+  if(preTxDays.length>0){
+    const day0=preTxDays[preTxDays.length-1];
+    masterDates=[day0,...masterDates];
+    // Inject into dv so totalValue lookup works
+    if(!dv[day0])dv[day0]={totalValue:initCash, cash:initCash};
+    // Create a dummy state for day0 (no positions, full cash)
+    if(!chartTxStates[day0]){
+      chartTxStates[day0]={cash:initCash, positions:{}, totalValue:initCash};
+      chartTxDates=[day0,...chartTxDates];
+    }
+  }
+
   // Populate year buttons
   const years=new Set();
   for(const d of masterDates)years.add('20'+d.slice(0,2));
