@@ -207,6 +207,9 @@ table.t tr:hover td{background:var(--accentBg)}
         <button class="cbtn" onclick="setBottomMode('abs',this)">$</button>
         <button class="cbtn on" onclick="setBottomMode('pct',this)">%</button>
       </div>
+      <div class="chart-grp" style="margin-left:8px">
+        <button class="cbtn" onclick="recalcDailyValues()" title="daily_value 재계산">🔄 Recalc</button>
+      </div>
     </div>
     <div id="chartContent" style="padding-bottom:40px"><p style="color:var(--text2);text-align:center;padding:32px">로딩 중...</p></div>
   </div>
@@ -1773,18 +1776,22 @@ async function computeDailyValues(el){
     const tk=tx.ticker;
     if(!posMap[tk])posMap[tk]={qty:0,avgCost:0};
     const pos=posMap[tk];
+    // Use post-split qty/price for position tracking (matches Yahoo prices)
+    // Use original qty/price for cash (actual dollars spent/received)
+    const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
+    const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
     if(tx.qty>0){
       const newCost=pos.avgCost*pos.qty+tx.qty*tx.price;
       pos.qty+=tx.qty;
       pos.avgCost=pos.qty>0?newCost/pos.qty:0;
-      if(tx.broker==='삼성')cashSS-=(tx.qty*tx.price+tx.tax);
-      else cashKW-=(tx.qty*tx.price+tx.tax);
+      if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
+      else cashKW-=(Math.abs(oq)*op+tx.tax);
     }else if(tx.qty<0){
       const sq=Math.abs(tx.qty);
       pos.qty-=sq;
       if(pos.qty<=0){pos.qty=0;pos.avgCost=0}
-      if(tx.broker==='삼성')cashSS+=(sq*tx.price-tx.tax);
-      else cashKW+=(sq*tx.price-tx.tax);
+      if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);
+      else cashKW+=(Math.abs(oq)*op-tx.tax);
     }
     if(tx.date!==lastDate){
       if(lastDate)capturePos(lastDate);
@@ -1888,6 +1895,25 @@ async function computeDailyValues(el){
   return stored;
 }
 
+async function recalcDailyValues(){
+  if(!confirm('daily_value를 모두 삭제하고 다시 계산합니다. 계속?'))return;
+  // Clear localStorage cache
+  dailyValueCache={};
+  try{localStorage.removeItem(CACHE_KEY_DV)}catch(e){}
+  // Clear Sheet tab
+  if(SHEET_ID&&SA_KEY){
+    try{
+      const token=await getAccessToken();
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent('daily_value!A2:C')}:clear`,{
+        method:'POST',headers:{Authorization:`Bearer ${token}`}
+      });
+      console.log('Cleared daily_value Sheet');
+    }catch(e){console.warn('Failed to clear daily_value:',e)}
+  }
+  toast('daily_value 초기화 완료. 재계산...','ok');
+  showTotalValueChart();
+}
+
 async function showTotalValueChart(){
   switchTab('chart');
   const el=document.getElementById('chartContent');
@@ -1921,18 +1947,20 @@ async function showTotalValueChart(){
     if(!posMap[tk])posMap[tk]={qty:0,avgCost:0};
     const pos=posMap[tk];
     txPrices[tk]=tx.price;
+    const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
+    const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
     if(tx.qty>0){
       const newCost=pos.avgCost*pos.qty+tx.qty*tx.price;
       pos.qty+=tx.qty;
       pos.avgCost=pos.qty>0?newCost/pos.qty:0;
-      if(tx.broker==='삼성')cashSS-=(tx.qty*tx.price+tx.tax);
-      else cashKW-=(tx.qty*tx.price+tx.tax);
+      if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
+      else cashKW-=(Math.abs(oq)*op+tx.tax);
     }else if(tx.qty<0){
       const sq=Math.abs(tx.qty);
       pos.qty-=sq;
       if(pos.qty<=0){pos.qty=0;pos.avgCost=0}
-      if(tx.broker==='삼성')cashSS+=(sq*tx.price-tx.tax);
-      else cashKW+=(sq*tx.price-tx.tax);
+      if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);
+      else cashKW+=(Math.abs(oq)*op-tx.tax);
     }
     if(tx.date!==lastDate){
       if(lastDate)captureState(lastDate,txPrices);
