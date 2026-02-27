@@ -1755,19 +1755,17 @@ async function writeDailyValuesToSheet(newRows){
 }
 
 async function fetchFmpHistory(ticker){
-  // FMP historical daily prices — use adjClose (split-adjusted)
+  // FMP historical daily prices — use unadjusted close (matches origQty positions)
   if(!FMP_KEY)return {};
   try{
     const d=await fmpGet(`historical-price-eod/full?symbol=${ticker}`);
     if(!d||!Array.isArray(d))return {};
     const lookup={};
     for(const row of d){
-      if(!row.date)continue;
-      const price=row.adjClose!=null?row.adjClose:row.close;
-      if(price==null)continue;
+      if(!row.date||row.close==null)continue;
       const parts=row.date.split('-');
       const key=parts[0].slice(2)+parts[1]+parts[2];
-      lookup[key]=price;
+      lookup[key]=row.close;
     }
     return lookup;
   }catch(e){return {}}
@@ -1887,13 +1885,13 @@ async function computeDailyValues(el){
         const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
         const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
         if(!positions[tx.ticker])positions[tx.ticker]=0;
-        positions[tx.ticker]+=tx.qty; // post-split qty
-        if(positions[tx.ticker]<=0)positions[tx.ticker]=0;
+        positions[tx.ticker]+=oq; // original qty = actual shares held
+        if(positions[tx.ticker]<0.0001)positions[tx.ticker]=0;
         // Cash uses original (pre-split) values
-        if(tx.qty>0){
+        if(oq>0){
           if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
           else cashKW-=(Math.abs(oq)*op+tx.tax);
-        }else if(tx.qty<0){
+        }else if(oq<0){
           if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);
           else cashKW+=(Math.abs(oq)*op-tx.tax);
         }
@@ -1915,10 +1913,14 @@ async function computeDailyValues(el){
       if(closePrice!=null){
         usedPrice=closePrice;
       }else{
-        // Fallback: last transaction price
+        // Fallback: last transaction price (original, unadjusted)
         usedPrice=0;
         for(let i=chronoTx.length-1;i>=0;i--){
-          if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}
+          const t=chronoTx[i];
+          if(t.ticker===tk&&t.date<=date){
+            usedPrice=t.origPrice!==undefined?t.origPrice:t.price;
+            break;
+          }
         }
       }
       const val=qty*usedPrice;
