@@ -1665,6 +1665,229 @@ async function fetchBenchmark(ticker){
   if(!chartBenchData[ticker])chartBenchData[ticker]=[];
 }
 
+async function fetchYahooHistory(ticker){
+  const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5y`;
+  const proxies=[u=>`https://corsproxy.io/?${encodeURIComponent(u)}`];
+  for(const mkP of proxies){
+    try{
+      const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(12000)});
+      if(!r.ok)continue;
+      const d=await r.json();
+      const ts=d.chart?.result?.[0]?.timestamp||[];
+      const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
+      const lookup={};
+      for(let i=0;i<ts.length;i++){
+        if(closes[i]==null)continue;
+        const dt=new Date(ts[i]*1000);
+        const key=String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
+        lookup[key]=closes[i];
+      }
+      return lookup;
+    }catch(e){continue}
+  }
+  return {};
+}
+
+// daily_value Sheet tab: date(YYMMDD) | totalValue | cash
+let dailyValueCache=null; // {date: {totalValue, cash}}
+const CACHE_KEY_DV='cache_dailyValue';
+
+function loadDVCache(){
+  if(dailyValueCache)return dailyValueCache;
+  try{const s=localStorage.getItem(CACHE_KEY_DV);if(s)dailyValueCache=JSON.parse(s)}catch(e){}
+  if(!dailyValueCache)dailyValueCache={};
+  return dailyValueCache;
+}
+function saveDVCache(){
+  try{localStorage.setItem(CACHE_KEY_DV,JSON.stringify(dailyValueCache||{}))}catch(e){}
+}
+
+async function loadDailyValuesFromSheet(){
+  if(!SHEET_ID||!SA_KEY)return {};
+  try{
+    const resp=await sheetsGet('daily_value!A:C');
+    const rows=resp&&resp.values?resp.values:[];
+    const map={};
+    for(const r of rows){
+      if(!r[0]||r[0]==='date')continue;
+      map[String(r[0])]={totalValue:parseFloat(r[1])||0, cash:parseFloat(r[2])||0};
+    }
+    return map;
+  }catch(e){
+    // Tab might not exist yet
+    console.log('daily_value tab not found or empty, will create');
+    return {};
+  }
+}
+
+async function writeDailyValuesToSheet(newRows){
+  // newRows: [[date, totalValue, cash], ...]
+  if(!SHEET_ID||!SA_KEY||newRows.length===0)return;
+  const token=await getAccessToken();
+  // Ensure tab exists
+  try{
+    await sheetsGet('daily_value!A1');
+  }catch(e){
+    // Create tab with header
+    try{
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`,{
+        method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+        body:JSON.stringify({requests:[{addSheet:{properties:{title:'daily_value'}}}]})
+      });
+      // Write header
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent('daily_value!A1:C1')}?valueInputOption=USER_ENTERED`,{
+        method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+        body:JSON.stringify({range:'daily_value!A1:C1',majorDimension:'ROWS',values:[['date','totalValue','cash']]})
+      });
+    }catch(e2){console.warn('Failed to create daily_value tab:',e2)}
+  }
+  // Append rows
+  const range='daily_value!A:C';
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{
+    method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+    body:JSON.stringify({range,majorDimension:'ROWS',values:newRows})
+  });
+}
+
+async function computeDailyValues(el){
+  // 1. Build position states at each tx date (same as before)
+  const chronoTx=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
+  if(chronoTx.length===0)return {};
+
+  const posMap={};
+  let cashSS=initialCashSS, cashKW=initialCashKW;
+  // txDateStates: date -> {cash, positions:{tk:{qty}}}
+  const txDateStates={};
+  let lastDate=null;
+
+  function capturePos(date){
+    const positions={};
+    for(const[tk,p] of Object.entries(posMap)){
+      if(p.qty>0)positions[tk]={qty:p.qty, avgCost:p.avgCost};
+    }
+    txDateStates[date]={cash:cashSS+cashKW, positions};
+  }
+
+  for(const tx of chronoTx){
+    if(!tx.ticker)continue;
+    const tk=tx.ticker;
+    if(!posMap[tk])posMap[tk]={qty:0,avgCost:0};
+    const pos=posMap[tk];
+    if(tx.qty>0){
+      const newCost=pos.avgCost*pos.qty+tx.qty*tx.price;
+      pos.qty+=tx.qty;
+      pos.avgCost=pos.qty>0?newCost/pos.qty:0;
+      if(tx.broker==='삼성')cashSS-=(tx.qty*tx.price+tx.tax);
+      else cashKW-=(tx.qty*tx.price+tx.tax);
+    }else if(tx.qty<0){
+      const sq=Math.abs(tx.qty);
+      pos.qty-=sq;
+      if(pos.qty<=0){pos.qty=0;pos.avgCost=0}
+      if(tx.broker==='삼성')cashSS+=(sq*tx.price-tx.tax);
+      else cashKW+=(sq*tx.price-tx.tax);
+    }
+    if(tx.date!==lastDate){
+      if(lastDate)capturePos(lastDate);
+      lastDate=tx.date;
+    }
+  }
+  if(lastDate)capturePos(lastDate);
+
+  const txDates=Object.keys(txDateStates).sort();
+
+  // 2. Get TQQQ dates as master trading days
+  if(!chartBenchData['TQQQ'])await fetchBenchmark('TQQQ');
+  const tqqqArr=chartBenchData['TQQQ']||[];
+  let marketDays=tqqqArr.map(d=>d.date).sort();
+  marketDays=marketDays.filter(d=>d>=txDates[0]);
+
+  // 3. Load existing daily_value from Sheet
+  if(el)el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> daily_value 로딩...</p>';
+  let stored=loadDVCache();
+  if(SHEET_ID&&SA_KEY){
+    const fromSheet=await loadDailyValuesFromSheet();
+    if(Object.keys(fromSheet).length>0){
+      stored={...stored,...fromSheet};
+      dailyValueCache=stored;
+      saveDVCache();
+    }
+  }
+
+  // 4. Find missing dates
+  const missingDates=marketDays.filter(d=>!stored[d]);
+  if(missingDates.length===0){
+    console.log('daily_value: all dates present');
+    return stored;
+  }
+
+  console.log(`daily_value: ${missingDates.length} missing dates to compute`);
+  if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> ${missingDates.length}일 가격 계산 중... (Yahoo 데이터 로딩)</p>`;
+
+  // 5. Find all tickers ever held during missing period
+  const tickersNeeded=new Set();
+  for(const date of missingDates){
+    let state=null;
+    for(let i=txDates.length-1;i>=0;i--){
+      if(txDates[i]<=date){state=txDateStates[txDates[i]];break}
+    }
+    if(state){for(const tk of Object.keys(state.positions))tickersNeeded.add(tk)}
+  }
+
+  // 6. Fetch Yahoo histories in parallel (batches of 8)
+  const tickerList=[...tickersNeeded];
+  const priceHistories={}; // ticker -> {date: close}
+  const batchSize=8;
+  for(let i=0;i<tickerList.length;i+=batchSize){
+    const batch=tickerList.slice(i,i+batchSize);
+    if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> Yahoo 가격 로딩 (${i+1}~${Math.min(i+batchSize,tickerList.length)} / ${tickerList.length})...</p>`;
+    const results=await Promise.all(batch.map(tk=>fetchYahooHistory(tk).then(h=>({tk,h}))));
+    for(const{tk,h} of results)priceHistories[tk]=h;
+  }
+
+  // 7. Compute daily values for missing dates
+  const newRows=[];
+  for(const date of missingDates){
+    let state=null;
+    for(let i=txDates.length-1;i>=0;i--){
+      if(txDates[i]<=date){state=txDateStates[txDates[i]];break}
+    }
+    if(!state)continue;
+
+    let holdingsValue=0;
+    for(const[tk,pos] of Object.entries(state.positions)){
+      if(pos.qty<=0)continue;
+      const hist=priceHistories[tk]||{};
+      // Find price on this date or nearest previous
+      let price=hist[date];
+      if(!price){
+        const y=parseInt('20'+date.slice(0,2)),m=parseInt(date.slice(2,4))-1,d=parseInt(date.slice(4,6));
+        for(let off=1;off<=7;off++){
+          const dt=new Date(y,m,d-off);
+          const key=String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
+          if(hist[key]){price=hist[key];break}
+        }
+      }
+      if(!price)price=pos.avgCost; // fallback
+      holdingsValue+=pos.qty*price;
+    }
+    const totalValue=state.cash+holdingsValue;
+    stored[date]={totalValue, cash:state.cash};
+    newRows.push([parseInt(date), Math.round(totalValue*100)/100, Math.round(state.cash*100)/100]);
+  }
+
+  // 8. Write to Sheet
+  if(SHEET_ID&&SA_KEY&&newRows.length>0){
+    if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> Sheet에 ${newRows.length}일 저장 중...</p>`;
+    try{await writeDailyValuesToSheet(newRows);console.log(`daily_value: wrote ${newRows.length} rows to Sheet`)}
+    catch(e){console.warn('Failed to write daily_value:',e)}
+  }
+
+  // 9. Update cache
+  dailyValueCache=stored;
+  saveDVCache();
+  return stored;
+}
+
 async function showTotalValueChart(){
   switchTab('chart');
   const el=document.getElementById('chartContent');
@@ -1673,11 +1896,10 @@ async function showTotalValueChart(){
   const chronoTx=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
   if(chronoTx.length===0){el.innerHTML='<p style="color:var(--text2)">거래 내역이 없습니다</p>';return}
 
-  // Build position state at each transaction date
-  // posState[date] = {cash, positions:{ticker:{qty,avgCost}}, totalValue (approx)}
-  const posMap={}; // ticker -> {qty, avgCost}
+  // Build position state at each transaction date (for bottom chart cost basis + cash)
+  const posMap={};
   let cashSS=initialCashSS, cashKW=initialCashKW;
-  const txDateStates={}; // date -> state snapshot
+  const txDateStates={};
   let lastDate=null;
 
   function captureState(date,txPrices){
@@ -1692,14 +1914,13 @@ async function showTotalValueChart(){
     txDateStates[date]={cash:cashSS+cashKW,positions:{...positions},totalValue:cashSS+cashKW+mktVal};
   }
 
-  const txPrices={}; // last known tx price per ticker
+  const txPrices={};
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
     const tk=tx.ticker;
     if(!posMap[tk])posMap[tk]={qty:0,avgCost:0};
     const pos=posMap[tk];
     txPrices[tk]=tx.price;
-
     if(tx.qty>0){
       const newCost=pos.avgCost*pos.qty+tx.qty*tx.price;
       pos.qty+=tx.qty;
@@ -1713,7 +1934,6 @@ async function showTotalValueChart(){
       if(tx.broker==='삼성')cashSS+=(sq*tx.price-tx.tax);
       else cashKW+=(sq*tx.price-tx.tax);
     }
-
     if(tx.date!==lastDate){
       if(lastDate)captureState(lastDate,txPrices);
       lastDate=tx.date;
@@ -1721,30 +1941,19 @@ async function showTotalValueChart(){
   }
   if(lastDate)captureState(lastDate,txPrices);
 
-  // Update latest state's totalValue using actual current market prices
-  // This ensures chart matches overview's totalAsset calculation
-  const latestDate=lastDate;
-  if(latestDate&&txDateStates[latestDate]){
-    const ls=txDateStates[latestDate];
-    let mktVal=0;
-    for(const[tk,p] of Object.entries(ls.positions)){
-      const curPrice=cachedPrices[tk]&&cachedPrices[tk].current?cachedPrices[tk].current:(txPrices[tk]||p.avgCost);
-      mktVal+=p.qty*curPrice;
-    }
-    ls.totalValue=ls.cash+mktVal;
-  }
-
-  // Store final state for today
   chartTxStates=txDateStates;
   chartTxDates=Object.keys(txDateStates).sort();
 
-  // Fetch all enabled benchmarks (+ always fetch TQQQ for date axis)
+  // Compute/load exact daily values
+  const dailyValues=await computeDailyValues(el);
+
+  // Fetch benchmarks
   const toFetch=new Set([...chartBenches,'TQQQ']);
   for(const tk of toFetch){
     if(!chartBenchData[tk])await fetchBenchmark(tk);
   }
 
-  redrawChart();
+  redrawChart(dailyValues);
 }
 
 // Get position state at any date (carry forward from last tx date)
@@ -1756,7 +1965,10 @@ function getStateAtDate(date){
   return best;
 }
 
-function redrawChart(){
+let lastDailyValues=null;
+function redrawChart(dailyValues){
+  if(dailyValues)lastDailyValues=dailyValues;
+  const dv=lastDailyValues||{};
   const el=document.getElementById('chartContent');
   if(chartTxDates.length<1)return;
 
@@ -1873,58 +2085,37 @@ function redrawChart(){
     }
     entry.purchasedAmt=totalCostBasis;
 
-    // Top chart: totalValue
-    // On tx dates, use the recorded totalValue
-    // Between tx dates, estimate using TQQQ movement as proxy
+    // Top chart: totalValue — use exact daily_value if available
     let totalValue=state.totalValue;
-    // Find which tx date this state came from
     let stateDate=null;
     for(let i=chartTxDates.length-1;i>=0;i--){
       if(chartTxDates[i]<=date){stateDate=chartTxDates[i];break}
     }
-    if(stateDate&&stateDate!==date&&tqqqLookup){
-      // Interpolate: adjust holdings portion by TQQQ movement
+    if(dv[date]){
+      totalValue=dv[date].totalValue;
+    }else if(stateDate&&stateDate!==date&&tqqqLookup){
+      // Fallback: TQQQ interpolation if daily_value not available
       const tqAtState=findPrice(tqqqLookup,stateDate);
       const tqNow=findPrice(tqqqLookup,date);
       if(tqAtState&&tqNow&&tqAtState>0){
         const holdingsAtState=state.totalValue-state.cash;
-        const ratio=tqNow/tqAtState;
-        totalValue=state.cash+holdingsAtState*ratio;
+        totalValue=state.cash+holdingsAtState*(tqNow/tqAtState);
       }
     }
     entry.totalValue=totalValue;
 
     // Market-value-based group values (for % mode)
-    // On tx date: derive per-group market value proportional to cost basis share of holdings
-    // Between tx dates: scale those by TQQQ movement
-    const holdMktAtState=state.totalValue-state.cash;
+    const holdMktVal=totalValue-state.cash;
     const holdCostAtState=totalCostBasis||1;
-    // Per-group market value at state date = group_cost_basis * (total_holdings_mkt / total_cost_basis)
-    const mktRatio=holdMktAtState/holdCostAtState;
+    const mktRatio=holdMktVal/holdCostAtState;
 
-    if(stateDate&&stateDate!==date&&tqqqLookup){
-      const tqAtState=findPrice(tqqqLookup,stateDate);
-      const tqNow=findPrice(tqqqLookup,date);
-      if(tqAtState&&tqNow&&tqAtState>0){
-        const priceRatio=tqNow/tqAtState;
-        for(const g of HOLD_GROUPS){
-          const groupMktAtState=entry['g_'+g.label]*mktRatio;
-          entry['mv_'+g.label]=groupMktAtState*priceRatio;
-        }
-        // Cash for % mode: totalValue - sum(mv_)
-        let sumMv=0;
-        for(const g of HOLD_GROUPS)sumMv+=entry['mv_'+g.label];
-        entry.mvCash=totalValue-sumMv;
-      }else{
-        for(const g of HOLD_GROUPS)entry['mv_'+g.label]=entry['g_'+g.label]*mktRatio;
-        entry.mvCash=state.cash;
-      }
-    }else{
-      for(const g of HOLD_GROUPS){
-        entry['mv_'+g.label]=entry['g_'+g.label]*mktRatio;
-      }
-      entry.mvCash=state.cash;
+    // Per-group market value proportional to cost basis share
+    for(const g of HOLD_GROUPS){
+      entry['mv_'+g.label]=entry['g_'+g.label]*mktRatio;
     }
+    let sumMv=0;
+    for(const g of HOLD_GROUPS)sumMv+=entry['mv_'+g.label];
+    entry.mvCash=totalValue-sumMv;
 
     if(chartMode==='norm'){
       if(di===0){entry._baseValue=totalValue}
@@ -1996,10 +2187,10 @@ function redrawChart(){
     }
   }
 
-  renderCharts(el,chartData,[...chartBenches],groupLabels,baseValue,allMasterDates,actualTotalAsset);
+  renderCharts(el,chartData,[...chartBenches],groupLabels,baseValue,allMasterDates,actualTotalAsset,dv);
 }
 
-function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDates,actualTotalAsset){
+function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDates,actualTotalAsset,dv){
   const W=Math.min(container.clientWidth||800,1200);
   const H1=350, H2=200, gap=30;
   const totalH=H1+gap+H2;
@@ -2358,32 +2549,20 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDa
   }
 
   // Annual summary table: use ALL dates (not filtered by period)
-  // Build totalValue for each market day from allMasterDates
   if(allMasterDates&&allMasterDates.length>1){
-    const tqqqLk=chartBenchData['TQQQ']?{}:null;
-    if(tqqqLk){for(const d of (chartBenchData['TQQQ']||[]))tqqqLk[d.date]=d.close}
+    const dvMap=dv||{};
     const lastMasterDate=allMasterDates[allMasterDates.length-1];
     const yearMap={};
     for(const date of allMasterDates){
       const state=getStateAtDate(date);
       if(!state)continue;
       let totalValue;
-      // For the last date, use actual current prices if available
       if(date===lastMasterDate&&actualTotalAsset!=null){
         totalValue=actualTotalAsset;
+      }else if(dvMap[date]){
+        totalValue=dvMap[date].totalValue;
       }else{
         totalValue=state.totalValue;
-        let stateDate=null;
-        for(let i=chartTxDates.length-1;i>=0;i--){
-          if(chartTxDates[i]<=date){stateDate=chartTxDates[i];break}
-        }
-        if(stateDate&&stateDate!==date&&tqqqLk){
-          const tqAt=tqqqLk[stateDate];
-          const tqNow=tqqqLk[date];
-          if(tqAt&&tqNow&&tqAt>0){
-            totalValue=state.cash+(state.totalValue-state.cash)*(tqNow/tqAt);
-          }
-        }
       }
       const yr='20'+date.slice(0,2);
       if(!yearMap[yr])yearMap[yr]={first:totalValue,last:totalValue};
