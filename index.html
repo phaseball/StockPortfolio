@@ -1906,22 +1906,28 @@ async function computeDailyValues(el){
 
     // Compute holdings value using close price
     let holdingsValue=0;
+    const debugDates=new Set(['250421','250422','250423','250424','250425','250428','250429','250430','250501','250502','250601','250602','250603']);
+    const isDebug=debugDates.has(date);
+    if(isDebug)console.log(`--- ${date} ---`);
     for(const[tk,qty] of Object.entries(positions)){
       if(qty<=0)continue;
       const closePrice=findClose(tk,date);
+      let usedPrice;
       if(closePrice!=null){
         holdingsValue+=qty*closePrice;
+        usedPrice=closePrice;
       }else{
-        // No price data at all — use last transaction price from our records
-        // Find last tx for this ticker on or before this date
         let lastPrice=0;
         for(let i=chronoTx.length-1;i>=0;i--){
           if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){lastPrice=chronoTx[i].price;break}
         }
         holdingsValue+=qty*lastPrice;
-        // Only warn once per ticker
+        usedPrice=lastPrice;
+        if(isDebug)console.warn(`  ${tk}: NO FMP DATA, fallback txPrice=${lastPrice.toFixed(2)}, qty=${qty}, val=${(qty*lastPrice).toFixed(0)}`);
       }
+      if(isDebug&&qty*usedPrice>5000)console.log(`  ${tk}: qty=${qty}, price=${usedPrice.toFixed(2)}, val=$${(qty*usedPrice).toFixed(0)}`);
     }
+    if(isDebug)console.log(`  TOTAL: cash=${(cashSS+cashKW).toFixed(0)} + holdings=${holdingsValue.toFixed(0)} = ${((cashSS+cashKW)+holdingsValue).toFixed(0)}`);
 
     const totalValue=cash+holdingsValue;
     stored[date]={totalValue, cash};
