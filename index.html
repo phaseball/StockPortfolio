@@ -1670,10 +1670,13 @@ async function fetchBenchmark(ticker){
 
 async function fetchYahooHistory(ticker){
   const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5y`;
-  const proxies=[u=>`https://corsproxy.io/?${encodeURIComponent(u)}`];
+  const proxies=[
+    u=>`https://corsproxy.io/?${encodeURIComponent(u)}`,
+    u=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
+  ];
   for(const mkP of proxies){
     try{
-      const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(12000)});
+      const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(15000)});
       if(!r.ok)continue;
       const d=await r.json();
       const ts=d.chart?.result?.[0]?.timestamp||[];
@@ -1685,7 +1688,7 @@ async function fetchYahooHistory(ticker){
         const key=String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
         lookup[key]=closes[i];
       }
-      return lookup;
+      if(Object.keys(lookup).length>0)return lookup;
     }catch(e){continue}
   }
   return {};
@@ -1759,14 +1762,14 @@ async function computeDailyValues(el){
 
   const posMap={};
   let cashSS=initialCashSS, cashKW=initialCashKW;
-  // txDateStates: date -> {cash, positions:{tk:{qty}}}
   const txDateStates={};
   let lastDate=null;
+  const lastTxPriceByTicker={}; // ticker -> last known transaction price (post-split)
 
   function capturePos(date){
     const positions={};
     for(const[tk,p] of Object.entries(posMap)){
-      if(p.qty>0)positions[tk]={qty:p.qty, avgCost:p.avgCost};
+      if(p.qty>0)positions[tk]={qty:p.qty, avgCost:p.avgCost, lastTxPrice:lastTxPriceByTicker[tk]||p.avgCost};
     }
     txDateStates[date]={cash:cashSS+cashKW, positions};
   }
@@ -1776,10 +1779,9 @@ async function computeDailyValues(el){
     const tk=tx.ticker;
     if(!posMap[tk])posMap[tk]={qty:0,avgCost:0};
     const pos=posMap[tk];
-    // Use post-split qty/price for position tracking (matches Yahoo prices)
-    // Use original qty/price for cash (actual dollars spent/received)
     const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
     const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
+    lastTxPriceByTicker[tk]=tx.price; // post-split price
     if(tx.qty>0){
       const newCost=pos.avgCost*pos.qty+tx.qty*tx.price;
       pos.qty+=tx.qty;
@@ -1848,7 +1850,11 @@ async function computeDailyValues(el){
     const batch=tickerList.slice(i,i+batchSize);
     if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> Yahoo 가격 로딩 (${i+1}~${Math.min(i+batchSize,tickerList.length)} / ${tickerList.length})...</p>`;
     const results=await Promise.all(batch.map(tk=>fetchYahooHistory(tk).then(h=>({tk,h}))));
-    for(const{tk,h} of results)priceHistories[tk]=h;
+    for(const{tk,h} of results){
+      priceHistories[tk]=h;
+      if(Object.keys(h).length===0)console.warn(`⚠ ${tk}: Yahoo returned NO historical data`);
+      else console.log(`✓ ${tk}: ${Object.keys(h).length} days of data`);
+    }
   }
 
   // 7. Compute daily values for missing dates
@@ -1874,7 +1880,7 @@ async function computeDailyValues(el){
           if(hist[key]){price=hist[key];break}
         }
       }
-      if(!price)price=pos.avgCost; // fallback
+      if(!price)price=pos.lastTxPrice||pos.avgCost; // fallback: last trade price
       holdingsValue+=pos.qty*price;
     }
     const totalValue=state.cash+holdingsValue;
@@ -2168,8 +2174,8 @@ function redrawChart(dailyValues){
     entry.mvCash=totalValue-sumMv;
 
     if(chartMode==='norm'){
-      if(di===0){entry._baseValue=totalValue}
-      const baseVal=chartData.length>0?chartData[0]._baseValue:totalValue;
+      const baseVal=initialCashSS+initialCashKW;
+      if(di===0){entry._baseValue=baseVal}
       entry.portfolio=(totalValue/baseVal)*100;
       for(const tk of chartBenches){
         if(!lookups[tk]||!baseBench[tk])continue;
