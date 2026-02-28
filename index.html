@@ -1707,7 +1707,10 @@ async function fetchYahooHistory(ticker){
       if(!r.ok)continue;
       const d=await r.json();
       const ts=d.chart?.result?.[0]?.timestamp||[];
-      const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
+      // Prefer adjclose (regular market close, split-adjusted) over close
+      const adjCloses=d.chart?.result?.[0]?.indicators?.adjclose?.[0]?.adjclose;
+      const rawCloses=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
+      const closes=adjCloses||rawCloses;
       const lookup={};
       for(let i=0;i<ts.length;i++){
         if(closes[i]==null)continue;
@@ -2865,7 +2868,9 @@ async function drawHistoryChart(ticker,period,btn){
           if(!r.ok)continue;
           const d=await r.json();
           const ts=d.chart?.result?.[0]?.timestamp||[];
-          const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
+          const adjCloses=d.chart?.result?.[0]?.indicators?.adjclose?.[0]?.adjclose;
+          const rawCloses=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
+          const closes=adjCloses||rawCloses;
           const lookup={};
           for(let i=0;i<ts.length;i++){
             if(closes[i]==null)continue;
@@ -2928,16 +2933,19 @@ async function drawHistoryChart(ticker,period,btn){
   }
   pendingSnap();
 
-  // Add today with current market price
+  // Update last point with current market price
   const now=new Date();
   const todayDate=String(now.getFullYear()).slice(2)+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
+  const isWeekday=now.getDay()>=1&&now.getDay()<=5;
   if(snapshots.length>0){
     const last=snapshots[snapshots.length-1];
     const cp=cachedPrices[ticker];
     const curPrice=cp&&cp.current?cp.current:lastTxPrice;
+    // Always update last snapshot's value to current price
     last.totalValue=last.qty*curPrice;
     last.price=curPrice;
-    if(last.date!==todayDate){
+    // Only add a new "today" point if it's a weekday and not already the last date
+    if(isWeekday&&last.date!==todayDate&&last.qty>0){
       snapshots.push({date:todayDate, purchAmt:last.purchAmt, totalValue:last.qty*curPrice, realized:last.realized, qty:last.qty, price:curPrice});
     }
   }
