@@ -2908,7 +2908,7 @@ async function drawHistoryChart(ticker,period,btn){
     if(lastDate){
       const yahooClose=findClose(lastDate);
       const mktPrice=yahooClose||lastTxPrice||(qty>0?cost/qty:0);
-      snapshots.push({date:lastDate, purchAmt:cost, totalValue:qty*mktPrice, realized:cumRealized, qty});
+      snapshots.push({date:lastDate, purchAmt:cost, totalValue:qty*mktPrice, realized:cumRealized, qty, price:mktPrice});
     }
   };
   for(const tx of tkTxs){
@@ -2936,8 +2936,9 @@ async function drawHistoryChart(ticker,period,btn){
     const cp=cachedPrices[ticker];
     const curPrice=cp&&cp.current?cp.current:lastTxPrice;
     last.totalValue=last.qty*curPrice;
+    last.price=curPrice;
     if(last.date!==todayDate){
-      snapshots.push({date:todayDate, purchAmt:last.purchAmt, totalValue:last.qty*curPrice, realized:last.realized, qty:last.qty});
+      snapshots.push({date:todayDate, purchAmt:last.purchAmt, totalValue:last.qty*curPrice, realized:last.realized, qty:last.qty, price:curPrice});
     }
   }
 
@@ -2955,7 +2956,7 @@ async function drawHistoryChart(ticker,period,btn){
         // Add daily points between fromDate and toDate (exclusive)
         for(const yd of allYahooDates){
           if(yd<=fromDate||yd>=toDate)continue;
-          expanded.push({date:yd, purchAmt:s.purchAmt, totalValue:s.qty*priceLookup[yd]*corrR, realized:s.realized, qty:s.qty});
+          expanded.push({date:yd, purchAmt:s.purchAmt, totalValue:s.qty*priceLookup[yd]*corrR, realized:s.realized, qty:s.qty, price:priceLookup[yd]*corrR});
         }
       }
     }
@@ -2978,8 +2979,8 @@ async function drawHistoryChart(ticker,period,btn){
   if(data.length<1){container.innerHTML='';return}
 
   const W=Math.min(container.clientWidth||600,800);
-  const H1=130, H2=100, H3=100, gap=16;
-  const totalH=H1+gap+H2+gap+H3;
+  const H1=130, H2=100, H3=100, H4=100, gap=16;
+  const totalH=H1+gap+H2+gap+H3+gap+H4;
   const pad={t:20,r:45,b:14,l:50};
   const cW=W-pad.l-pad.r;
 
@@ -3152,6 +3153,50 @@ async function drawHistoryChart(ticker,period,btn){
   ctx.fillStyle='#66bb6a';ctx.fillText('╌ 평가',pad.l+70,y3Top+12);
   ctx.fillStyle='#ffa726';ctx.fillText('╌ 실현',pad.l+115,y3Top+12);
 
+  // ===== CHART 4: Price =====
+  const y4Top=H1+gap+H2+gap+H3+gap;
+  const cH4=H4-pad.t-pad.b;
+  let y4Max=0,y4Min=Infinity;
+  for(const d of data){
+    if(d.price>0){
+      if(d.price>y4Max)y4Max=d.price;
+      if(d.price<y4Min)y4Min=d.price;
+    }
+  }
+  if(y4Min===Infinity)y4Min=0;
+  const y4Range=y4Max-y4Min||1;
+  y4Max+=y4Range*0.1;y4Min=Math.max(0,y4Min-y4Range*0.1);
+  function yPos4(v){return y4Top+pad.t+(1-(v-y4Min)/(y4Max-y4Min))*cH4}
+
+  ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
+  for(let i=0;i<=3;i++){
+    const v=y4Min+(y4Max-y4Min)*i/3;const y=yPos4(v);
+    ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+    ctx.fillStyle='#666';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='right';
+    ctx.fillText('$'+v.toFixed(v>=100?0:2),pad.l-4,y+3);
+  }
+
+  // Price line (cyan)
+  ctx.strokeStyle='#26c6da';ctx.lineWidth=1.5;ctx.beginPath();
+  let priceStarted=false;
+  for(let i=0;i<data.length;i++){
+    if(data[i].price>0){
+      if(!priceStarted){ctx.moveTo(xPos(i),yPos4(data[i].price));priceStarted=true}
+      else ctx.lineTo(xPos(i),yPos4(data[i].price));
+    }
+  }
+  ctx.stroke();
+
+  // End label
+  const lastPrice=data[data.length-1].price;
+  if(lastPrice>0){
+    ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle='#26c6da';
+    ctx.fillText('$'+lastPrice.toFixed(2),W-pad.r+4,yPos4(lastPrice)+3);
+  }
+
+  ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
+  ctx.fillStyle='#26c6da';ctx.fillText('── 주가',pad.l,y4Top+12);
+
   // X labels (shared for all charts)
   ctx.fillStyle='#888';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='center';
   const xStep=Math.max(1,Math.floor(data.length/6));
@@ -3193,8 +3238,8 @@ async function drawHistoryChart(ticker,period,btn){
     html+=`<div class="${plCls}">평가손익: ${fmtK(pl)}</div>`;
     html+=`<div style="color:#ffa726">실현: ${(d.realized>=0?'+':'')}${fmtK(d.realized)}</div>`;
     const totalPL=pl+d.realized;
-    const tCls=totalPL>=0?'c-up':'c-dn';
-    html+=`<div class="${tCls}" style="border-top:1px solid #333;padding-top:2px;margin-top:2px">총손익: ${(totalPL>=0?'+':'')}${fmtK(totalPL)}</div>`;
+    html+=`<div style="color:#e0e0e0;border-top:1px solid #333;padding-top:2px;margin-top:2px">총손익: ${(totalPL>=0?'+':'')}${fmtK(totalPL)}</div>`;
+    if(d.price>0)html+=`<div style="color:#26c6da">주가: $${d.price.toFixed(2)}</div>`;
     tip.innerHTML=html;
     tip.style.display='block';
     const xPx=xPos(idx);
