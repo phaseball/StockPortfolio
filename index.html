@@ -196,6 +196,7 @@ table.t tr:hover td{background:var(--accentBg)}
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn on" onclick="toggleBench('TQQQ',this)">TQQQ</button>
         <button class="cbtn on" onclick="toggleBench('%5EGSPC',this)">S&P500</button>
+        <button class="cbtn" onclick="toggleBench('RSP',this)">RSP</button>
         <button class="cbtn" onclick="toggleBench('QQQ',this)">QQQ</button>
         <button class="cbtn on" onclick="toggleBench('%5ESOX',this)">SOX</button>
         <button class="cbtn on" onclick="toggleBench('IWM',this)">Russell</button>
@@ -1624,6 +1625,7 @@ const BENCH_META={
   TQQQ:{color:'#888',label:'TQQQ'},
   QQQ:{color:'#ab47bc',label:'QQQ'},
   '%5EGSPC':{color:'#e0e0e0',label:'S&P500'},
+  RSP:{color:'#26c6da',label:'RSP'},
   '%5ESOX':{color:'#66bb6a',label:'SOX'},
   IWM:{color:'#ffa726',label:'Russell'}
 };
