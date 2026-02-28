@@ -209,6 +209,7 @@ table.t tr:hover td{background:var(--accentBg)}
       </div>
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn" onclick="recalcDailyValues()" title="daily_value 재계산">🔄 Recalc</button>
+        <button class="cbtn" onclick="diagYahoo()" title="Yahoo price check">🔍 Yahoo</button>
       </div>
     </div>
     <div id="chartContent" style="padding-bottom:40px"><p style="color:var(--text2);text-align:center;padding:32px">로딩 중...</p></div>
@@ -1975,6 +1976,44 @@ async function recalcDailyValues(){
   }
   toast('daily_value 초기화 완료. 재계산...','ok');
   showTotalValueChart();
+}
+
+async function diagYahoo(){
+  const el=document.getElementById('chartContent');
+  el.innerHTML='<p>Loading Yahoo NVDL data...</p>';
+  const tk='NVDL';
+  const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?interval=1d&range=1mo`;
+  const proxy=u=>`https://corsproxy.io/?${encodeURIComponent(u)}`;
+  try{
+    const r=await fetch(proxy(yUrl),{signal:AbortSignal.timeout(15000)});
+    const d=await r.json();
+    const res=d.chart?.result?.[0];
+    const ts=res?.timestamp||[];
+    const q=res?.indicators?.quote?.[0]||{};
+    const adj=res?.indicators?.adjclose?.[0]?.adjclose;
+    let html='<div style="padding:16px;font-family:monospace;font-size:11px;overflow:auto">';
+    html+=`<h3>Yahoo ${tk} - last ${ts.length} days</h3>`;
+    html+=`<p>adjclose array exists: ${!!adj}, length: ${adj?.length??'N/A'}</p>`;
+    html+='<table style="border-collapse:collapse"><tr>';
+    html+='<th style="border:1px solid #666;padding:2px 4px">date</th>';
+    html+='<th style="border:1px solid #666;padding:2px 4px">open</th>';
+    html+='<th style="border:1px solid #666;padding:2px 4px">high</th>';
+    html+='<th style="border:1px solid #666;padding:2px 4px">low</th>';
+    html+='<th style="border:1px solid #666;padding:2px 4px">close</th>';
+    html+='<th style="border:1px solid #666;padding:2px 4px">adjclose</th>';
+    html+='</tr>';
+    for(let i=Math.max(0,ts.length-15);i<ts.length;i++){
+      const dt=new Date(ts[i]*1000);
+      const ds=dt.toISOString().slice(0,10)+' '+dt.toTimeString().slice(0,8);
+      const td=v=>`<td style="border:1px solid #666;padding:2px 4px">${v!=null?v.toFixed(4):'null'}</td>`;
+      html+=`<tr><td style="border:1px solid #666;padding:2px 4px">${ds}</td>`;
+      html+=td(q.open?.[i]);html+=td(q.high?.[i]);html+=td(q.low?.[i]);html+=td(q.close?.[i]);
+      html+=td(adj?.[i]);
+      html+='</tr>';
+    }
+    html+='</table></div>';
+    el.innerHTML=html;
+  }catch(e){el.innerHTML=`<p>Error: ${e.message}</p>`}
 }
 
 async function showTotalValueChart(){
