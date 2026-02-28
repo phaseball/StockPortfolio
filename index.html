@@ -209,6 +209,7 @@ table.t tr:hover td{background:var(--accentBg)}
       </div>
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn" onclick="recalcDailyValues()" title="daily_value 재계산">🔄 Recalc</button>
+        <button class="cbtn" onclick="diagFMP()" title="FMP price check">🔍 FMP Check</button>
       </div>
     </div>
     <div id="chartContent" style="padding-bottom:40px"><p style="color:var(--text2);text-align:center;padding:32px">로딩 중...</p></div>
@@ -1869,44 +1870,29 @@ async function computeDailyValues(el){
     return null;
   }
 
-  // Build per-ticker cumulative split factor from sheet marks
-  // split mark "1/2" means factor = den/num = 2 (qty *=2, price /=2)
-  // We need to apply same factor to FMP close prices
-  const tickerSplitFactor={}; // ticker -> cumulative factor
-  for(const tx of chronoTx){
-    if(!tx.ticker)continue;
-    if(tx.split&&tx.split!==''){
-      const parts=tx.split.split('/');
-      if(parts.length===2){
-        const num=parseFloat(parts[0]),den=parseFloat(parts[1]);
-        if(num&&den){
-          const f=den/num;
-          tickerSplitFactor[tx.ticker]=(tickerSplitFactor[tx.ticker]||1)*f;
-        }
-      }
-    }
-  }
-  console.log('Split factors:', JSON.stringify(tickerSplitFactor));
-
-  // Replay transactions day by day, compute end-of-day values
+  // RULE: value = origQty × FMP_close (unadjusted)
+  // - origQty = actual shares held (sheet original, before split normalization)
+  // - FMP close = actual trading price on that date
+  // - For tickers WITH split marks: origQty × close = (qty/factor) × (price×factor) = qty × price ✓
+  // - For tickers WITHOUT split marks: origQty × close = qty × price ✓  
+  // - Cash = origQty × origPrice (actual money flow)
   if(el)el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 일별 가치 계산 중...</p>';
   
   let cashSS=initialCashSS, cashKW=initialCashKW;
-  const positions={}; // ticker -> split-adjusted qty (tx.qty)
+  const positions={}; // ticker -> original qty (actual shares)
   let txDateIdx=0;
   const newRows=[];
 
   for(const date of marketDays){
-    // Always apply transactions up to this date
     while(txDateIdx<txDates.length&&txDates[txDateIdx]<=date){
       const dayTxs=txByDate[txDates[txDateIdx]];
       for(const tx of dayTxs){
         const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
         const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
         if(!positions[tx.ticker])positions[tx.ticker]=0;
-        positions[tx.ticker]+=tx.qty; // split-normalized qty
+        positions[tx.ticker]+=oq; // original qty
         if(Math.abs(positions[tx.ticker])<0.0001)positions[tx.ticker]=0;
-        // Cash = actual money flow (original values)
+        // Cash = actual money flow
         if(oq>0){
           if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
           else cashKW-=(Math.abs(oq)*op+tx.tax);
@@ -1921,14 +1907,6 @@ async function computeDailyValues(el){
     if(stored[date])continue;
 
     const cash=cashSS+cashKW;
-
-    // Compute per-ticker holdings value
-    // FMP close = unadjusted (actual trading price on that date)
-    // positions = split-adjusted qty (as if today's share structure applied retroactively)
-    // To match: adjust FMP close by our split factor
-    // adjusted_price = FMP_close / splitFactor
-    // value = split_adjusted_qty × adjusted_price
-    //       = (origQty × factor) × (FMP_close / factor) = origQty × FMP_close ✓
     let holdingsValue=0;
     const tickerValues={};
     for(const[tk,qty] of Object.entries(positions)){
@@ -1936,13 +1914,16 @@ async function computeDailyValues(el){
       const closePrice=findClose(tk,date);
       let usedPrice;
       if(closePrice!=null){
-        const factor=tickerSplitFactor[tk]||1;
-        usedPrice=closePrice/factor; // apply our split correction
+        usedPrice=closePrice; // FMP close = actual trading price
       }else{
-        // Fallback: last split-adjusted transaction price
+        // Fallback: last original transaction price
         usedPrice=0;
         for(let i=chronoTx.length-1;i>=0;i--){
-          if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}
+          const t=chronoTx[i];
+          if(t.ticker===tk&&t.date<=date){
+            usedPrice=t.origPrice!==undefined?t.origPrice:t.price;
+            break;
+          }
         }
       }
       const val=qty*usedPrice;
@@ -2007,6 +1988,55 @@ async function recalcDailyValues(){
   }
   toast('daily_value 초기화 완료. 재계산...','ok');
   showTotalValueChart();
+}
+
+async function diagFMP(){
+  const el=document.getElementById('chartContent');
+  if(!FMP_KEY){el.innerHTML='<p>FMP Key 없음</p>';return}
+  el.innerHTML='<p>FMP 데이터 로딩 중...</p>';
+  
+  const tickers=['TQQQ','GDXD','TSLL','NVDL'];
+  const checkDates=['250120','250121','250122','250423','250424','250425','260226','260227'];
+  let html='<div style="padding:16px;font-family:monospace;font-size:12px;overflow:auto">';
+  html+='<h3>FMP Price Diagnostic</h3>';
+  
+  // Also show sheet tx.price vs tx.origPrice for split-marked tickers
+  html+='<h4>Sheet split-marked transactions (first 5 per ticker):</h4>';
+  const chronoTx=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
+  for(const tk of tickers){
+    const txs=chronoTx.filter(t=>t.ticker===tk&&t.split&&t.split!=='').slice(0,5);
+    if(txs.length===0)continue;
+    html+=`<b>${tk}</b><br>`;
+    for(const tx of txs){
+      html+=`  ${tx.date}: origQty=${tx.origQty??tx.qty} origPrice=${(tx.origPrice??tx.price).toFixed(4)} → qty=${tx.qty} price=${tx.price.toFixed(4)} split=${tx.split}<br>`;
+    }
+  }
+  
+  for(const tk of tickers){
+    html+=`<h4>${tk}</h4>`;
+    try{
+      const d=await fmpGet('historical-price-eod/full?symbol='+tk);
+      if(!d||!Array.isArray(d)){html+=`<p>No data</p>`;continue}
+      // Build lookup
+      const byDate={};
+      for(const row of d){
+        if(!row.date)continue;
+        const parts=row.date.split('-');
+        const key=parts[0].slice(2)+parts[1]+parts[2];
+        byDate[key]=row;
+      }
+      html+='<table style="border-collapse:collapse"><tr><th style="border:1px solid #666;padding:2px 6px">date</th><th style="border:1px solid #666;padding:2px 6px">close</th><th style="border:1px solid #666;padding:2px 6px">adjClose</th><th style="border:1px solid #666;padding:2px 6px">ratio</th></tr>';
+      for(const dt of checkDates){
+        const row=byDate[dt];
+        if(!row){html+=`<tr><td style="border:1px solid #666;padding:2px 6px">${dt}</td><td colspan=3 style="border:1px solid #666;padding:2px 6px">N/A</td></tr>`;continue}
+        const ratio=row.adjClose&&row.close?(row.close/row.adjClose).toFixed(4):'?';
+        html+=`<tr><td style="border:1px solid #666;padding:2px 6px">${dt}</td><td style="border:1px solid #666;padding:2px 6px">${row.close?.toFixed(4)}</td><td style="border:1px solid #666;padding:2px 6px">${row.adjClose?.toFixed(4)}</td><td style="border:1px solid #666;padding:2px 6px">${ratio}</td></tr>`;
+      }
+      html+='</table>';
+    }catch(e){html+=`<p>Error: ${e.message}</p>`}
+  }
+  html+='</div>';
+  el.innerHTML=html;
 }
 
 async function showTotalValueChart(){
