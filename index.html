@@ -2911,15 +2911,27 @@ async function drawHistoryChart(ticker,period,btn){
   }
 
   // Build data over time for this ticker
+  // Track per-broker positions (matching Overview's per-broker avgCost logic)
   const tkTxs=allTransactions.filter(t=>t.ticker===ticker).sort((a,b)=>a.date.localeCompare(b.date)||(parseInt(a.seq)||0)-(parseInt(b.seq)||0));
   if(tkTxs.length===0){container.innerHTML='';return}
 
-  let qty=0,cost=0,cumRealized=0;
+  const brokerPos={}; // broker -> {qty, avgCost}
+  let cumRealized=0;
   const snapshots=[];
   let lastDate=null;
   let lastTxPrice=0;
+
+  const getTotals=()=>{
+    let totalQty=0,totalCost=0;
+    for(const bp of Object.values(brokerPos)){
+      if(bp.qty>0){totalQty+=bp.qty;totalCost+=bp.qty*bp.avgCost}
+    }
+    return {qty:totalQty,cost:totalCost};
+  };
+
   const pendingSnap=()=>{
     if(lastDate){
+      const{qty,cost}=getTotals();
       const yahooClose=findClose(lastDate);
       const mktPrice=yahooClose||lastTxPrice||(qty>0?cost/qty:0);
       snapshots.push({date:lastDate, purchAmt:cost, totalValue:qty*mktPrice, realized:cumRealized, qty, price:mktPrice});
@@ -2930,19 +2942,22 @@ async function drawHistoryChart(ticker,period,btn){
       pendingSnap();
       lastDate=tx.date;
     }
-    lastTxPrice=tx.price; // track last trade price
-    if(tx.qty>0){cost+=tx.qty*tx.price;qty+=tx.qty}
-    else if(tx.qty<0){
+    lastTxPrice=tx.price;
+    const b=tx.broker;
+    if(!brokerPos[b])brokerPos[b]={qty:0,avgCost:0};
+    const bp=brokerPos[b];
+    if(tx.qty>0){
+      const newCost=bp.avgCost*bp.qty+tx.qty*tx.price;
+      bp.qty+=tx.qty;
+      bp.avgCost=bp.qty>0?newCost/bp.qty:0;
+    }else if(tx.qty<0){
       const sq=Math.abs(tx.qty);
-      const avgAtSale=qty>0?cost/qty:0;
-      cumRealized+=sq*(tx.price-avgAtSale)-tx.tax;
-      if(qty>0)cost-=cost/qty*sq;
-      qty-=sq;if(qty<=0){qty=0;cost=0}
+      cumRealized+=sq*(tx.price-bp.avgCost)-tx.tax;
+      bp.qty-=sq;
+      if(bp.qty<=0){bp.avgCost=0;bp.qty=0}
     }
   }
   pendingSnap();
-
-  // Update last point with current market price
   const now=new Date();
   const todayDate=String(now.getFullYear()).slice(2)+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
   const isWeekday=now.getDay()>=1&&now.getDay()<=5;
