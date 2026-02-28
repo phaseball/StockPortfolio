@@ -1755,7 +1755,7 @@ async function writeDailyValuesToSheet(newRows){
 }
 
 async function fetchFmpHistory(ticker){
-  // FMP historical daily prices — use unadjusted close (matches origQty positions)
+  // FMP historical daily prices — unadjusted close
   if(!FMP_KEY)return {};
   try{
     const d=await fmpGet(`historical-price-eod/full?symbol=${ticker}`);
@@ -1855,28 +1855,6 @@ async function computeDailyValues(el){
     }
   }
 
-  // Diagnose FMP prices for split-affected tickers
-  const splitTickers=new Set();
-  for(const tx of chronoTx){if(tx.split&&tx.split!=='')splitTickers.add(tx.ticker)}
-  for(const tk of splitTickers){
-    const h=priceHistories[tk];
-    if(!h)continue;
-    const dates=Object.keys(h).sort();
-    if(dates.length<2)continue;
-    // Find largest price jump (likely split date)
-    let maxJump=0,jumpDate='';
-    for(let i=1;i<dates.length;i++){
-      const ratio=h[dates[i]]/h[dates[i-1]];
-      if(ratio>maxJump){maxJump=ratio;jumpDate=dates[i]}
-    }
-    console.log(`FMP ${tk}: ${dates.length} days, biggest jump ${maxJump.toFixed(2)}x on ${jumpDate}`);
-    // Show prices around the jump
-    const ji=dates.indexOf(jumpDate);
-    if(ji>0)console.log(`  ${dates[ji-1]}: $${h[dates[ji-1]].toFixed(4)}`);
-    console.log(`  ${jumpDate}: $${h[jumpDate].toFixed(4)}`);
-    if(ji<dates.length-1)console.log(`  ${dates[ji+1]}: $${h[dates[ji+1]].toFixed(4)}`);
-  }
-
   // Helper: find close price on or before date
   function findClose(tk,date){
     const hist=priceHistories[tk];
@@ -1891,29 +1869,44 @@ async function computeDailyValues(el){
     return null;
   }
 
+  // Build per-ticker cumulative split factor from sheet marks
+  // split mark "1/2" means factor = den/num = 2 (qty *=2, price /=2)
+  // We need to apply same factor to FMP close prices
+  const tickerSplitFactor={}; // ticker -> cumulative factor
+  for(const tx of chronoTx){
+    if(!tx.ticker)continue;
+    if(tx.split&&tx.split!==''){
+      const parts=tx.split.split('/');
+      if(parts.length===2){
+        const num=parseFloat(parts[0]),den=parseFloat(parts[1]);
+        if(num&&den){
+          const f=den/num;
+          tickerSplitFactor[tx.ticker]=(tickerSplitFactor[tx.ticker]||1)*f;
+        }
+      }
+    }
+  }
+  console.log('Split factors:', JSON.stringify(tickerSplitFactor));
+
   // Replay transactions day by day, compute end-of-day values
   if(el)el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 일별 가치 계산 중...</p>';
   
   let cashSS=initialCashSS, cashKW=initialCashKW;
-  const positions={}; // ticker -> qty (post-split)
+  const positions={}; // ticker -> split-adjusted qty (tx.qty)
   let txDateIdx=0;
   const newRows=[];
 
   for(const date of marketDays){
-    // Always apply transactions up to this date (to keep cash/positions correct)
+    // Always apply transactions up to this date
     while(txDateIdx<txDates.length&&txDates[txDateIdx]<=date){
       const dayTxs=txByDate[txDates[txDateIdx]];
       for(const tx of dayTxs){
         const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
         const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
         if(!positions[tx.ticker])positions[tx.ticker]=0;
-        positions[tx.ticker]+=oq; // original qty = actual shares held
-        if(positions[tx.ticker]<0.0001)positions[tx.ticker]=0;
-        // Log split-affected tickers
-        if(tx.split&&tx.split!==''){
-          console.log(`TX ${tx.date} ${tx.ticker}: origQty=${oq}, origPrice=${op}, splitAdj qty=${tx.qty}, price=${tx.price}, split=${tx.split}, pos now=${positions[tx.ticker]}`);
-        }
-        // Cash uses original (pre-split) values
+        positions[tx.ticker]+=tx.qty; // split-normalized qty
+        if(Math.abs(positions[tx.ticker])<0.0001)positions[tx.ticker]=0;
+        // Cash = actual money flow (original values)
         if(oq>0){
           if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
           else cashKW-=(Math.abs(oq)*op+tx.tax);
@@ -1925,28 +1918,31 @@ async function computeDailyValues(el){
       txDateIdx++;
     }
 
-    if(stored[date])continue; // already has value, skip computation
+    if(stored[date])continue;
 
     const cash=cashSS+cashKW;
 
-    // Compute per-ticker holdings value using close price
+    // Compute per-ticker holdings value
+    // FMP close = unadjusted (actual trading price on that date)
+    // positions = split-adjusted qty (as if today's share structure applied retroactively)
+    // To match: adjust FMP close by our split factor
+    // adjusted_price = FMP_close / splitFactor
+    // value = split_adjusted_qty × adjusted_price
+    //       = (origQty × factor) × (FMP_close / factor) = origQty × FMP_close ✓
     let holdingsValue=0;
-    const tickerValues={}; // ticker -> qty*closePrice
+    const tickerValues={};
     for(const[tk,qty] of Object.entries(positions)){
       if(qty<=0)continue;
       const closePrice=findClose(tk,date);
       let usedPrice;
       if(closePrice!=null){
-        usedPrice=closePrice;
+        const factor=tickerSplitFactor[tk]||1;
+        usedPrice=closePrice/factor; // apply our split correction
       }else{
-        // Fallback: last transaction price (original, unadjusted)
+        // Fallback: last split-adjusted transaction price
         usedPrice=0;
         for(let i=chronoTx.length-1;i>=0;i--){
-          const t=chronoTx[i];
-          if(t.ticker===tk&&t.date<=date){
-            usedPrice=t.origPrice!==undefined?t.origPrice:t.price;
-            break;
-          }
+          if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}
         }
       }
       const val=qty*usedPrice;
@@ -1977,28 +1973,10 @@ async function computeDailyValues(el){
   dailyValueCache=stored;
   saveDVCache();
   
-  // Log summary
   const initCash=initialCashSS+initialCashKW;
   const firstDate=marketDays[0];
   const lastDate=marketDays[marketDays.length-1];
-  console.log(`daily_value summary: initCash=${initCash}, first(${firstDate})=${stored[firstDate]?.totalValue?.toFixed(0)}, last(${lastDate})=${stored[lastDate]?.totalValue?.toFixed(0)}`);
-  
-  // Log split-affected tickers for verification
-  const splitTkLog=new Set();
-  for(const tx of chronoTx){if(tx.split&&tx.split!=='')splitTkLog.add(tx.ticker)}
-  if(splitTkLog.size>0){
-    console.log('Split-affected tickers:',  [...splitTkLog].join(', '));
-    for(const tk of splitTkLog){
-      // Show a few sample dates
-      const dates=Object.keys(stored).sort().filter(d=>stored[d].holdings&&stored[d].holdings[tk]);
-      if(dates.length>0){
-        const samples=dates.slice(0,3).concat(dates.slice(-2));
-        for(const d of [...new Set(samples)]){
-          console.log(`  ${tk} ${d}: $${stored[d].holdings[tk]}`);
-        }
-      }
-    }
-  }
+  console.log(`daily_value: initCash=${initCash}, first(${firstDate})=${stored[firstDate]?.totalValue?.toFixed(0)}, last(${lastDate})=${stored[lastDate]?.totalValue?.toFixed(0)}`);
   
   return stored;
 }
