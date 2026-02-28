@@ -1855,6 +1855,28 @@ async function computeDailyValues(el){
     }
   }
 
+  // Diagnose FMP prices for split-affected tickers
+  const splitTickers=new Set();
+  for(const tx of chronoTx){if(tx.split&&tx.split!=='')splitTickers.add(tx.ticker)}
+  for(const tk of splitTickers){
+    const h=priceHistories[tk];
+    if(!h)continue;
+    const dates=Object.keys(h).sort();
+    if(dates.length<2)continue;
+    // Find largest price jump (likely split date)
+    let maxJump=0,jumpDate='';
+    for(let i=1;i<dates.length;i++){
+      const ratio=h[dates[i]]/h[dates[i-1]];
+      if(ratio>maxJump){maxJump=ratio;jumpDate=dates[i]}
+    }
+    console.log(`FMP ${tk}: ${dates.length} days, biggest jump ${maxJump.toFixed(2)}x on ${jumpDate}`);
+    // Show prices around the jump
+    const ji=dates.indexOf(jumpDate);
+    if(ji>0)console.log(`  ${dates[ji-1]}: $${h[dates[ji-1]].toFixed(4)}`);
+    console.log(`  ${jumpDate}: $${h[jumpDate].toFixed(4)}`);
+    if(ji<dates.length-1)console.log(`  ${dates[ji+1]}: $${h[dates[ji+1]].toFixed(4)}`);
+  }
+
   // Helper: find close price on or before date
   function findClose(tk,date){
     const hist=priceHistories[tk];
