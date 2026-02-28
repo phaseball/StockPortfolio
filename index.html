@@ -209,7 +209,6 @@ table.t tr:hover td{background:var(--accentBg)}
       </div>
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn" onclick="recalcDailyValues()" title="daily_value 재계산">🔄 Recalc</button>
-        <button class="cbtn" onclick="diagFMP()" title="FMP price check">🔍 FMP Check</button>
       </div>
     </div>
     <div id="chartContent" style="padding-bottom:40px"><p style="color:var(--text2);text-align:center;padding:32px">로딩 중...</p></div>
@@ -1782,23 +1781,6 @@ async function writeDailyValuesToSheet(newRows){
   });
 }
 
-async function fetchFmpHistory(ticker){
-  // FMP historical daily prices — unadjusted close
-  if(!FMP_KEY)return {};
-  try{
-    const d=await fmpGet(`historical-price-eod/full?symbol=${ticker}`);
-    if(!d||!Array.isArray(d))return {};
-    const lookup={};
-    for(const row of d){
-      if(!row.date||row.close==null)continue;
-      const parts=row.date.split('-');
-      const key=parts[0].slice(2)+parts[1]+parts[2];
-      lookup[key]=row.close;
-    }
-    return lookup;
-  }catch(e){return {}}
-}
-
 async function computeDailyValues(el){
   // Replay ALL transactions in chronological order, computing:
   //   - cash after each transaction (using origQty/origPrice)
@@ -1855,31 +1837,17 @@ async function computeDailyValues(el){
     if(posTemp[tx.ticker]>0)allTickersEverHeld.add(tx.ticker);
   }
 
-  // Fetch historical prices via FMP (sequential to respect rate limits)
+  // Fetch historical prices via Yahoo (parallel batches of 8)
   const tickerList=[...allTickersEverHeld];
   const priceHistories={}; // ticker -> {YYMMDD: close}
-  const useFMP=!!FMP_KEY;
-  
-  if(useFMP){
-    for(let i=0;i<tickerList.length;i++){
-      const tk=tickerList[i];
-      if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> FMP 가격 로딩 (${i+1}/${tickerList.length}) ${tk}...</p>`;
-      priceHistories[tk]=await fetchFmpHistory(tk);
-      const n=Object.keys(priceHistories[tk]).length;
-      if(n===0)console.warn(`⚠ ${tk}: FMP returned NO data`);
-      else console.log(`✓ ${tk}: ${n} days`);
-    }
-  }else{
-    // Fallback: Yahoo via proxy in batches
-    const batchSize=8;
-    for(let i=0;i<tickerList.length;i+=batchSize){
-      const batch=tickerList.slice(i,i+batchSize);
-      if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> Yahoo 가격 로딩 (${i+1}~${Math.min(i+batchSize,tickerList.length)} / ${tickerList.length})...</p>`;
-      const results=await Promise.all(batch.map(tk=>fetchYahooHistory(tk).then(h=>({tk,h}))));
-      for(const{tk,h} of results){
-        priceHistories[tk]=h;
-        if(Object.keys(h).length===0)console.warn(`⚠ ${tk}: Yahoo returned NO data`);
-      }
+  const batchSize=8;
+  for(let i=0;i<tickerList.length;i+=batchSize){
+    const batch=tickerList.slice(i,i+batchSize);
+    if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 가격 로딩 (${i+1}~${Math.min(i+batchSize,tickerList.length)} / ${tickerList.length})...</p>`;
+    const results=await Promise.all(batch.map(tk=>fetchYahooHistory(tk).then(h=>({tk,h}))));
+    for(const{tk,h} of results){
+      priceHistories[tk]=h;
+      if(Object.keys(h).length===0)console.warn(`⚠ ${tk}: Yahoo returned NO data`);
     }
   }
 
@@ -2004,55 +1972,6 @@ async function recalcDailyValues(){
   }
   toast('daily_value 초기화 완료. 재계산...','ok');
   showTotalValueChart();
-}
-
-async function diagFMP(){
-  const el=document.getElementById('chartContent');
-  if(!FMP_KEY){el.innerHTML='<p>FMP Key 없음</p>';return}
-  el.innerHTML='<p>FMP 데이터 로딩 중...</p>';
-  
-  const tickers=['TQQQ','GDXD','TSLL','NVDL'];
-  const checkDates=['250120','250121','250122','250423','250424','250425','260226','260227'];
-  let html='<div style="padding:16px;font-family:monospace;font-size:12px;overflow:auto">';
-  html+='<h3>FMP Price Diagnostic</h3>';
-  
-  // Also show sheet tx.price vs tx.origPrice for split-marked tickers
-  html+='<h4>Sheet split-marked transactions (first 5 per ticker):</h4>';
-  const chronoTx=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
-  for(const tk of tickers){
-    const txs=chronoTx.filter(t=>t.ticker===tk&&t.split&&t.split!=='').slice(0,5);
-    if(txs.length===0)continue;
-    html+=`<b>${tk}</b><br>`;
-    for(const tx of txs){
-      html+=`  ${tx.date}: origQty=${tx.origQty??tx.qty} origPrice=${(tx.origPrice??tx.price).toFixed(4)} → qty=${tx.qty} price=${tx.price.toFixed(4)} split=${tx.split}<br>`;
-    }
-  }
-  
-  for(const tk of tickers){
-    html+=`<h4>${tk}</h4>`;
-    try{
-      const d=await fmpGet('historical-price-eod/full?symbol='+tk);
-      if(!d||!Array.isArray(d)){html+=`<p>No data</p>`;continue}
-      // Build lookup
-      const byDate={};
-      for(const row of d){
-        if(!row.date)continue;
-        const parts=row.date.split('-');
-        const key=parts[0].slice(2)+parts[1]+parts[2];
-        byDate[key]=row;
-      }
-      html+='<table style="border-collapse:collapse"><tr><th style="border:1px solid #666;padding:2px 6px">date</th><th style="border:1px solid #666;padding:2px 6px">close</th><th style="border:1px solid #666;padding:2px 6px">adjClose</th><th style="border:1px solid #666;padding:2px 6px">ratio</th></tr>';
-      for(const dt of checkDates){
-        const row=byDate[dt];
-        if(!row){html+=`<tr><td style="border:1px solid #666;padding:2px 6px">${dt}</td><td colspan=3 style="border:1px solid #666;padding:2px 6px">N/A</td></tr>`;continue}
-        const ratio=row.adjClose&&row.close?(row.close/row.adjClose).toFixed(4):'?';
-        html+=`<tr><td style="border:1px solid #666;padding:2px 6px">${dt}</td><td style="border:1px solid #666;padding:2px 6px">${row.close?.toFixed(4)}</td><td style="border:1px solid #666;padding:2px 6px">${row.adjClose?.toFixed(4)}</td><td style="border:1px solid #666;padding:2px 6px">${ratio}</td></tr>`;
-      }
-      html+='</table>';
-    }catch(e){html+=`<p>Error: ${e.message}</p>`}
-  }
-  html+='</div>';
-  el.innerHTML=html;
 }
 
 async function showTotalValueChart(){
@@ -2299,10 +2218,7 @@ function redrawChart(dailyValues){
         }
         entry['mv_'+g.label]=sum;
       }
-      // Cash = totalValue - sum of all holdings
-      let sumMv=0;
-      for(const g of HOLD_GROUPS)sumMv+=entry['mv_'+g.label];
-      entry.mvCash=totalValue-sumMv;
+      entry.mvCash=dv[date].cash;
     }else{
       // Fallback: proportional approximation
       const holdMktVal=totalValue-(dv[date]?dv[date].cash:state.cash);
@@ -2317,8 +2233,13 @@ function redrawChart(dailyValues){
     }
 
     if(chartMode==='norm'){
-      const baseVal=initialCashSS+initialCashKW;
-      if(di===0){entry._baseValue=baseVal}
+      // For partial periods, normalize to first date's value (not always initialCash)
+      if(di===0){
+        // Use dv totalValue at first date, or initialCash for day0
+        const firstDv=dv[date];
+        entry._baseValue=firstDv?firstDv.totalValue:(initialCashSS+initialCashKW);
+      }
+      const baseVal=chartData.length>0?chartData[0]._baseValue:(entry._baseValue||(initialCashSS+initialCashKW));
       entry.portfolio=(totalValue/baseVal)*100;
       for(const tk of chartBenches){
         if(!lookups[tk]||!baseBench[tk])continue;
