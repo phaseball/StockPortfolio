@@ -2624,21 +2624,27 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDa
     // Divider
     html+='<div style="border-top:1px solid #333;margin:4px 0"></div>';
 
-    // Bottom chart values
+    // Bottom chart values - sorted by fraction descending, cash last
+    const bottomItems=[];
     for(let i=0;i<cm.allLabels.length;i++){
       const gl=cm.allLabels[i];
       const color=cm.allColors[i];
-      let val;
       if(cm.isPct){
         const tv=d.totalValue||1;
         const raw=gl==='cash'?(d.mvCash!=null?d.mvCash:d.cash):(d['mv_'+gl]||0);
-        val=tv>0?(raw/tv*100):0;
-        html+=`<div style="color:${color}">${gl}: ${val.toFixed(1)}%</div>`;
+        const val=tv>0?(raw/tv*100):0;
+        bottomItems.push({gl,color,val,isCash:gl==='cash',html:`<div style="color:${color}">${gl}: ${val.toFixed(1)}%</div>`});
       }else{
-        val=gl==='cash'?d.cash:(d['g_'+gl]||0);
-        if(val>0)html+=`<div style="color:${color}">${gl}: $${(val/1e3).toFixed(1)}K</div>`;
+        const val=gl==='cash'?d.cash:(d['g_'+gl]||0);
+        if(val>0)bottomItems.push({gl,color,val,isCash:gl==='cash',html:`<div style="color:${color}">${gl}: $${(val/1e3).toFixed(1)}K</div>`});
       }
     }
+    // Sort: non-cash by value descending, cash always last
+    bottomItems.sort((a,b)=>{
+      if(a.isCash)return 1;if(b.isCash)return -1;
+      return b.val-a.val;
+    });
+    for(const item of bottomItems)html+=item.html;
     if(!cm.isPct&&d.purchasedAmt>0){
       html+=`<div style="color:#fff">총매수: $${(d.purchasedAmt/1e3).toFixed(1)}K</div>`;
     }
