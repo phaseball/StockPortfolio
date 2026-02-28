@@ -548,6 +548,10 @@ async function refreshPrices(){
   savePriceTimestamp();
   computeOverview();
   renderOverview();
+  // Also update chart if visible (re-render with new prices for last data point)
+  if(lastDailyValues&&document.getElementById('chartContent')?.offsetParent!==null){
+    redrawChart();
+  }
   toast('✅ 가격 갱신 완료','ok');
 }
 
@@ -1084,6 +1088,29 @@ async function loadAllTransactions(){
       }
     }
   }
+}
+
+// Compute correction ratio: tx.price / externalPrice for each ticker
+// External APIs (FMP/Yahoo) return fully split-adjusted prices.
+// tx.price is only adjusted for splits with marks in sheet.
+// Ratio corrects external prices to match our convention.
+function computePriceCorrectionRatios(priceLookups){
+  // priceLookups: {ticker: {YYMMDD: close}}
+  const ratios={};
+  const chronoTx=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
+  for(const tx of chronoTx){
+    if(!tx.ticker||ratios[tx.ticker]!=null)continue;
+    const h=priceLookups[tx.ticker];
+    if(!h)continue;
+    const extPrice=h[tx.date];
+    if(extPrice&&extPrice>0&&tx.price>0){
+      ratios[tx.ticker]=tx.price/extPrice;
+    }
+  }
+  for(const[tk,r] of Object.entries(ratios)){
+    if(Math.abs(r-1)>0.05)console.log(`Price correction ${tk}: ratio=${r.toFixed(6)}`);
+  }
+  return ratios;
 }
 
 // ================ PRICE FETCH ================
@@ -1870,25 +1897,8 @@ async function computeDailyValues(el){
     return null;
   }
 
-  // FMP close is split-adjusted for ALL historical splits.
-  // tx.price is only adjusted for splits with marks in sheet.
-  // Auto-detect correction ratio: compare tx.price vs FMP close on same date.
-  // ratio = tx.price / FMP_close. Then: corrected_FMP = FMP_close × ratio.
-  // TQQQ: tx.price=$24 / FMP=$24 → ratio=1 (both corrected same way)
-  // GDXD: tx.price=$4.5 / FMP=$900 → ratio=0.005 (FMP over-corrected)
-  const fmpCorrectionRatio={};
-  for(const tx of chronoTx){
-    if(!tx.ticker||fmpCorrectionRatio[tx.ticker]!=null)continue;
-    const h=priceHistories[tx.ticker];
-    if(!h)continue;
-    const fmpPrice=h[tx.date];
-    if(fmpPrice&&fmpPrice>0&&tx.price>0){
-      fmpCorrectionRatio[tx.ticker]=tx.price/fmpPrice;
-    }
-  }
-  for(const[tk,r] of Object.entries(fmpCorrectionRatio)){
-    if(Math.abs(r-1)>0.05)console.log(`FMP correction ${tk}: ratio=${r.toFixed(6)}`);
-  }
+  // Compute correction ratios: tx.price / FMP_close per ticker
+  const fmpCorrectionRatio=computePriceCorrectionRatios(priceHistories);
 
   if(el)el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 일별 가치 계산 중...</p>';
   
@@ -2949,15 +2959,20 @@ async function drawHistoryChart(ticker,period,btn){
     if(!historyPriceCache[ticker])historyPriceCache[ticker]={};
   }
   const priceLookup=historyPriceCache[ticker];
+  // Compute correction ratio for this ticker (Yahoo is also split-adjusted like FMP)
+  const corrRatios=computePriceCorrectionRatios({[ticker]:priceLookup});
+  const corrR=corrRatios[ticker]||1;
   function findClose(date){
-    if(priceLookup[date])return priceLookup[date];
-    const y=parseInt('20'+date.slice(0,2)),m=parseInt(date.slice(2,4))-1,d=parseInt(date.slice(4,6));
-    for(let off=1;off<=7;off++){
-      const dt=new Date(y,m,d-off);
-      const key=String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
-      if(priceLookup[key])return priceLookup[key];
+    let p=priceLookup[date];
+    if(!p){
+      const y=parseInt('20'+date.slice(0,2)),m=parseInt(date.slice(2,4))-1,d=parseInt(date.slice(4,6));
+      for(let off=1;off<=7;off++){
+        const dt=new Date(y,m,d-off);
+        const key=String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
+        if(priceLookup[key]){p=priceLookup[key];break}
+      }
     }
-    return null;
+    return p!=null?p*corrR:null;
   }
 
   // Build data over time for this ticker
@@ -3019,7 +3034,7 @@ async function drawHistoryChart(ticker,period,btn){
         // Add daily points between fromDate and toDate (exclusive)
         for(const yd of allYahooDates){
           if(yd<=fromDate||yd>=toDate)continue;
-          expanded.push({date:yd, purchAmt:s.purchAmt, totalValue:s.qty*priceLookup[yd], realized:s.realized, qty:s.qty});
+          expanded.push({date:yd, purchAmt:s.purchAmt, totalValue:s.qty*priceLookup[yd]*corrR, realized:s.realized, qty:s.qty});
         }
       }
     }
