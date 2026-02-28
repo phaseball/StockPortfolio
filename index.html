@@ -1984,11 +1984,11 @@ async function computeDailyValues(el){
   console.log(`daily_value summary: initCash=${initCash}, first(${firstDate})=${stored[firstDate]?.totalValue?.toFixed(0)}, last(${lastDate})=${stored[lastDate]?.totalValue?.toFixed(0)}`);
   
   // Log split-affected tickers for verification
-  const splitTickers=new Set();
-  for(const tx of chronoTx){if(tx.split&&tx.split!=='')splitTickers.add(tx.ticker)}
-  if(splitTickers.size>0){
-    console.log('Split-affected tickers:',  [...splitTickers].join(', '));
-    for(const tk of splitTickers){
+  const splitTkLog=new Set();
+  for(const tx of chronoTx){if(tx.split&&tx.split!=='')splitTkLog.add(tx.ticker)}
+  if(splitTkLog.size>0){
+    console.log('Split-affected tickers:',  [...splitTkLog].join(', '));
+    for(const tk of splitTkLog){
       // Show a few sample dates
       const dates=Object.keys(stored).sort().filter(d=>stored[d].holdings&&stored[d].holdings[tk]);
       if(dates.length>0){
