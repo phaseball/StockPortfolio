@@ -1870,16 +1870,30 @@ async function computeDailyValues(el){
     return null;
   }
 
-  // RULE: value = origQty × FMP_close (unadjusted)
-  // - origQty = actual shares held (sheet original, before split normalization)
-  // - FMP close = actual trading price on that date
-  // - For tickers WITH split marks: origQty × close = (qty/factor) × (price×factor) = qty × price ✓
-  // - For tickers WITHOUT split marks: origQty × close = qty × price ✓  
-  // - Cash = origQty × origPrice (actual money flow)
+  // FMP close is split-adjusted for ALL historical splits.
+  // tx.price is only adjusted for splits with marks in sheet.
+  // Auto-detect correction ratio: compare tx.price vs FMP close on same date.
+  // ratio = tx.price / FMP_close. Then: corrected_FMP = FMP_close × ratio.
+  // TQQQ: tx.price=$24 / FMP=$24 → ratio=1 (both corrected same way)
+  // GDXD: tx.price=$4.5 / FMP=$900 → ratio=0.005 (FMP over-corrected)
+  const fmpCorrectionRatio={};
+  for(const tx of chronoTx){
+    if(!tx.ticker||fmpCorrectionRatio[tx.ticker]!=null)continue;
+    const h=priceHistories[tx.ticker];
+    if(!h)continue;
+    const fmpPrice=h[tx.date];
+    if(fmpPrice&&fmpPrice>0&&tx.price>0){
+      fmpCorrectionRatio[tx.ticker]=tx.price/fmpPrice;
+    }
+  }
+  for(const[tk,r] of Object.entries(fmpCorrectionRatio)){
+    if(Math.abs(r-1)>0.05)console.log(`FMP correction ${tk}: ratio=${r.toFixed(6)}`);
+  }
+
   if(el)el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 일별 가치 계산 중...</p>';
   
   let cashSS=initialCashSS, cashKW=initialCashKW;
-  const positions={}; // ticker -> original qty (actual shares)
+  const positions={}; // ticker -> tx.qty (split-mark-corrected)
   let txDateIdx=0;
   const newRows=[];
 
@@ -1890,9 +1904,8 @@ async function computeDailyValues(el){
         const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
         const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
         if(!positions[tx.ticker])positions[tx.ticker]=0;
-        positions[tx.ticker]+=oq; // original qty
+        positions[tx.ticker]+=tx.qty;
         if(Math.abs(positions[tx.ticker])<0.0001)positions[tx.ticker]=0;
-        // Cash = actual money flow
         if(oq>0){
           if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
           else cashKW-=(Math.abs(oq)*op+tx.tax);
@@ -1911,19 +1924,15 @@ async function computeDailyValues(el){
     const tickerValues={};
     for(const[tk,qty] of Object.entries(positions)){
       if(qty<=0)continue;
-      const closePrice=findClose(tk,date);
+      const fmpClose=findClose(tk,date);
       let usedPrice;
-      if(closePrice!=null){
-        usedPrice=closePrice; // FMP close = actual trading price
+      if(fmpClose!=null){
+        const ratio=fmpCorrectionRatio[tk]||1;
+        usedPrice=fmpClose*ratio;
       }else{
-        // Fallback: last original transaction price
         usedPrice=0;
         for(let i=chronoTx.length-1;i>=0;i--){
-          const t=chronoTx[i];
-          if(t.ticker===tk&&t.date<=date){
-            usedPrice=t.origPrice!==undefined?t.origPrice:t.price;
-            break;
-          }
+          if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}
         }
       }
       const val=qty*usedPrice;
@@ -1935,9 +1944,6 @@ async function computeDailyValues(el){
     stored[date]={totalValue, cash, holdings:tickerValues};
     newRows.push([parseInt(date), Math.round(totalValue*100)/100, Math.round(cash*100)/100, JSON.stringify(tickerValues)]);
   }
-
-  // Also ensure we process txDates that might be after the last marketDay
-  // (in case there are transactions on non-market days, unlikely but safe)
 
   // Write to Sheet
   if(SHEET_ID&&SA_KEY&&newRows.length>0){
