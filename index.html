@@ -3143,7 +3143,7 @@ async function drawHistoryChart(ticker,period,btn){
     const lbl=Math.abs(v)>=1e3?(v>=0?'':'-')+'$'+(Math.abs(v)/1e3).toFixed(0)+'K':'$'+v.toFixed(0);
     ctx.fillText(lbl,pad.l-4,y+3);
   }
-  if(y3Min<0&&y3Max>0){
+  if(y3Min<=0&&y3Max>=0){
     ctx.strokeStyle='#555';ctx.lineWidth=0.5;ctx.setLineDash([3,3]);ctx.beginPath();
     ctx.moveTo(pad.l,yPos3(0));ctx.lineTo(W-pad.r,yPos3(0));ctx.stroke();ctx.setLineDash([]);
   }
@@ -3182,7 +3182,7 @@ async function drawHistoryChart(ticker,period,btn){
   ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
   ctx.fillStyle='#e0e0e0';ctx.fillText('── 총손익',pad.l,y3Top+12);
   ctx.fillStyle='#ef5350';ctx.fillText('╌ 평가손익',pad.l+70,y3Top+12);
-  ctx.fillStyle='#ffa726';ctx.fillText('╌ 실현',pad.l+90,y3Top+12);
+  ctx.fillStyle='#ffa726';ctx.fillText('╌ 실현',pad.l+145,y3Top+12);
 
   // ===== CHART 4: Price (log-scale) =====
   const y4Top=H1+gap+H2+gap+H3+gap;
@@ -3243,7 +3243,9 @@ async function drawHistoryChart(ticker,period,btn){
   }
 
   ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
-  ctx.fillStyle='#26c6da';ctx.fillText('── 주가 (log)',pad.l,y4Top+12);
+  ctx.fillStyle='#26c6da';ctx.fillText('── 주가',pad.l,y4Top+12);
+  ctx.fillStyle='#555';ctx.font='8px JetBrains Mono, monospace';ctx.textAlign='right';
+  ctx.fillText('log scale',W-pad.r,y4Top+12);
 
   // X labels (shared for all charts)
   ctx.fillStyle='#888';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='center';
