@@ -3010,7 +3010,7 @@ async function drawHistoryChart(ticker,period,btn){
   if(data.length<1){container.innerHTML='';return}
 
   const W=Math.min(container.clientWidth||600,800);
-  const H1=130, H2=100, H3=100, H4=100, gap=16;
+  const H1=130, H2=100, H3=100, H4=200, gap=16;
   const totalH=H1+gap+H2+gap+H3+gap+H4;
   const pad={t:20,r:45,b:14,l:50};
   const cW=W-pad.l-pad.r;
@@ -3148,8 +3148,8 @@ async function drawHistoryChart(ticker,period,btn){
     ctx.moveTo(pad.l,yPos3(0));ctx.lineTo(W-pad.r,yPos3(0));ctx.stroke();ctx.setLineDash([]);
   }
 
-  // 평가손익 line (unrealized, green dashed)
-  ctx.strokeStyle='#66bb6a';ctx.lineWidth=1;ctx.setLineDash([4,3]);ctx.beginPath();
+  // 평가손익 line (unrealized, red dashed)
+  ctx.strokeStyle='#ef5350';ctx.lineWidth=1;ctx.setLineDash([4,3]);ctx.beginPath();
   for(let i=0;i<data.length;i++){
     const v=data[i].totalValue-data[i].purchAmt;
     if(i===0)ctx.moveTo(xPos(i),yPos3(v));else ctx.lineTo(xPos(i),yPos3(v));
@@ -3181,10 +3181,10 @@ async function drawHistoryChart(ticker,period,btn){
   // Legend
   ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
   ctx.fillStyle='#e0e0e0';ctx.fillText('── 총손익',pad.l,y3Top+12);
-  ctx.fillStyle='#66bb6a';ctx.fillText('╌ 평가',pad.l+70,y3Top+12);
-  ctx.fillStyle='#ffa726';ctx.fillText('╌ 실현',pad.l+115,y3Top+12);
+  ctx.fillStyle='#ef5350';ctx.fillText('╌ 평가손익',pad.l+70,y3Top+12);
+  ctx.fillStyle='#ffa726';ctx.fillText('╌ 실현',pad.l+90,y3Top+12);
 
-  // ===== CHART 4: Price =====
+  // ===== CHART 4: Price (log-scale) =====
   const y4Top=H1+gap+H2+gap+H3+gap;
   const cH4=H4-pad.t-pad.b;
   let y4Max=0,y4Min=Infinity;
@@ -3194,17 +3194,34 @@ async function drawHistoryChart(ticker,period,btn){
       if(d.price<y4Min)y4Min=d.price;
     }
   }
-  if(y4Min===Infinity)y4Min=0;
-  const y4Range=y4Max-y4Min||1;
-  y4Max+=y4Range*0.1;y4Min=Math.max(0,y4Min-y4Range*0.1);
-  function yPos4(v){return y4Top+pad.t+(1-(v-y4Min)/(y4Max-y4Min))*cH4}
+  if(y4Min===Infinity||y4Min<=0)y4Min=0.01;
+  // Add padding in log space
+  const logMin=Math.log10(y4Min);
+  const logMax=Math.log10(y4Max);
+  const logRange=logMax-logMin||1;
+  const logPadMin=logMin-logRange*0.05;
+  const logPadMax=logMax+logRange*0.05;
+  function yPos4(v){
+    if(v<=0)return y4Top+pad.t+cH4;
+    const lv=Math.log10(v);
+    return y4Top+pad.t+(1-(lv-logPadMin)/(logPadMax-logPadMin))*cH4;
+  }
 
+  // Grid lines at nice log intervals
   ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
-  for(let i=0;i<=3;i++){
-    const v=y4Min+(y4Max-y4Min)*i/3;const y=yPos4(v);
+  const gridValues=[];
+  // Generate grid: powers of 10, then 2x and 5x subdivisions
+  for(let p=Math.floor(logPadMin);p<=Math.ceil(logPadMax);p++){
+    for(const m of [1,2,5]){
+      const v=m*Math.pow(10,p);
+      if(v>=Math.pow(10,logPadMin)&&v<=Math.pow(10,logPadMax))gridValues.push(v);
+    }
+  }
+  for(const v of gridValues){
+    const y=yPos4(v);
     ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
     ctx.fillStyle='#666';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='right';
-    ctx.fillText('$'+v.toFixed(v>=100?0:2),pad.l-4,y+3);
+    ctx.fillText('$'+v.toFixed(v>=100?0:v>=10?1:2),pad.l-4,y+3);
   }
 
   // Price line (cyan)
@@ -3226,7 +3243,7 @@ async function drawHistoryChart(ticker,period,btn){
   }
 
   ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
-  ctx.fillStyle='#26c6da';ctx.fillText('── 주가',pad.l,y4Top+12);
+  ctx.fillStyle='#26c6da';ctx.fillText('── 주가 (log)',pad.l,y4Top+12);
 
   // X labels (shared for all charts)
   ctx.fillStyle='#888';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='center';
