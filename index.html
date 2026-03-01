@@ -1719,8 +1719,12 @@ async function fetchYahooHistory(ticker){
       const lookup={};
       for(let i=0;i<ts.length;i++){
         if(closes[i]==null)continue;
-        const dt=new Date(ts[i]*1000);
-        const key=String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
+        // Use NY timezone (ET) for date: Yahoo timestamps are at market open ~9:30 ET
+        // Convert to ET by subtracting 5h (EST) from UTC, use the date portion
+        const utcMs=ts[i]*1000;
+        const etMs=utcMs-5*3600*1000; // approximate EST offset
+        const dt=new Date(etMs);
+        const key=String(dt.getUTCFullYear()).slice(2)+String(dt.getUTCMonth()+1).padStart(2,'0')+String(dt.getUTCDate()).padStart(2,'0');
         lookup[key]=closes[i];
       }
       if(Object.keys(lookup).length>0)return lookup;
@@ -2883,8 +2887,10 @@ async function drawHistoryChart(ticker,period,btn){
           const lookup={};
           for(let i=0;i<ts.length;i++){
             if(closes[i]==null)continue;
-            const dt=new Date(ts[i]*1000);
-            const key=String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
+            const utcMs=ts[i]*1000;
+            const etMs=utcMs-5*3600*1000;
+            const dt=new Date(etMs);
+            const key=String(dt.getUTCFullYear()).slice(2)+String(dt.getUTCMonth()+1).padStart(2,'0')+String(dt.getUTCDate()).padStart(2,'0');
             lookup[key]=closes[i];
           }
           if(Object.keys(lookup).length>0){historyPriceCache[ticker]=lookup;break}
