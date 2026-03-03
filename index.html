@@ -1832,6 +1832,36 @@ async function computeDailyValues(el){
   }
 
   // Find missing dates
+  // Also invalidate dates where transactions exist but cache may be stale
+  // Compare tx hash to detect changes since last compute
+  const txHash=chronoTx.map(t=>`${t.date}|${t.ticker}|${t.qty}|${t.price}`).join('\n');
+  const prevHash=localStorage.getItem('dv_tx_hash')||'';
+  if(txHash!==prevHash){
+    // Transactions changed — invalidate all dates from first changed tx onward
+    console.log('daily_value: transactions changed, invalidating cache');
+    // Find earliest date that differs
+    const prevLines=prevHash.split('\n');
+    const curLines=txHash.split('\n');
+    let firstDiff=null;
+    for(let i=0;i<Math.max(prevLines.length,curLines.length);i++){
+      if(prevLines[i]!==curLines[i]){
+        const d=(curLines[i]||prevLines[i]||'').split('|')[0];
+        if(d){firstDiff=d;break}
+      }
+    }
+    if(firstDiff){
+      for(const d of Object.keys(stored)){
+        if(d>=firstDiff)delete stored[d];
+      }
+    }else{
+      // Can't determine diff — clear all
+      stored={};
+    }
+    localStorage.setItem('dv_tx_hash',txHash);
+    dailyValueCache=stored;
+    saveDVCache();
+  }
+
   const missingDates=marketDays.filter(d=>!stored[d]);
   if(missingDates.length===0){
     console.log('daily_value: all dates present');
