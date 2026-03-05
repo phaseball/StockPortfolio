@@ -764,7 +764,7 @@ async function refreshFundamentals(){
       console.log(`=== Fetching FMP data for ${tk} ===`);
       // 4 API calls: annual estimates, quarterly earnings, price target, grades
       // Sequential to avoid FMP rate limiting
-      const annual=await fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=4`);
+      const annual=await fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=6`);
       const quarterlyEarnings=await fmpGet(`earnings?symbol=${tk}`);
       const ptConsensus=await fmpGet(`price-target-consensus?symbol=${tk}`);
       const gradesData=await fmpGet(`grades-consensus?symbol=${tk}`);
@@ -905,6 +905,22 @@ async function refreshFundamentals(){
         for(let i=0;i<entries.length-1;i++){
           if(entries[i].frac<=prevTargetFrac&&entries[i+1].frac>=prevTargetFrac){
             loP=entries[i];hiP=entries[i+1];break;
+          }
+        }
+
+        // If targetFrac is before all entries (e.g. NVDA fiscal Jan),
+        // use the first entry as a reasonable estimate
+        if(!lo&&!hi&&entries.length>=1){
+          if(entries[0].frac>targetFrac){
+            // targetFrac is before all entries — use first entry
+            // (forward 12m EPS ≈ next fiscal year EPS)
+            lo=entries[0];hi=entries.length>=2?entries[1]:entries[0];
+            console.log(`${tk}: targetFrac ${targetFrac} before all entries, using first entry ${lo.date} (frac=${lo.frac})`);
+          }else if(entries[entries.length-1].frac<targetFrac){
+            // targetFrac is after all entries — use last entry
+            lo=entries.length>=2?entries[entries.length-2]:entries[entries.length-1];
+            hi=entries[entries.length-1];
+            console.log(`${tk}: targetFrac ${targetFrac} after all entries, using last entry ${hi.date} (frac=${hi.frac})`);
           }
         }
 
