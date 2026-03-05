@@ -412,11 +412,21 @@ function savePriceTimestamp(){
   updatePriceInfo();
 }
 
+let lastHistoryTicker=null;
+let switchingToHistory=false;
+
 function switchTab(p){
   document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x.dataset.p===p));
   document.querySelectorAll('.panel').forEach(x=>x.classList.remove('on'));
   document.getElementById('p-'+p).classList.add('on');
-  if(p==='history')document.getElementById('navHistory').style.display='';
+  if(p==='history'){
+    document.getElementById('navHistory').style.display='';
+    if(!switchingToHistory&&allTransactions.length>0){
+      switchingToHistory=true;
+      showHistory(lastHistoryTicker);
+      switchingToHistory=false;
+    }
+  }
 }
 
 // ================ CONFIG ================
@@ -1737,14 +1747,12 @@ async function fetchYahooHistory(ticker){
       const ts=d.chart?.result?.[0]?.timestamp||[];
       const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
       const lookup={};
+      // Convert Yahoo timestamps to US Eastern date keys
+      const etFmt=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
       for(let i=0;i<ts.length;i++){
         if(closes[i]==null)continue;
-        // Use NY timezone (ET) for date: Yahoo timestamps are at market open ~9:30 ET
-        // Convert to ET by subtracting 5h (EST) from UTC, use the date portion
-        const utcMs=ts[i]*1000;
-        const etMs=utcMs-5*3600*1000; // approximate EST offset
-        const dt=new Date(etMs);
-        const key=String(dt.getUTCFullYear()).slice(2)+String(dt.getUTCMonth()+1).padStart(2,'0')+String(dt.getUTCDate()).padStart(2,'0');
+        const parts=etFmt.format(new Date(ts[i]*1000)).split('/'); // MM/DD/YYYY
+        const key=parts[2].slice(2)+parts[0]+parts[1]; // YYMMDD
         lookup[key]=closes[i];
       }
       if(Object.keys(lookup).length>0)return lookup;
@@ -2779,6 +2787,7 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDa
 
 // ================ TICKER HISTORY ================
 function showHistory(ticker){
+  lastHistoryTicker=ticker;
   const el=document.getElementById('historyContent');
   const titleEl=document.getElementById('historyTitle');
 
@@ -2935,12 +2944,11 @@ async function drawHistoryChart(ticker,period,btn){
           const ts=d.chart?.result?.[0]?.timestamp||[];
           const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
           const lookup={};
+          const etFmt2=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
           for(let i=0;i<ts.length;i++){
             if(closes[i]==null)continue;
-            const utcMs=ts[i]*1000;
-            const etMs=utcMs-5*3600*1000;
-            const dt=new Date(etMs);
-            const key=String(dt.getUTCFullYear()).slice(2)+String(dt.getUTCMonth()+1).padStart(2,'0')+String(dt.getUTCDate()).padStart(2,'0');
+            const parts=etFmt2.format(new Date(ts[i]*1000)).split('/');
+            const key=parts[2].slice(2)+parts[0]+parts[1];
             lookup[key]=closes[i];
           }
           if(Object.keys(lookup).length>0){historyPriceCache[ticker]=lookup;break}
