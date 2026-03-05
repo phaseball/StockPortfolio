@@ -3108,6 +3108,13 @@ async function drawHistoryChart(ticker,period,btn){
   }
   if(data.length<1){container.innerHTML='';return}
 
+  // Debug: log data points around 260303
+  if(ticker==='NVDL'||ticker==='TQQQ'){
+    const near=data.filter(d=>d.date>='260301'&&d.date<='260305');
+    console.log(`${ticker} chart data near 260303:`);
+    for(const d of near)console.log(`  ${d.date}: price=$${d.price?.toFixed(4)}, value=$${d.totalValue?.toFixed(2)}, qty=${d.qty}`);
+  }
+
   const W=Math.min(container.clientWidth||600,800);
   const H1=130, H2=100, H3=100, H4=200, gap=16;
   const totalH=H1+gap+H2+gap+H3+gap+H4;
