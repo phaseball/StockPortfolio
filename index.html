@@ -592,7 +592,7 @@ async function refreshPrices(){
 // Leveraged ETF → underlying ticker mapping for fundamentals
 // null = skip (no fundamentals available, e.g. index ETFs)
 // Tickers not in this map: fetch their own fundamentals directly
-const UNDERLYING_MAP={AMDL:'AMD',NVDL:'NVDA',TQQQ:null,SOXL:null,SQQQ:null,GGLL:'GOOGL',TSLL:'TSLA'};
+const UNDERLYING_MAP={AMDL:'AMD',NVDL:'NVDA',TQQQ:null,SOXL:null,SQQQ:null,GGLL:'GOOGL',TSLL:'TSLA',QLD:null,QQQM:null,TNA:null,UGE:null,XLP:null,RSP:null};
 
 function getFundTicker(ticker){
   if(ticker in UNDERLYING_MAP)return UNDERLYING_MAP[ticker];
@@ -763,12 +763,15 @@ async function refreshFundamentals(){
       showFetching(`📊 ${tk}... (${idx}/${fundTickers.length})`);
       console.log(`=== Fetching FMP data for ${tk} ===`);
       // 4 API calls: annual estimates, quarterly earnings, price target, grades
-      const [annual, quarterlyEarnings, ptConsensus, gradesData]=await Promise.all([
-        fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=4`),
-        fmpGet(`earnings?symbol=${tk}`),
-        fmpGet(`price-target-consensus?symbol=${tk}`),
-        fmpGet(`grades-consensus?symbol=${tk}`)
-      ]);
+      // Sequential to avoid FMP rate limiting
+      const annual=await fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=4`);
+      const quarterlyEarnings=await fmpGet(`earnings?symbol=${tk}`);
+      const ptConsensus=await fmpGet(`price-target-consensus?symbol=${tk}`);
+      const gradesData=await fmpGet(`grades-consensus?symbol=${tk}`);
+      if(!annual&&!quarterlyEarnings){
+        console.warn(`${tk}: No data returned (rate limited?)`);
+        continue;
+      }
       console.log(`${tk} annual estimates:`,annual);
       console.log(`${tk} quarterly earnings: ${Array.isArray(quarterlyEarnings)?quarterlyEarnings.length:0} entries`);
       console.log(`${tk} priceTarget:`,ptConsensus);
@@ -2113,7 +2116,8 @@ async function computeDailyValues(el){
 }
 
 async function recalcDailyValues(){
-  if(!confirm('daily_value를 모두 삭제하고 다시 계산합니다. 계속?'))return;
+  const msg=`daily_value를 모두 삭제하고 다시 계산합니다.\n\nRecalc이 필요한 경우:\n• Split 처리 로직이 변경된 경우\n• 과거 거래 데이터가 수정된 경우\n• 가격이 잘못되어 재계산이 필요한 경우\n\n거래 내역(삼성/키움), fundamentals, fund_history 탭은 변경되지 않습니다.\n\n계속하시겠습니까?`;
+  if(!confirm(msg))return;
   // Clear localStorage cache
   dailyValueCache={};
   lastDailyValues=null;
