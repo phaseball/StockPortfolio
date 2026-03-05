@@ -3061,11 +3061,17 @@ async function drawHistoryChart(ticker,period,btn){
   }
   pendingSnap();
   const now=new Date();
-  const todayDate=String(now.getFullYear()).slice(2)+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
-  const isWeekday=now.getDay()>=1&&now.getDay()<=5;
-  // Check if US pre-market has started (4:00 AM ET)
-  const etHour=parseInt(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',hour12:false}).format(now));
-  const usMarketActive=isWeekday&&etHour>=4;
+  // Use US Eastern time for all date/market checks
+  const etFmtFull=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hour12:false,weekday:'short'});
+  const etParts=etFmtFull.formatToParts(now);
+  const etYear=etParts.find(p=>p.type==='year').value;
+  const etMonth=etParts.find(p=>p.type==='month').value;
+  const etDay=etParts.find(p=>p.type==='day').value;
+  const etHour=parseInt(etParts.find(p=>p.type==='hour').value);
+  const etWeekday=etParts.find(p=>p.type==='weekday').value; // Mon,Tue,...
+  const todayDate=etYear.slice(2)+etMonth+etDay;
+  const isWeekdayET=!['Sat','Sun'].includes(etWeekday);
+  const usMarketActive=isWeekdayET&&etHour>=4;
 
   // Expand snapshots: insert daily Yahoo price points between tx dates for smooth 평가액 line
   // purchAmt and realized stay flat between tx dates; only totalValue changes daily
