@@ -1662,17 +1662,18 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         const tgt1m=e1m?.targetPrice;
         const tgtUp=tgt1w!=null&&nowTgt>tgt1w;
         const tgtStyle=tgtUp?'color:#fff;font-weight:600':'color:var(--text)';
-        let parts=[`<span style="${tgtStyle}">$${nowTgt.toFixed(0)}</span>`];
+        // Today's TP with gap%
+        let nowPart=`<span style="${tgtStyle}">$${nowTgt.toFixed(0)}</span>`;
+        if(fund.price>0){
+          const gap=((nowTgt-fund.price)/fund.price*100);
+          nowPart+=`<span style="color:var(--text3);font-size:9px"> (${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`;
+        }
+        let parts=[nowPart];
         if(tgt1w!=null)parts.push(`<span style="color:var(--text3)">$${tgt1w.toFixed(0)}</span>`);
         else parts.push(`<span style="color:var(--text3)">—</span>`);
         if(tgt1m!=null)parts.push(`<span style="color:var(--text3)">$${tgt1m.toFixed(0)}</span>`);
         else parts.push(`<span style="color:var(--text3)">—</span>`);
         targetCol=parts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
-        // Add gap% from current price
-        if(fund.price>0){
-          const gap=((nowTgt-fund.price)/fund.price*100);
-          targetCol+=` <span style="color:var(--text3);font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`;
-        }
       }
     }
 
