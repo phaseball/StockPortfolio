@@ -764,7 +764,7 @@ async function refreshFundamentals(){
       console.log(`=== Fetching FMP data for ${tk} ===`);
       // 4 API calls: annual estimates, quarterly earnings, price target, grades
       const [annual, quarterlyEarnings, ptConsensus, gradesData]=await Promise.all([
-        fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=8`),
+        fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=4`),
         fmpGet(`earnings?symbol=${tk}`),
         fmpGet(`price-target-consensus?symbol=${tk}`),
         fmpGet(`grades-consensus?symbol=${tk}`)
@@ -969,9 +969,13 @@ async function refreshFundamentals(){
     }
 
     // Map to held tickers (including leveraged ETFs → underlying)
+    // Store under both the held ticker (e.g. NVDL) and the underlying (e.g. NVDA)
     for(const tk of held){
       const fundTk=getFundTicker(tk);
-      if(fundTk&&newFund[fundTk])cachedFundamentals[tk]=newFund[fundTk];
+      if(fundTk&&newFund[fundTk]){
+        cachedFundamentals[tk]=newFund[fundTk];
+        cachedFundamentals[fundTk]=newFund[fundTk];
+      }
     }
 
     saveCache();
@@ -1042,8 +1046,20 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
     // Append to fund_history tab (historical tracking for EPS change 1w/1m)
     try{
       const histRows=[];
+      // Check existing dates to avoid duplicates
+      const existingDates=new Set();
+      for(const[tk,arr] of Object.entries(fundHistory)){
+        for(const h of arr){
+          existingDates.add(`${h.date}|${tk}`);
+        }
+      }
       for(const[tk,d]of Object.entries(fundData)){
-        if(d.epsNorm!=null)histRows.push([today,tk,d.epsNorm.toFixed(4),d.revNorm?Math.round(d.revNorm):'',d.targetPrice||'']);
+        if(d.epsNorm!=null&&!existingDates.has(`${today}|${tk}`)){
+          histRows.push([today,tk,d.epsNorm.toFixed(4),d.revNorm?Math.round(d.revNorm):'',d.targetPrice||'']);
+          // Also update in-memory fundHistory
+          if(!fundHistory[tk])fundHistory[tk]=[];
+          fundHistory[tk].push({date:today,epsNorm:d.epsNorm,revNorm:d.revNorm,targetPrice:d.targetPrice});
+        }
       }
       if(histRows.length>0){
         // Ensure header exists
@@ -1057,6 +1073,10 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
         await fetch(appendUrl,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
           body:JSON.stringify({values:histRows})});
         console.log(`Appended ${histRows.length} rows to fund_history`);
+        // Save updated fundHistory to localStorage
+        localStorage.setItem('cache_fundHistory',JSON.stringify(fundHistory));
+      }else{
+        console.log('fund_history: no new rows to append (all dates exist)');
       }
     }catch(e){console.warn('Could not append to fund_history:',e)}
 
