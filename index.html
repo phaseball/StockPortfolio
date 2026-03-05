@@ -1476,8 +1476,8 @@ function holdingsHeader(){
     <div><span>평균 / 현재가 (전일대비; 전주대비)</span><span>평가손익</span></div>
     <div><span>평가금액</span><span>매입금액</span></div>
     <div><span>P/E 12m (YOY%)</span><span>Rev 12m (YOY%)</span></div>
-    <div><span>EPS est. chg 1w</span><span>EPS est. chg 1m</span></div>
-    <div><span>Target (gap%)</span><span>Buy/H/S (1wk chg)</span></div>
+    <div><span>EPS est. now &gt; 1w &gt; 1m</span></div>
+    <div><span>Target now &gt; 1w &gt; 1m</span></div>
     <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
   </div>`;
 }
@@ -1499,10 +1499,10 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   let fiscalLabel='';
   // Col3: P/E row + Revenue row
   let peRow=dash, revRow=dash;
-  // Col4: EPS est change 1w / 1m
-  let epsChg1w=dash, epsChg1m=dash;
-  // Col5: Target + Rating (light gray)
-  let targetStr=dash, ratingStr=dash;
+  // Col4: EPS estimate now > 1w > 1m
+  let epsCol=dash;
+  // Col5: Target price now > 1w > 1m
+  let targetCol=dash;
 
   if(fund){
     // -- Fiscal label: "Dec 26 (16 anal)" --
@@ -1520,55 +1520,62 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
       revRow=`${revB}B${yoy}`;
     }
 
-    // -- Col4: EPS estimate changes from fund_history --
-    if(fund.epsNorm!=null){
-      const ftk=getFundTicker(ticker);
-      const hist=fundHistory[ftk]||[];
-      if(hist.length>=2){
-        const today=new Date().toISOString().slice(0,10);
-        const d1w=new Date(Date.now()-7*86400000).toISOString().slice(0,10);
-        const d1m=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
-        // Find closest entry on or before target date
-        function findEps(targetDate){
-          let best=null;
-          for(const h of hist){
-            if(h.date<=targetDate&&h.epsNorm!=null)best=h;
-          }
-          return best;
+    // -- Col4 & Col5: EPS est / Target now > 1w > 1m --
+    const ftk=getFundTicker(ticker);
+    const hist=fundHistory[ftk]||[];
+    if(hist.length>=1){
+      const d1w=new Date(Date.now()-7*86400000).toISOString().slice(0,10);
+      const d1m=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+      function findEntry(targetDate){
+        let best=null;
+        for(const h of hist){if(h.date<=targetDate)best=h}
+        return best;
+      }
+      const e1w=findEntry(d1w);
+      const e1m=findEntry(d1m);
+
+      // EPS
+      if(fund.epsNorm!=null){
+        const nowEps=fund.epsNorm;
+        const eps1w=e1w?.epsNorm;
+        const eps1m=e1m?.epsNorm;
+        const nowUp=eps1w!=null&&nowEps>eps1w;
+        const nowStyle=nowUp?'color:#fff;font-weight:600':'color:var(--text)';
+        let parts=[`<span style="${nowStyle}">${nowEps.toFixed(2)}</span>`];
+        if(eps1w!=null)parts.push(`<span style="color:var(--text3)">${eps1w.toFixed(2)}</span>`);
+        else parts.push(`<span style="color:var(--text3)">—</span>`);
+        if(eps1m!=null)parts.push(`<span style="color:var(--text3)">${eps1m.toFixed(2)}</span>`);
+        else parts.push(`<span style="color:var(--text3)">—</span>`);
+        epsCol=parts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
+      }
+
+      // Target price
+      if(fund.targetPrice!=null){
+        const nowTgt=fund.targetPrice;
+        const tgt1w=e1w?.targetPrice;
+        const tgt1m=e1m?.targetPrice;
+        const tgtUp=tgt1w!=null&&nowTgt>tgt1w;
+        const tgtStyle=tgtUp?'color:#fff;font-weight:600':'color:var(--text)';
+        let parts=[`<span style="${tgtStyle}">$${nowTgt.toFixed(0)}</span>`];
+        if(tgt1w!=null)parts.push(`<span style="color:var(--text3)">$${tgt1w.toFixed(0)}</span>`);
+        else parts.push(`<span style="color:var(--text3)">—</span>`);
+        if(tgt1m!=null)parts.push(`<span style="color:var(--text3)">$${tgt1m.toFixed(0)}</span>`);
+        else parts.push(`<span style="color:var(--text3)">—</span>`);
+        targetCol=parts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
+        // Add gap% from current price
+        if(fund.price>0){
+          const gap=((nowTgt-fund.price)/fund.price*100);
+          targetCol+=` <span style="color:var(--text3);font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`;
         }
-        const eps1w=findEps(d1w);
-        const eps1m=findEps(d1m);
-        const currentEps=fund.epsNorm;
-        if(eps1w&&eps1w.epsNorm>0){
-          const chg=((currentEps-eps1w.epsNorm)/eps1w.epsNorm*100);
-          const cls=chg>=0?'c-up':'c-dn';
-          epsChg1w=`<span class="${cls}">${chg>=0?'+':''}${chg.toFixed(1)}%</span> <span style="color:var(--text3);font-size:9px">1w</span>`;
-        }else{
-          epsChg1w='<span style="color:var(--text3);font-size:10px">1w —</span>';
-        }
-        if(eps1m&&eps1m.epsNorm>0){
-          const chg=((currentEps-eps1m.epsNorm)/eps1m.epsNorm*100);
-          const cls=chg>=0?'c-up':'c-dn';
-          epsChg1m=`<span class="${cls}">${chg>=0?'+':''}${chg.toFixed(1)}%</span> <span style="color:var(--text3);font-size:9px">1m</span>`;
-        }else{
-          epsChg1m='<span style="color:var(--text3);font-size:10px">1m —</span>';
-        }
-      }else{
-        epsChg1w='<span style="color:var(--text3);font-size:10px">1w —</span>';
-        epsChg1m='<span style="color:var(--text3);font-size:10px">1m —</span>';
       }
     }
 
-    // -- Col5: Target price + Rating (light gray) --
-    if(fund.targetPrice!=null&&fund.price>0){
-      const gap=((fund.targetPrice-fund.price)/fund.price*100);
-      targetStr=`<span style="color:var(--text3)">$${fund.targetPrice.toFixed(0)} (${gap>=0?'+':''}${gap.toFixed(0)}% gap)</span>`;
-    }
+    // Rating (kept as secondary info under target)
     const buyN=(fund.strongBuy||0)+(fund.buy||0);
     const holdN=fund.hold||0;
     const sellN=(fund.sell||0)+(fund.strongSell||0);
     if(buyN+holdN+sellN>0){
-      ratingStr=`<span style="color:var(--text3)">${buyN}(-)/${holdN}(-)/${sellN}(-)</span>`;
+      ratingStr=`<span style="color:var(--text3)">${buyN}/${holdN}/${sellN}</span>`;
     }
   }
 
@@ -1593,11 +1600,10 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         <div class="val">${revRow}</div>
       </div>
       <div>
-        <div class="val">${epsChg1w}</div>
-        <div class="val">${epsChg1m}</div>
+        <div class="val">${epsCol}</div>
       </div>
       <div>
-        <div class="val">${targetStr}</div>
+        <div class="val">${targetCol}</div>
         <div class="val">${ratingStr}</div>
       </div>
       <div>
@@ -2986,16 +2992,6 @@ async function drawHistoryChart(ticker,period,btn){
     if(!historyPriceCache[ticker])historyPriceCache[ticker]={};
   }
   const priceLookup=historyPriceCache[ticker];
-  // Debug: log prices around problem date for NVDL
-  if(ticker==='NVDL'){
-    for(const d of ['260302','260303','260304']){
-      console.log(`NVDL Yahoo ${d}: ${priceLookup[d]?.toFixed(4)??'MISSING'}`);
-    }
-    // Also log raw keys around that range
-    const nearKeys=Object.keys(priceLookup).filter(k=>k>='260228'&&k<='260306').sort();
-    console.log('NVDL keys near 260303:', nearKeys.join(', '));
-    for(const k of nearKeys)console.log(`  ${k}: $${priceLookup[k]?.toFixed(4)}`);
-  }
   // Compute correction ratio for this ticker (Yahoo is also split-adjusted like FMP)
   const corrRatios=computePriceCorrectionRatios({[ticker]:priceLookup});
   const corrR=corrRatios[ticker]||1;
@@ -3120,13 +3116,6 @@ async function drawHistoryChart(ticker,period,btn){
     if(startSnap&&(data.length===0||data[0].date>cutStr)){data.unshift({...startSnap,date:cutStr})}
   }
   if(data.length<1){container.innerHTML='';return}
-
-  // Debug: log data points around 260303
-  if(ticker==='NVDL'||ticker==='TQQQ'){
-    const near=data.filter(d=>d.date>='260301'&&d.date<='260305');
-    console.log(`${ticker} chart data near 260303:`);
-    for(const d of near)console.log(`  ${d.date}: price=$${d.price?.toFixed(4)}, value=$${d.totalValue?.toFixed(2)}, qty=${d.qty}`);
-  }
 
   const W=Math.min(container.clientWidth||600,800);
   const H1=130, H2=100, H3=100, H4=200, gap=16;
