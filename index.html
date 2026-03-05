@@ -412,7 +412,6 @@ function savePriceTimestamp(){
   updatePriceInfo();
 }
 
-let lastHistoryTicker=null;
 let switchingToHistory=false;
 
 function switchTab(p){
@@ -421,9 +420,10 @@ function switchTab(p){
   document.getElementById('p-'+p).classList.add('on');
   if(p==='history'){
     document.getElementById('navHistory').style.display='';
+    // Nav click always shows full transaction list
     if(!switchingToHistory&&allTransactions.length>0){
       switchingToHistory=true;
-      showHistory(lastHistoryTicker);
+      showHistory(null);
       switchingToHistory=false;
     }
   }
@@ -2787,7 +2787,6 @@ function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDa
 
 // ================ TICKER HISTORY ================
 function showHistory(ticker){
-  lastHistoryTicker=ticker;
   const el=document.getElementById('historyContent');
   const titleEl=document.getElementById('historyTitle');
 
@@ -2958,6 +2957,16 @@ async function drawHistoryChart(ticker,period,btn){
     if(!historyPriceCache[ticker])historyPriceCache[ticker]={};
   }
   const priceLookup=historyPriceCache[ticker];
+  // Debug: log prices around problem date for NVDL
+  if(ticker==='NVDL'){
+    for(const d of ['260302','260303','260304']){
+      console.log(`NVDL Yahoo ${d}: ${priceLookup[d]?.toFixed(4)??'MISSING'}`);
+    }
+    // Also log raw keys around that range
+    const nearKeys=Object.keys(priceLookup).filter(k=>k>='260228'&&k<='260306').sort();
+    console.log('NVDL keys near 260303:', nearKeys.join(', '));
+    for(const k of nearKeys)console.log(`  ${k}: $${priceLookup[k]?.toFixed(4)}`);
+  }
   // Compute correction ratio for this ticker (Yahoo is also split-adjusted like FMP)
   const corrRatios=computePriceCorrectionRatios({[ticker]:priceLookup});
   const corrR=corrRatios[ticker]||1;
