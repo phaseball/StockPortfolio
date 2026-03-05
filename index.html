@@ -170,7 +170,7 @@ table.t tr:hover td{background:var(--accentBg)}
       <div style="display:flex;gap:4px;align-items:center">
         <button class="btn btn-s btn-sm" onclick="refreshPrices()" title="현재가 업데이트">🔄 Price</button>
         <button class="btn btn-s btn-sm" onclick="refreshFundamentals()" title="P/E, EPS 업데이트">🔄 Fund.</button>
-        <button class="btn btn-s btn-sm" onclick="debugEarnings('AMD')" title="AMD EPS 디버그" style="font-size:9px">🔍 EPS</button>
+        <button class="btn btn-s btn-sm" onclick="debugFundData()" title="EPS/Fund 디버그" style="font-size:9px">🔍 EPS</button>
       </div>
     </div>
     <div style="text-align:right;font-size:10px;color:var(--text3);margin-bottom:8px;margin-top:-8px">
@@ -611,6 +611,56 @@ async function fmpGet(endpoint){
     const d=await r.json();
     return d;
   }catch(e){console.warn(`FMP fetch failed for ${endpoint}: ${e.message}`);return null}
+}
+
+function debugFundData(){
+  const tk=prompt('Ticker to inspect (e.g. MU, AMD, NVDA):');
+  if(!tk)return;
+  const ticker=tk.trim().toUpperCase();
+  const el=document.getElementById('overviewContent');
+  let html='<div style="padding:16px;font-family:monospace;font-size:11px;overflow:auto;max-height:80vh">';
+  html+=`<h3>${ticker} Fund Data Debug</h3>`;
+
+  // cachedFundamentals
+  const fund=cachedFundamentals[ticker];
+  html+=`<h4>cachedFundamentals[${ticker}]</h4>`;
+  if(fund){
+    html+=`<pre style="white-space:pre-wrap;color:#ccc">${JSON.stringify(fund,null,2)}</pre>`;
+  }else{
+    html+=`<p style="color:#f66">Not found. Try underlying: ${getFundTicker(ticker)||'(none)'}</p>`;
+    const ftk=getFundTicker(ticker);
+    if(ftk&&cachedFundamentals[ftk]){
+      html+=`<h4>cachedFundamentals[${ftk}] (underlying)</h4>`;
+      html+=`<pre style="white-space:pre-wrap;color:#ccc">${JSON.stringify(cachedFundamentals[ftk],null,2)}</pre>`;
+    }
+  }
+
+  // fundHistory
+  const ftk2=getFundTicker(ticker)||ticker;
+  html+=`<h4>fundHistory[${ftk2}] (${(fundHistory[ftk2]||[]).length} entries)</h4>`;
+  const hist=fundHistory[ftk2]||[];
+  if(hist.length>0){
+    html+='<table style="border-collapse:collapse"><tr><th style="border:1px solid #555;padding:2px 6px">date</th><th style="border:1px solid #555;padding:2px 6px">epsNorm</th><th style="border:1px solid #555;padding:2px 6px">revNorm</th><th style="border:1px solid #555;padding:2px 6px">targetPrice</th></tr>';
+    for(const h of hist.slice(-20)){
+      html+=`<tr><td style="border:1px solid #555;padding:2px 6px">${h.date}</td><td style="border:1px solid #555;padding:2px 6px">${h.epsNorm?.toFixed(4)??'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.revNorm?Math.round(h.revNorm):'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.targetPrice?.toFixed(2)??'—'}</td></tr>`;
+    }
+    html+='</table>';
+  }else{
+    html+=`<p style="color:#f66">No fund_history entries</p>`;
+  }
+
+  // Also show what 1w/1m lookup would find
+  const d1w=new Date(Date.now()-7*86400000).toISOString().slice(0,10);
+  const d1m=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+  let e1w=null,e1m=null;
+  for(const h of hist){if(h.date<=d1w)e1w=h;if(h.date<=d1m)e1m=h}
+  html+=`<h4>Lookup results</h4>`;
+  html+=`<p>1w target date: ${d1w} → ${e1w?`${e1w.date} eps=${e1w.epsNorm?.toFixed(4)} tp=${e1w.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+  html+=`<p>1m target date: ${d1m} → ${e1m?`${e1m.date} eps=${e1m.epsNorm?.toFixed(4)} tp=${e1m.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+  html+=`<p>Current epsNorm: ${fund?.epsNorm?.toFixed(4)??'—'}, targetPrice: ${fund?.targetPrice?.toFixed(2)??'—'}</p>`;
+
+  html+='<br><button class="btn btn-s" onclick="computeOverview();renderOverview()">← Back to Overview</button></div>';
+  el.innerHTML=html;
 }
 
 async function debugEarnings(ticker){
@@ -1476,8 +1526,8 @@ function holdingsHeader(){
     <div><span>평균 / 현재가 (전일대비; 전주대비)</span><span>평가손익</span></div>
     <div><span>평가금액</span><span>매입금액</span></div>
     <div><span>P/E 12m (YOY%)</span><span>Rev 12m (YOY%)</span></div>
-    <div><span>EPS est. now &gt; 1w &gt; 1m</span></div>
-    <div><span>Target now &gt; 1w &gt; 1m</span></div>
+    <div><span>EPS12m now&gt;1w&gt;1m</span></div>
+    <div><span>TP now&gt;1w&gt;1m</span><span>B/H/S</span></div>
     <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
   </div>`;
 }
