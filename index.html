@@ -365,6 +365,12 @@ document.addEventListener('DOMContentLoaded',()=>{
   updateDataInfo();
   updatePriceInfo();
   updateFundInfo();
+  // Auto-refresh prices if stale (>30 min)
+  const priceEpoch=parseInt(localStorage.getItem('cache_priceEpoch')||'0');
+  const staleMs=30*60*1000;
+  if(Date.now()-priceEpoch>staleMs&&allTransactions.length>0){
+    refreshPrices();
+  }
 });
 
 function updateVerInfo(){
@@ -402,6 +408,7 @@ function savePriceTimestamp(){
   const hh=String(kst.getUTCHours()).padStart(2,'0');
   const mi=String(kst.getUTCMinutes()).padStart(2,'0');
   localStorage.setItem('cache_priceTimestamp',`${mm}-${dd} ${hh}:${mi}`);
+  localStorage.setItem('cache_priceEpoch',String(now.getTime()));
   updatePriceInfo();
 }
 
@@ -535,8 +542,21 @@ async function refreshData(){
   saveCache();
   saveDataTimestamp();
   populateInitCashFields();
+  // Also refresh prices so overview shows latest values
+  const tickers=getHeldTickers();
+  if(tickers.length){
+    cachedPrices=await fetchPrices(tickers);
+    saveCache();
+    savePriceTimestamp();
+  }
   computeOverview();
   renderOverview();
+  // Trigger chart recompute if chart tab is active or has been viewed
+  if(lastDailyValues){
+    lastDailyValues=null; // force full recompute on next chart view
+    dailyValueCache=null;
+    localStorage.removeItem('dv_tx_hash');
+  }
   toast('✅ 데이터 갱신 완료','ok');
 }
 
@@ -549,8 +569,8 @@ async function refreshPrices(){
   savePriceTimestamp();
   computeOverview();
   renderOverview();
-  // Also update chart if visible (re-render with new prices for last data point)
-  if(lastDailyValues&&document.getElementById('chartContent')?.offsetParent!==null){
+  // Update chart endpoint with new prices
+  if(lastDailyValues){
     redrawChart();
   }
   toast('✅ 가격 갱신 완료','ok');
