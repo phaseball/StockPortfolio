@@ -1616,9 +1616,6 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     // -- Col4 & Col5: EPS est / Target now > ~1w > ~1m --
     const ftk=getFundTicker(ticker);
     const hist=fundHistory[ftk]||[];
-    if(ticker==='AVGO'||ftk==='AVGO'){
-      console.log(`${ticker} (ftk=${ftk}) fundHistory entries: ${hist.length}`,hist.map(h=>`${h.date}:eps=${h.epsNorm?.toFixed(2)}`).join(', '));
-    }
     if(hist.length>=1){
       const today=new Date().toISOString().slice(0,10);
       const d1d=new Date(Date.now()-1*86400000).toISOString().slice(0,10);
@@ -3129,12 +3126,6 @@ async function drawHistoryChart(ticker,period,btn){
   // Compute correction ratio for this ticker (Yahoo is also split-adjusted like FMP)
   const corrRatios=computePriceCorrectionRatios({[ticker]:priceLookup});
   const corrR=corrRatios[ticker]||1;
-  if(ticker==='NVDL'){
-    const keys=Object.keys(priceLookup).sort();
-    console.log(`NVDL: corrR=${corrR}, Yahoo dates=${keys.length}, last5=${keys.slice(-5).map(k=>`${k}:$${priceLookup[k]?.toFixed(2)}`).join(', ')}`);
-    const tkTxs2=allTransactions.filter(t=>t.ticker==='NVDL').slice(-3);
-    for(const tx of tkTxs2)console.log(`  tx ${tx.date}: price=${tx.price.toFixed(2)}, origPrice=${tx.origPrice?.toFixed(2)}`);
-  }
   function findClose(date){
     let p=priceLookup[date];
     if(!p){
