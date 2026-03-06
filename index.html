@@ -374,12 +374,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   updateDataInfo();
   updatePriceInfo();
   updateFundInfo();
-  // Auto-refresh prices if stale (>30 min)
-  const priceEpoch=parseInt(localStorage.getItem('cache_priceEpoch')||'0');
-  const staleMs=30*60*1000;
-  if(Date.now()-priceEpoch>staleMs&&allTransactions.length>0){
-    refreshPrices();
-  }
 });
 
 function updateVerInfo(){
@@ -555,13 +549,6 @@ async function refreshData(){
   saveCache();
   saveDataTimestamp();
   populateInitCashFields();
-  // Also refresh prices so overview shows latest values
-  const tickers=getHeldTickers();
-  if(tickers.length){
-    cachedPrices=await fetchPrices(tickers);
-    saveCache();
-    savePriceTimestamp();
-  }
   computeOverview();
   renderOverview();
   // Trigger chart recompute if chart tab is active or has been viewed
@@ -1626,27 +1613,42 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
       revRow=`${revB}B${yoy}`;
     }
 
-    // -- Col4 & Col5: EPS est / Target now > 1w > 1m --
+    // -- Col4 & Col5: EPS est / Target now > ~1w > ~1m --
     const ftk=getFundTicker(ticker);
     const hist=fundHistory[ftk]||[];
     if(hist.length>=1){
+      const today=new Date().toISOString().slice(0,10);
+      const d1d=new Date(Date.now()-1*86400000).toISOString().slice(0,10);
       const d1w=new Date(Date.now()-7*86400000).toISOString().slice(0,10);
+      const d8d=new Date(Date.now()-8*86400000).toISOString().slice(0,10);
       const d1m=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
-      function findEntry(targetDate){
+
+      // Find best entry in a date range [from, to] (inclusive)
+      function findInRange(from,to){
         let best=null;
-        for(const h of hist){if(h.date<=targetDate)best=h}
+        for(const h of hist){
+          if(h.date>=from&&h.date<=to)best=h; // last (most recent) in range
+        }
         return best;
       }
-      const e1w=findEntry(d1w);
-      const e1m=findEntry(d1m);
+      // ~1w: any entry from yesterday back to 7 days ago
+      const e1w=findInRange(d1w,d1d);
+      // ~1m: any entry from 8 days ago back to 30 days ago
+      const e1m=findInRange(d1m,d8d);
+
+      function valStyle(now,prev){
+        if(prev==null)return 'color:var(--text3)';
+        if(now>prev*1.001)return 'color:#fff;font-weight:600'; // increased → bright white
+        if(now<prev*0.999)return 'color:#ef5350;font-weight:600'; // decreased → dark red
+        return 'color:var(--text3)'; // unchanged
+      }
 
       // EPS
       if(fund.epsNorm!=null){
         const nowEps=fund.epsNorm;
         const eps1w=e1w?.epsNorm;
         const eps1m=e1m?.epsNorm;
-        const nowUp=eps1w!=null&&nowEps>eps1w;
-        const nowStyle=nowUp?'color:#fff;font-weight:600':'color:var(--text)';
+        const nowStyle=valStyle(nowEps,eps1w);
         let parts=[`<span style="${nowStyle}">${nowEps.toFixed(2)}</span>`];
         if(eps1w!=null)parts.push(`<span style="color:var(--text3)">${eps1w.toFixed(2)}</span>`);
         else parts.push(`<span style="color:var(--text3)">—</span>`);
@@ -1660,8 +1662,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         const nowTgt=fund.targetPrice;
         const tgt1w=e1w?.targetPrice;
         const tgt1m=e1m?.targetPrice;
-        const tgtUp=tgt1w!=null&&nowTgt>tgt1w;
-        const tgtStyle=tgtUp?'color:#fff;font-weight:600':'color:var(--text)';
+        const tgtStyle=valStyle(nowTgt,tgt1w);
         // Today's TP with gap%
         let nowPart=`<span style="${tgtStyle}">$${nowTgt.toFixed(0)}</span>`;
         if(fund.price>0){
@@ -2165,6 +2166,17 @@ async function showTotalValueChart(){
   switchTab('chart');
   const el=document.getElementById('chartContent');
   el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 차트 데이터 계산 중...</p>';
+
+  // Quietly refresh prices if stale (>5 min)
+  const priceAge=Date.now()-parseInt(localStorage.getItem('cache_priceEpoch')||'0');
+  if(priceAge>5*60*1000&&allTransactions.length>0){
+    const tickers=getHeldTickers();
+    if(tickers.length){
+      cachedPrices=await fetchPrices(tickers);
+      saveCache();savePriceTimestamp();
+      computeOverview();renderOverview();
+    }
+  }
 
   const chronoTx=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
   if(chronoTx.length===0){el.innerHTML='<p style="color:var(--text2)">거래 내역이 없습니다</p>';return}
@@ -3072,6 +3084,16 @@ async function drawHistoryChart(ticker,period,btn){
   const container=document.getElementById('historyChartArea');
   if(!container)return;
 
+  // Quietly refresh current price if stale (>5 min)
+  const priceAge2=Date.now()-parseInt(localStorage.getItem('cache_priceEpoch')||'0');
+  if(priceAge2>5*60*1000){
+    try{
+      const p=await fetchPrices([ticker]);
+      if(p&&p[ticker])cachedPrices[ticker]=p[ticker];
+      saveCache();
+    }catch(e){}
+  }
+
   // Fetch historical daily prices from Yahoo (cached)
   if(!historyPriceCache[ticker]){
     container.innerHTML='<p style="color:var(--text2);font-size:11px;padding:8px"><span class="spinner"></span> Loading price history...</p>';
@@ -3198,16 +3220,18 @@ async function drawHistoryChart(ticker,period,btn){
     snapshots.length=0;snapshots.push(...expanded);
   }
 
-  // Update the last data point with current live price only if US market is active
+  // Add today's live price point only if US market is active
   if(snapshots.length>0&&usMarketActive){
     const last=snapshots[snapshots.length-1];
     const cp=cachedPrices[ticker];
     const curPrice=cp&&cp.current?cp.current:lastTxPrice;
-    last.totalValue=last.qty*curPrice;
-    last.price=curPrice;
-    // Add today point if not already present
     if(last.date!==todayDate&&last.qty>0){
+      // Add new today point without modifying the last historical point
       snapshots.push({date:todayDate, purchAmt:last.purchAmt, totalValue:last.qty*curPrice, realized:last.realized, qty:last.qty, price:curPrice});
+    }else if(last.date===todayDate){
+      // Today already exists (from Yahoo or snapshot) — update with live price
+      last.totalValue=last.qty*curPrice;
+      last.price=curPrice;
     }
   }
 
