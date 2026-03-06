@@ -374,6 +374,12 @@ document.addEventListener('DOMContentLoaded',()=>{
   updateDataInfo();
   updatePriceInfo();
   updateFundInfo();
+  // Load fund_history from Sheet (localStorage may be stale)
+  if(SHEET_ID||localStorage.getItem('sheet_id')){
+    loadFundHistory().then(()=>{
+      if(cachedOverviewData){computeOverview();renderOverview()}
+    });
+  }
 });
 
 function updateVerInfo(){
@@ -672,6 +678,33 @@ async function debugEarnings(ticker){
 }
 
 // Fetch quarterly earnings actuals for a ticker using 15-day windows
+async function loadFundHistory(){
+  if(!SHEET_ID||!SA_KEY)return;
+  try{
+    const histRows=await sheetsGet('fund_history!A2:E5000');
+    fundHistory={};
+    if(Array.isArray(histRows)){
+      for(const r of histRows){
+        if(!r[0]||!r[1])continue;
+        const dt=String(r[0]).trim();
+        const tk=String(r[1]).trim().toUpperCase();
+        if(!fundHistory[tk])fundHistory[tk]=[];
+        fundHistory[tk].push({
+          date:dt,
+          epsNorm:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
+          revNorm:r[3]!=null&&r[3]!==''?parseFloat(r[3]):null,
+          targetPrice:r[4]!=null&&r[4]!==''?parseFloat(r[4]):null
+        });
+      }
+      for(const tk of Object.keys(fundHistory)){
+        fundHistory[tk].sort((a,b)=>a.date.localeCompare(b.date));
+      }
+    }
+    localStorage.setItem('cache_fundHistory',JSON.stringify(fundHistory));
+    console.log('fund_history loaded from Sheet:',Object.keys(fundHistory).length,'tickers');
+  }catch(e){console.warn('fund_history not found:',e)}
+}
+
 async function refreshFundamentals(){
   if(!FMP_KEY){toast('⚙️ 설정에서 FMP API Key를 입력하세요','err');return}
   const toastEl=document.getElementById('toast');
@@ -717,32 +750,7 @@ async function refreshFundamentals(){
     }
 
     // Load fund_history for EPS change tracking (1w/1m)
-    if(SHEET_ID&&SA_KEY){
-      try{
-        showFetching('📊 Loading fund_history...');
-        const histRows=await sheetsGet('fund_history!A2:E5000');
-        fundHistory={};
-        if(Array.isArray(histRows)){
-          for(const r of histRows){
-            if(!r[0]||!r[1])continue;
-            const dt=String(r[0]).trim();
-            const tk=String(r[1]).trim().toUpperCase();
-            if(!fundHistory[tk])fundHistory[tk]=[];
-            fundHistory[tk].push({
-              date:dt,
-              epsNorm:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
-              revNorm:r[3]!=null&&r[3]!==''?parseFloat(r[3]):null,
-              targetPrice:r[4]!=null&&r[4]!==''?parseFloat(r[4]):null
-            });
-          }
-          // Sort each ticker's history by date
-          for(const tk of Object.keys(fundHistory)){
-            fundHistory[tk].sort((a,b)=>a.date.localeCompare(b.date));
-          }
-        }
-        console.log('fund_history loaded:',Object.keys(fundHistory).length,'tickers');
-      }catch(e){console.warn('fund_history not found:',e)}
-    }
+    await loadFundHistory();
 
     let idx=0;
     for(const tk of fundTickers){
