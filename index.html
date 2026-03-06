@@ -690,7 +690,8 @@ async function debugEarnings(ticker){
 async function loadFundHistory(){
   if(!SHEET_ID||!SA_KEY)return;
   try{
-    const histRows=await sheetsGet('fund_history!A2:E5000');
+    const resp=await sheetsGet('fund_history!A2:E5000');
+    const histRows=resp.values||resp;
     fundHistory={};
     if(Array.isArray(histRows)){
       for(const r of histRows){
@@ -737,7 +738,8 @@ async function refreshFundamentals(){
     if(SHEET_ID&&SA_KEY){
       try{
         showFetching('📊 Loading eps_actuals from sheet...');
-        const rows=await sheetsGet('eps_actuals!A2:E200');
+        const epsResp=await sheetsGet('eps_actuals!A2:E200');
+        const rows=epsResp&&epsResp.values?epsResp.values:(Array.isArray(epsResp)?epsResp:[]);
         if(Array.isArray(rows)){
           for(const r of rows){
             if(!r[0]||!r[1])continue;
@@ -1127,7 +1129,8 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
         // Read existing sheet to preserve manual entries
         let existingManual={};
         try{
-          const existing=await sheetsGet('eps_actuals!A2:E200');
+          const existingResp=await sheetsGet('eps_actuals!A2:E200');
+          const existing=existingResp&&existingResp.values?existingResp.values:(Array.isArray(existingResp)?existingResp:[]);
           if(Array.isArray(existing)){
             for(const r of existing){
               if(r[4]==='manual'){
