@@ -1647,14 +1647,13 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
       const localD8d=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-8*msDay));
       const localD1m=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-30*msDay));
 
-      // ~1w: most recent entry that is NOT today, up to 7 days ago
-      // ~1m: most recent entry from 8-30 days ago
+      // ~1w: oldest entry from yesterday back to 7 days ago (farthest for biggest change)
+      // ~1m: oldest entry from 8-30 days ago
       function findInRange(from,to){
-        let best=null;
         for(const h of hist){
-          if(h.date>=from&&h.date<=to)best=h;
+          if(h.date>=from&&h.date<=to)return h; // first match = oldest (hist sorted by date)
         }
-        return best;
+        return null;
       }
       const e1w=findInRange(localD1w,localD1d);
       const e1m=findInRange(localD1m,localD8d);
