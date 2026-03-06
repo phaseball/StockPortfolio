@@ -643,13 +643,22 @@ function debugFundData(){
   }
 
   // Also show what 1w/1m lookup would find
-  const d1w=new Date(Date.now()-7*86400000).toISOString().slice(0,10);
-  const d1m=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+  const _now=new Date();const msDay=86400000;
+  const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const localToday=fmt(_now);
+  const localD1d=fmt(new Date(_now-1*msDay));
+  const localD1w=fmt(new Date(_now-7*msDay));
+  const localD8d=fmt(new Date(_now-8*msDay));
+  const localD1m=fmt(new Date(_now-30*msDay));
   let e1w=null,e1m=null;
-  for(const h of hist){if(h.date<=d1w)e1w=h;if(h.date<=d1m)e1m=h}
+  for(const h of hist){
+    if(h.date>=localD1w&&h.date<=localD1d)e1w=h;
+    if(h.date>=localD1m&&h.date<=localD8d)e1m=h;
+  }
   html+=`<h4>Lookup results</h4>`;
-  html+=`<p>1w target date: ${d1w} → ${e1w?`${e1w.date} eps=${e1w.epsNorm?.toFixed(4)} tp=${e1w.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
-  html+=`<p>1m target date: ${d1m} → ${e1m?`${e1m.date} eps=${e1m.epsNorm?.toFixed(4)} tp=${e1m.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+  html+=`<p>today(local): ${localToday}, d1d: ${localD1d}, d1w: ${localD1w}</p>`;
+  html+=`<p>~1w (${localD1w}~${localD1d}): ${e1w?`${e1w.date} eps=${e1w.epsNorm?.toFixed(4)} tp=${e1w.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+  html+=`<p>~1m (${localD1m}~${localD8d}): ${e1m?`${e1m.date} eps=${e1m.epsNorm?.toFixed(4)} tp=${e1m.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
   html+=`<p>Current epsNorm: ${fund?.epsNorm?.toFixed(4)??'—'}, targetPrice: ${fund?.targetPrice?.toFixed(2)??'—'}</p>`;
 
   html+='<br><button class="btn btn-s" onclick="computeOverview();renderOverview()">← Back to Overview</button></div>';
@@ -1014,7 +1023,8 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
   if(!SHEET_ID||!SA_KEY)return;
   try{
     const token=await getAccessToken();
-    const today=new Date().toISOString().slice(0,10);
+    const _n=new Date();
+    const today=`${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`;
 
     // Ensure eps_actuals tab has header
     try{
@@ -1625,24 +1635,26 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     const ftk=getFundTicker(ticker);
     const hist=fundHistory[ftk]||[];
     if(hist.length>=1){
-      const today=new Date().toISOString().slice(0,10);
-      const d1d=new Date(Date.now()-1*86400000).toISOString().slice(0,10);
-      const d1w=new Date(Date.now()-7*86400000).toISOString().slice(0,10);
-      const d8d=new Date(Date.now()-8*86400000).toISOString().slice(0,10);
-      const d1m=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+      // Use local dates for comparison (consistent with when Fund. was run)
+      const now=new Date();
+      const localToday=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+      const msDay=86400000;
+      const localD1d=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-1*msDay));
+      const localD1w=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-7*msDay));
+      const localD8d=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-8*msDay));
+      const localD1m=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-30*msDay));
 
-      // Find best entry in a date range [from, to] (inclusive)
+      // ~1w: most recent entry that is NOT today, up to 7 days ago
+      // ~1m: most recent entry from 8-30 days ago
       function findInRange(from,to){
         let best=null;
         for(const h of hist){
-          if(h.date>=from&&h.date<=to)best=h; // last (most recent) in range
+          if(h.date>=from&&h.date<=to)best=h;
         }
         return best;
       }
-      // ~1w: any entry from yesterday back to 7 days ago
-      const e1w=findInRange(d1w,d1d);
-      // ~1m: any entry from 8 days ago back to 30 days ago
-      const e1m=findInRange(d1m,d8d);
+      const e1w=findInRange(localD1w,localD1d);
+      const e1m=findInRange(localD1m,localD8d);
 
       function valStyle(now,prev){
         if(prev==null)return 'color:var(--text3)';
