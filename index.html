@@ -171,6 +171,7 @@ table.t tr:hover td{background:var(--accentBg)}
         <button class="btn btn-s btn-sm" onclick="refreshPrices()" title="현재가 업데이트">🔄 Price</button>
         <button class="btn btn-s btn-sm" onclick="refreshFundamentals()" title="P/E, EPS 업데이트">🔄 Fund.</button>
         <button class="btn btn-s btn-sm" onclick="debugFundData()" title="EPS/Fund 디버그" style="font-size:9px">🔍 EPS</button>
+        <button class="btn btn-s btn-sm" onclick="dedupFundHistory()" title="fund_history 중복 제거" style="font-size:9px">🧹 Dedup</button>
       </div>
     </div>
     <div style="text-align:right;font-size:10px;color:var(--text3);margin-bottom:8px;margin-top:-8px">
@@ -687,6 +688,40 @@ async function debugEarnings(ticker){
 }
 
 // Fetch quarterly earnings actuals for a ticker using 15-day windows
+async function dedupFundHistory(){
+  if(!SHEET_ID||!SA_KEY){toast('Sheet 설정 필요','err');return}
+  if(!confirm('fund_history 탭의 중복 행을 제거합니다. 계속?'))return;
+  toast('🧹 중복 제거 중...','ok');
+  try{
+    const token=await getAccessToken();
+    const resp=await sheetsGet('fund_history!A:E');
+    const allRows=resp&&resp.values?resp.values:[];
+    if(allRows.length<=1){toast('데이터 없음','err');return}
+    const header=allRows[0];
+    const seen=new Set();
+    const unique=[header];
+    let dupes=0;
+    for(let i=1;i<allRows.length;i++){
+      const r=allRows[i];
+      const key=`${(r[0]||'').trim()}|${(r[1]||'').trim().toUpperCase()}`;
+      if(seen.has(key)){dupes++;continue}
+      seen.add(key);
+      unique.push(r);
+    }
+    if(dupes===0){toast('중복 없음 ✅','ok');return}
+    // Clear and rewrite
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:E:clear`,{
+      method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:E?valueInputOption=USER_ENTERED`,{
+      method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({values:unique})});
+    // Reload
+    await loadFundHistory();
+    computeOverview();renderOverview();
+    toast(`✅ ${dupes}개 중복 제거 완료 (${allRows.length-1} → ${unique.length-1}행)`,'ok');
+  }catch(e){toast('오류: '+e.message,'err');console.error(e)}
+}
+
 async function loadFundHistory(){
   if(!SHEET_ID||!SA_KEY)return;
   try{
