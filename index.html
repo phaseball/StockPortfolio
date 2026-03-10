@@ -361,6 +361,34 @@ let cachedPrices={};
 let cachedFundamentals={};
 let fundHistory={}; // {ticker: [{date, epsNorm, revNorm, targetPrice}]}
 const CACHE_KEY_TX='cache_transactions';
+
+// US Eastern Time date utilities
+function etNow(){
+  // Returns {year,month,day,hour,weekday,dateStr(YYYY-MM-DD),yymmdd} in US ET
+  const now=new Date();
+  const fmt=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hour12:false,weekday:'short'});
+  const p=fmt.formatToParts(now);
+  const year=p.find(x=>x.type==='year').value;
+  const month=p.find(x=>x.type==='month').value;
+  const day=p.find(x=>x.type==='day').value;
+  const hour=parseInt(p.find(x=>x.type==='hour').value);
+  const weekday=p.find(x=>x.type==='weekday').value;
+  return{year,month,day,hour,weekday,
+    dateStr:`${year}-${month}-${day}`,
+    yymmdd:year.slice(2)+month+day,
+    isWeekday:!['Sat','Sun'].includes(weekday),
+    marketActive:!['Sat','Sun'].includes(weekday)&&hour>=4};
+}
+function etDateStr(daysAgo){
+  // Returns YYYY-MM-DD in ET for N days ago
+  const d=new Date(Date.now()-daysAgo*86400000);
+  const fmt=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
+  const parts=fmt.format(d).split('/');
+  return`${parts[2]}-${parts[0]}-${parts[1]}`;
+}
+function etYymmdd(daysAgo){
+  const s=etDateStr(daysAgo||0);return s.slice(2,4)+s.slice(5,7)+s.slice(8,10);
+}
 const CACHE_KEY_PRICES='cache_prices';
 const CACHE_KEY_FUND='cache_fundamentals';
 const CACHE_KEY_CASH='cache_initialCash2';
@@ -644,22 +672,16 @@ function debugFundData(){
   }
 
   // Also show what 1w/1m lookup would find
-  const _now=new Date();const msDay=86400000;
-  const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  const localToday=fmt(_now);
-  const localD1d=fmt(new Date(_now-1*msDay));
-  const localD1w=fmt(new Date(_now-7*msDay));
-  const localD8d=fmt(new Date(_now-8*msDay));
-  const localD1m=fmt(new Date(_now-30*msDay));
+  const _etD1d=etDateStr(1),_etD1w=etDateStr(7),_etD8d=etDateStr(8),_etD1m=etDateStr(30);
   let e1w=null,e1m=null;
   for(const h of hist){
-    if(h.date>=localD1w&&h.date<=localD1d)e1w=h;
-    if(h.date>=localD1m&&h.date<=localD8d)e1m=h;
+    if(h.date>=_etD1w&&h.date<=_etD1d&&!e1w)e1w=h;
+    if(h.date>=_etD1m&&h.date<=_etD8d&&!e1m)e1m=h;
   }
-  html+=`<h4>Lookup results</h4>`;
-  html+=`<p>today(local): ${localToday}, d1d: ${localD1d}, d1w: ${localD1w}</p>`;
-  html+=`<p>~1w (${localD1w}~${localD1d}): ${e1w?`${e1w.date} eps=${e1w.epsNorm?.toFixed(4)} tp=${e1w.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
-  html+=`<p>~1m (${localD1m}~${localD8d}): ${e1m?`${e1m.date} eps=${e1m.epsNorm?.toFixed(4)} tp=${e1m.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+  html+=`<h4>Lookup results (ET dates)</h4>`;
+  html+=`<p>today(ET): ${etNow().dateStr}, d1d: ${_etD1d}, d1w: ${_etD1w}</p>`;
+  html+=`<p>~1w (${_etD1w}~${_etD1d}): ${e1w?`${e1w.date} eps=${e1w.epsNorm?.toFixed(4)} tp=${e1w.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+  html+=`<p>~1m (${_etD1m}~${_etD8d}): ${e1m?`${e1m.date} eps=${e1m.epsNorm?.toFixed(4)} tp=${e1m.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
   html+=`<p>Current epsNorm: ${fund?.epsNorm?.toFixed(4)??'—'}, targetPrice: ${fund?.targetPrice?.toFixed(2)??'—'}</p>`;
 
   html+='<br><button class="btn btn-s" onclick="computeOverview();renderOverview()">← Back to Overview</button></div>';
@@ -1023,7 +1045,7 @@ async function refreshFundamentals(){
         targetPrice, targetHigh, targetLow,
         strongBuy, buy, hold, sell, strongSell, consensus,
         annual:annual||[],
-        fetchDate:new Date().toISOString().slice(0,10)
+        fetchDate:etNow().dateStr
       };
       console.log(`${tk} RESULT:`,newFund[tk]);
     }
@@ -1060,8 +1082,7 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
   if(!SHEET_ID||!SA_KEY)return;
   try{
     const token=await getAccessToken();
-    const _n=new Date();
-    const today=`${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`;
+    const today=etNow().dateStr;
 
     // Ensure eps_actuals tab has header
     try{
@@ -1673,14 +1694,10 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     const ftk=getFundTicker(ticker);
     const hist=fundHistory[ftk]||[];
     if(hist.length>=1){
-      // Use local dates for comparison (consistent with when Fund. was run)
-      const now=new Date();
-      const localToday=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
-      const msDay=86400000;
-      const localD1d=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-1*msDay));
-      const localD1w=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-7*msDay));
-      const localD8d=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-8*msDay));
-      const localD1m=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-30*msDay));
+      const etD1d=etDateStr(1);
+      const etD1w=etDateStr(7);
+      const etD8d=etDateStr(8);
+      const etD1m=etDateStr(30);
 
       // ~1w: oldest entry from yesterday back to 7 days ago (farthest for biggest change)
       // ~1m: oldest entry from 8-30 days ago
@@ -1690,8 +1707,8 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         }
         return null;
       }
-      const e1w=findInRange(localD1w,localD1d);
-      const e1m=findInRange(localD1m,localD8d);
+      const e1w=findInRange(etD1w,etD1d);
+      const e1m=findInRange(etD1m,etD8d);
 
       function valStyle(now,prev){
         if(prev==null)return 'color:var(--text3)';
@@ -1892,13 +1909,12 @@ async function fetchBenchmark(ticker){
         const ts=d.chart?.result?.[0]?.timestamp||[];
         const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
         const arr=[];
+        const etFmtB=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
         for(let i=0;i<ts.length;i++){
           if(closes[i]==null)continue;
-          const dt=new Date(ts[i]*1000);
-          const yy=String(dt.getFullYear()).slice(2);
-          const mm=String(dt.getMonth()+1).padStart(2,'0');
-          const dd=String(dt.getDate()).padStart(2,'0');
-          arr.push({date:`${yy}${mm}${dd}`,close:closes[i]});
+          const parts=etFmtB.format(new Date(ts[i]*1000)).split('/'); // MM/DD/YYYY
+          const date=parts[2].slice(2)+parts[0]+parts[1]; // YYMMDD
+          arr.push({date,close:closes[i]});
         }
         if(arr.length>0){chartBenchData[ticker]=arr;break}
       }catch(e){continue}
@@ -2363,13 +2379,13 @@ function redrawChart(dailyValues){
 
   // Period filter
   if(chartPeriod!=='total'){
-    const now=new Date();
+    const et=etNow();
+    const etY=parseInt(et.year),etM=parseInt(et.month)-1,etD=parseInt(et.day);
     let cutoff,cutEnd=null;
-    if(chartPeriod==='1y')cutoff=new Date(now.getFullYear()-1,now.getMonth(),now.getDate());
-    else if(chartPeriod==='6m')cutoff=new Date(now.getFullYear(),now.getMonth()-6,now.getDate());
-    else if(chartPeriod==='3m')cutoff=new Date(now.getFullYear(),now.getMonth()-3,now.getDate());
+    if(chartPeriod==='1y')cutoff=new Date(etY-1,etM,etD);
+    else if(chartPeriod==='6m')cutoff=new Date(etY,etM-6,etD);
+    else if(chartPeriod==='3m')cutoff=new Date(etY,etM-3,etD);
     else if(/^\d{4}$/.test(chartPeriod)){
-      // Year filter: e.g. "2025"
       const yr=parseInt(chartPeriod);
       cutoff=new Date(yr,0,1);
       cutEnd=new Date(yr,11,31);
@@ -2529,10 +2545,7 @@ function redrawChart(dailyValues){
   const baseValue=chartData.length>0&&chartData[0]._baseValue?chartData[0]._baseValue:1;
 
   // Fix last data point: use actual current prices if US market is active
-  const nowET=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',hour12:false}).format(new Date());
-  const etHourNow=parseInt(nowET);
-  const nowDay=new Date().getDay();
-  const usMarketActiveNow=nowDay>=1&&nowDay<=5&&etHourNow>=4;
+  const usMarketActiveNow=etNow().marketActive;
 
   let actualTotalAsset=null;
   if(usMarketActiveNow){
@@ -3244,18 +3257,9 @@ async function drawHistoryChart(ticker,period,btn){
     }
   }
   pendingSnap();
-  const now=new Date();
-  // Use US Eastern time for all date/market checks
-  const etFmtFull=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hour12:false,weekday:'short'});
-  const etParts=etFmtFull.formatToParts(now);
-  const etYear=etParts.find(p=>p.type==='year').value;
-  const etMonth=etParts.find(p=>p.type==='month').value;
-  const etDay=etParts.find(p=>p.type==='day').value;
-  const etHour=parseInt(etParts.find(p=>p.type==='hour').value);
-  const etWeekday=etParts.find(p=>p.type==='weekday').value; // Mon,Tue,...
-  const todayDate=etYear.slice(2)+etMonth+etDay;
-  const isWeekdayET=!['Sat','Sun'].includes(etWeekday);
-  const usMarketActive=isWeekdayET&&etHour>=4;
+  const _et=etNow();
+  const todayDate=_et.yymmdd;
+  const usMarketActive=_et.marketActive;
 
   // Expand snapshots: insert daily Yahoo price points between tx dates for smooth 평가액 line
   // purchAmt and realized stay flat between tx dates; only totalValue changes daily
@@ -3296,9 +3300,11 @@ async function drawHistoryChart(ticker,period,btn){
   // Period filter
   let data=[...snapshots];
   if(period!=='total'){
+    const et2=etNow();
+    const etY2=parseInt(et2.year),etM2=parseInt(et2.month)-1,etD2=parseInt(et2.day);
     let cutoff;
-    if(period==='1y')cutoff=new Date(now.getFullYear()-1,now.getMonth(),now.getDate());
-    else if(period==='6m')cutoff=new Date(now.getFullYear(),now.getMonth()-6,now.getDate());
+    if(period==='1y')cutoff=new Date(etY2-1,etM2,etD2);
+    else if(period==='6m')cutoff=new Date(etY2,etM2-6,etD2);
     const cutStr=String(cutoff.getFullYear()).slice(2)+String(cutoff.getMonth()+1).padStart(2,'0')+String(cutoff.getDate()).padStart(2,'0');
     let startSnap=null;
     for(let i=data.length-1;i>=0;i--){if(data[i].date<=cutStr){startSnap=data[i];break}}
