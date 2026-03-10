@@ -639,54 +639,64 @@ function debugFundData(){
   const tk=prompt('Ticker to inspect (e.g. MU, AMD, NVDA):');
   if(!tk)return;
   const ticker=tk.trim().toUpperCase();
+  const ftk0=getFundTicker(ticker)||ticker;
   const el=document.getElementById('overviewContent');
-  let html='<div style="padding:16px;font-family:monospace;font-size:11px;overflow:auto;max-height:80vh">';
-  html+=`<h3>${ticker} Fund Data Debug</h3>`;
+  el.innerHTML='<p style="color:var(--text2);padding:16px">Loading FMP live data...</p>';
 
-  // cachedFundamentals
-  const fund=cachedFundamentals[ticker];
-  html+=`<h4>cachedFundamentals[${ticker}]</h4>`;
-  if(fund){
-    html+=`<pre style="white-space:pre-wrap;color:#ccc">${JSON.stringify(fund,null,2)}</pre>`;
-  }else{
-    html+=`<p style="color:#f66">Not found. Try underlying: ${getFundTicker(ticker)||'(none)'}</p>`;
-    const ftk=getFundTicker(ticker);
-    if(ftk&&cachedFundamentals[ftk]){
-      html+=`<h4>cachedFundamentals[${ftk}] (underlying)</h4>`;
-      html+=`<pre style="white-space:pre-wrap;color:#ccc">${JSON.stringify(cachedFundamentals[ftk],null,2)}</pre>`;
+  const fetchLive=FMP_KEY?Promise.all([
+    fmpGet(`price-target-consensus?symbol=${ftk0}`),
+    fmpGet(`price-target?symbol=${ftk0}&limit=5`),
+    fmpGet(`analyst-estimates?symbol=${ftk0}&period=annual&limit=3`)
+  ]):Promise.resolve([null,null,null]);
+
+  fetchLive.then(([ptConsensus,ptRecent,annualEst])=>{
+    let html='<div style="padding:16px;font-family:monospace;font-size:11px;overflow:auto;max-height:80vh">';
+    html+=`<h3>${ticker} (underlying: ${ftk0}) Fund Data Debug</h3>`;
+
+    html+=`<h4>FMP Live: price-target-consensus</h4>`;
+    html+=`<pre style="white-space:pre-wrap;color:#afc">${JSON.stringify(ptConsensus,null,2)}</pre>`;
+    html+=`<h4>FMP Live: price-target (recent 5 analyst targets)</h4>`;
+    html+=`<pre style="white-space:pre-wrap;color:#afc">${JSON.stringify(ptRecent,null,2)}</pre>`;
+    html+=`<h4>FMP Live: analyst-estimates (annual, 3yr)</h4>`;
+    html+=`<pre style="white-space:pre-wrap;color:#afc">${JSON.stringify(annualEst,null,2)}</pre>`;
+
+    const fund=cachedFundamentals[ticker]||cachedFundamentals[ftk0];
+    html+=`<h4>cachedFundamentals[${ticker}]</h4>`;
+    if(fund){
+      html+=`<pre style="white-space:pre-wrap;color:#ccc">${JSON.stringify(fund,null,2)}</pre>`;
+    }else{
+      html+=`<p style="color:#f66">Not found</p>`;
     }
-  }
 
-  // fundHistory
-  const ftk2=getFundTicker(ticker)||ticker;
-  html+=`<h4>fundHistory[${ftk2}] (${(fundHistory[ftk2]||[]).length} entries)</h4>`;
-  const hist=fundHistory[ftk2]||[];
-  if(hist.length>0){
-    html+='<table style="border-collapse:collapse"><tr><th style="border:1px solid #555;padding:2px 6px">date</th><th style="border:1px solid #555;padding:2px 6px">epsNorm</th><th style="border:1px solid #555;padding:2px 6px">revNorm</th><th style="border:1px solid #555;padding:2px 6px">targetPrice</th></tr>';
-    for(const h of hist.slice(-20)){
-      html+=`<tr><td style="border:1px solid #555;padding:2px 6px">${h.date}</td><td style="border:1px solid #555;padding:2px 6px">${h.epsNorm?.toFixed(4)??'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.revNorm?Math.round(h.revNorm):'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.targetPrice?.toFixed(2)??'—'}</td></tr>`;
+    const hist=fundHistory[ftk0]||[];
+    html+=`<h4>fundHistory[${ftk0}] (${hist.length} entries)</h4>`;
+    if(hist.length>0){
+      html+='<table style="border-collapse:collapse"><tr><th style="border:1px solid #555;padding:2px 6px">date</th><th style="border:1px solid #555;padding:2px 6px">epsNorm</th><th style="border:1px solid #555;padding:2px 6px">revNorm</th><th style="border:1px solid #555;padding:2px 6px">targetPrice</th></tr>';
+      for(const h of hist.slice(-20)){
+        html+=`<tr><td style="border:1px solid #555;padding:2px 6px">${h.date}</td><td style="border:1px solid #555;padding:2px 6px">${h.epsNorm?.toFixed(4)??'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.revNorm?Math.round(h.revNorm):'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.targetPrice?.toFixed(2)??'—'}</td></tr>`;
+      }
+      html+='</table>';
+    }else{
+      html+=`<p style="color:#f66">No fund_history entries</p>`;
     }
-    html+='</table>';
-  }else{
-    html+=`<p style="color:#f66">No fund_history entries</p>`;
-  }
 
-  // Also show what 1w/1m lookup would find
-  const _etD1d=etDateStr(1),_etD1w=etDateStr(7),_etD8d=etDateStr(8),_etD1m=etDateStr(30);
-  let e1w=null,e1m=null;
-  for(const h of hist){
-    if(h.date>=_etD1w&&h.date<=_etD1d&&!e1w)e1w=h;
-    if(h.date>=_etD1m&&h.date<=_etD8d&&!e1m)e1m=h;
-  }
-  html+=`<h4>Lookup results (ET dates)</h4>`;
-  html+=`<p>today(ET): ${etNow().dateStr}, d1d: ${_etD1d}, d1w: ${_etD1w}</p>`;
-  html+=`<p>~1w (${_etD1w}~${_etD1d}): ${e1w?`${e1w.date} eps=${e1w.epsNorm?.toFixed(4)} tp=${e1w.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
-  html+=`<p>~1m (${_etD1m}~${_etD8d}): ${e1m?`${e1m.date} eps=${e1m.epsNorm?.toFixed(4)} tp=${e1m.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
-  html+=`<p>Current epsNorm: ${fund?.epsNorm?.toFixed(4)??'—'}, targetPrice: ${fund?.targetPrice?.toFixed(2)??'—'}</p>`;
+    const _etD1d=etDateStr(1),_etD1w=etDateStr(7),_etD8d=etDateStr(8),_etD1m=etDateStr(30);
+    let e1w=null,e1m=null;
+    for(const h of hist){
+      if(h.date>=_etD1w&&h.date<=_etD1d&&!e1w)e1w=h;
+      if(h.date>=_etD1m&&h.date<=_etD8d&&!e1m)e1m=h;
+    }
+    html+=`<h4>Lookup results (ET dates)</h4>`;
+    html+=`<p>today(ET): ${etNow().dateStr}, d1d: ${_etD1d}, d1w: ${_etD1w}</p>`;
+    html+=`<p>~1w: ${e1w?`${e1w.date} eps=${e1w.epsNorm?.toFixed(4)} tp=${e1w.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+    html+=`<p>~1m: ${e1m?`${e1m.date} eps=${e1m.epsNorm?.toFixed(4)} tp=${e1m.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+    html+=`<p>Current epsNorm: ${fund?.epsNorm?.toFixed(4)??'—'}, targetPrice: ${fund?.targetPrice?.toFixed(2)??'—'}</p>`;
 
-  html+='<br><button class="btn btn-s" onclick="computeOverview();renderOverview()">← Back to Overview</button></div>';
-  el.innerHTML=html;
+    html+='<br><button class="btn btn-s" onclick="computeOverview();renderOverview()">← Back to Overview</button></div>';
+    el.innerHTML=html;
+  });
 }
+
 
 async function debugEarnings(ticker){
   if(!FMP_KEY){toast('FMP Key 없음','err');return}
