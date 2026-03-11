@@ -2059,6 +2059,18 @@ async function computeDailyValues(el){
     }
   }
 
+  // Cache version — bump when price/date logic changes to force recompute
+  const DV_CACHE_VER='v3-et';
+  const prevVer=localStorage.getItem('dv_cache_ver')||'';
+  if(prevVer!==DV_CACHE_VER){
+    console.log(`daily_value: cache version changed (${prevVer} → ${DV_CACHE_VER}), clearing all`);
+    stored={};
+    localStorage.setItem('dv_cache_ver',DV_CACHE_VER);
+    localStorage.removeItem('dv_tx_hash');
+    dailyValueCache={};
+    saveDVCache();
+  }
+
   // Find missing dates
   // Also invalidate dates where transactions exist but cache may be stale
   // Compare tx hash to detect changes since last compute
