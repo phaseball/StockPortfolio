@@ -403,17 +403,15 @@ document.addEventListener('DOMContentLoaded',async()=>{
   updateDataInfo();
   updatePriceInfo();
   updateFundInfo();
-  // Load fund_history from Sheet (localStorage may be stale)
   if(SHEET_ID||localStorage.getItem('sheet_id')){
     loadFundHistory().then(()=>{
       if(cachedOverviewData){computeOverview();renderOverview()}
     });
-    // Pre-load daily_value from Sheet into cache for chart/ticker history
+    // Preload daily_value from Sheet for charts
     loadDailyValuesFromSheet().then(fromSheet=>{
       if(Object.keys(fromSheet).length>0){
         dailyValueCache={...(dailyValueCache||{}),...fromSheet};
         saveDVCache();
-        console.log(`Preloaded ${Object.keys(fromSheet).length} daily_value rows from Sheet`);
       }
     }).catch(()=>{});
   }
@@ -605,9 +603,9 @@ async function refreshData(){
   renderOverview();
   // Trigger chart recompute if chart tab is active or has been viewed
   if(lastDailyValues){
-    lastDailyValues=null; // force full recompute on next chart view
+    lastDailyValues=null;
     dailyValueCache=null;
-    historyPriceCache={}; // clear per-ticker price cache from daily_value
+    historyPriceCache={};
     localStorage.removeItem('dv_tx_hash');
   }
   toast('✅ 데이터 갱신 완료','ok');
@@ -618,14 +616,26 @@ async function refreshPrices(){
   if(!tickers.length){toast('보유 종목 없음','err');return}
   toast('💲 가격 불러오는 중...','ok');
 
-  // Step 1: Fetch current prices for all held tickers (small set, ~30 calls)
-  cachedPrices=await fetchPrices(tickers);
+  // Step 1: FMP batch quote — ONE call for all held tickers (no CORS proxy needed)
+  if(FMP_KEY){
+    const fmpPrices=await fetchFmpBatchQuote(tickers);
+    if(Object.keys(fmpPrices).length>0){
+      cachedPrices={...cachedPrices,...fmpPrices};
+    }else{
+      console.warn('FMP batch quote returned nothing, trying Yahoo fallback');
+      const yPrices=await fetchPrices(tickers);
+      cachedPrices={...cachedPrices,...yPrices};
+    }
+  }else{
+    // No FMP key — use old Yahoo fetch
+    cachedPrices=await fetchPrices(tickers);
+  }
   saveCache();
   savePriceTimestamp();
   computeOverview();
   renderOverview();
 
-  // Step 2: Update daily_value for missing recent days
+  // Step 2: Update daily_value for missing recent days (FMP history, no CORS)
   if(SHEET_ID&&SA_KEY&&allTransactions.length>0){
     try{
       await updateDailyValuesIncremental();
@@ -633,14 +643,83 @@ async function refreshPrices(){
     }catch(e){console.warn('daily_value incremental update failed:',e)}
   }
 
-  // Update chart endpoint with new prices
+  // Update chart if visible
   if(lastDailyValues){
     redrawChart();
   }
   toast('✅ 가격 갱신 완료','ok');
 }
 
-// Incremental daily_value update: only fetch missing recent days
+// FMP batch quote: ONE API call for all tickers → {ticker: {current,prevClose,chgDay,chgWeek}}
+async function fetchFmpBatchQuote(tickers){
+  const prices={};
+  if(!FMP_KEY||tickers.length===0)return prices;
+  const symbols=tickers.join(',');
+  try{
+    const data=await fmpGet(`quote?symbol=${symbols}`);
+    const arr=Array.isArray(data)?data:(data?[data]:[]);
+    for(const q of arr){
+      if(!q||!q.symbol)continue;
+      const tk=q.symbol;
+      prices[tk]={
+        current:q.price||0,
+        prevClose:q.previousClose||q.price||0,
+        chgDay:q.changesPercentage||0,
+        chgWeek:0  // FMP batch doesn't give weekly; we compute below
+      };
+    }
+    // Compute weekly change from FMP 5-day history for tickers that succeeded
+    // Only for held tickers (small set), sequential with 200ms delay
+    for(const tk of tickers){
+      if(!prices[tk])continue;
+      try{
+        const hist=await fetchFmpHistoryDays(tk,7);
+        if(hist.length>=5){
+          const weekPrice=hist[hist.length-5].close;
+          const curPrice=prices[tk].current;
+          prices[tk].chgWeek=weekPrice?((curPrice-weekPrice)/weekPrice*100):0;
+        }
+      }catch(e){}
+    }
+    console.log(`FMP batch quote: ${Object.keys(prices).length}/${tickers.length} tickers`);
+  }catch(e){
+    console.warn('FMP batch quote failed:',e);
+  }
+  return prices;
+}
+
+// FMP: fetch N calendar days of EOD history for a ticker
+// Returns [{date:'YYMMDD', close:123.45}, ...] sorted oldest-first
+async function fetchFmpHistoryDays(ticker,calendarDays){
+  if(!FMP_KEY)return [];
+  const to=new Date();
+  const from=new Date(to.getTime()-calendarDays*86400000);
+  const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  return fetchFmpHistoryRange(ticker,fmt(from),fmt(to));
+}
+
+// FMP: fetch EOD history for date range → [{date:'YYMMDD', close:123.45}, ...]
+async function fetchFmpHistoryRange(ticker,fromYMD,toYMD){
+  if(!FMP_KEY)return [];
+  try{
+    const data=await fmpGet(`historical-price-eod/full?symbol=${ticker}&from=${fromYMD}&to=${toYMD}`);
+    const historical=Array.isArray(data)?data:(data?.historical||[]);
+    const result=[];
+    for(const day of historical){
+      if(!day.date||day.close==null)continue;
+      const parts=day.date.split('-');
+      if(parts.length!==3)continue;
+      result.push({date:parts[0].slice(2)+parts[1]+parts[2], close:day.close});
+    }
+    result.sort((a,b)=>a.date.localeCompare(b.date));
+    return result;
+  }catch(e){
+    console.warn(`FMP history failed for ${ticker}:`,e.message);
+    return [];
+  }
+}
+
+// Incremental daily_value update: fetch only missing recent days via FMP
 async function updateDailyValuesIncremental(){
   const chronoTx=[...allTransactions].sort((a,b)=>{
     const dc=a.date.localeCompare(b.date);if(dc!==0)return dc;
@@ -653,130 +732,77 @@ async function updateDailyValuesIncremental(){
   if(SHEET_ID&&SA_KEY){
     try{
       const fromSheet=await loadDailyValuesFromSheet();
-      if(Object.keys(fromSheet).length>0){
-        stored={...stored,...fromSheet};
-      }
+      if(Object.keys(fromSheet).length>0) stored={...stored,...fromSheet};
     }catch(e){}
-  }
-
-  // Invalidate if transactions changed
-  const txHash=chronoTx.map(t=>`${t.date}|${t.ticker}|${t.qty}|${t.price}`).join('\n');
-  const prevHash=localStorage.getItem('dv_tx_hash')||'';
-  if(txHash!==prevHash){
-    console.log('daily_value: transactions changed since last compute — use Recalc for full recompute');
-    localStorage.setItem('dv_tx_hash',txHash);
-    // Don't clear stored — just note the change. Recalc handles full wipe.
   }
 
   const storedDates=Object.keys(stored).sort();
   if(storedDates.length===0){
-    console.log('daily_value: no stored dates — need Recalc first');
-    toast('⚠️ daily_value가 비어있습니다. Chart 탭에서 Recalc을 실행하세요.','err');
+    console.log('daily_value: empty — run Recalc first');
+    toast('⚠️ daily_value가 비어있습니다. Recalc을 실행하세요.','err');
     return;
   }
 
   const lastStoredDate=storedDates[storedDates.length-1];
-  const _etToday=etNow();
-  const todayYymmdd=_etToday.yymmdd;
-
-  // If last stored date is today or later, nothing to do
+  const _et=etNow();
+  const todayYymmdd=_et.yymmdd;
   if(lastStoredDate>=todayYymmdd){
     console.log('daily_value: up to date');
     dailyValueCache=stored;saveDVCache();
     return;
   }
 
-  // Calculate how many calendar days since last stored date
+  // Calculate gap
   const lastY=parseInt('20'+lastStoredDate.slice(0,2)),lastM=parseInt(lastStoredDate.slice(2,4))-1,lastD=parseInt(lastStoredDate.slice(4,6));
-  const lastDt=new Date(lastY,lastM,lastD);
-  const nowDt=new Date();
-  const daysSince=Math.ceil((nowDt-lastDt)/(86400000));
-
-  // Choose Yahoo range: smallest range that covers the gap
-  let yahooRange='1mo';
-  if(daysSince<=5)yahooRange='5d';
-  else if(daysSince<=30)yahooRange='1mo';
-  else if(daysSince<=90)yahooRange='3mo';
-  else if(daysSince<=180)yahooRange='6mo';
-  else if(daysSince<=365)yahooRange='1y';
-  else{
-    console.log(`daily_value: ${daysSince} days gap — too large for incremental, use Recalc`);
+  const daysSince=Math.ceil((new Date()-new Date(lastY,lastM,lastD))/86400000);
+  if(daysSince>365){
+    console.log(`daily_value: ${daysSince}d gap too large — use Recalc`);
     toast('⚠️ 갭이 너무 큽니다. Recalc을 실행하세요.','err');
     return;
   }
 
-  console.log(`daily_value incremental: lastStored=${lastStoredDate}, today=${todayYymmdd}, gap=${daysSince}d, yahooRange=${yahooRange}`);
+  console.log(`daily_value incremental: last=${lastStoredDate}, today=${todayYymmdd}, gap=${daysSince}d`);
 
-  // Get all tickers ever held (need prices for all of them to compute values on missing days)
-  const allTickersEverHeld=new Set();
-  const posTemp={};
+  // Get currently held tickers (only these need prices for value computation)
+  const positions={}; // ticker → qty
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
-    if(!posTemp[tx.ticker])posTemp[tx.ticker]=0;
-    posTemp[tx.ticker]+=tx.qty;
-    if(posTemp[tx.ticker]>0)allTickersEverHeld.add(tx.ticker);
+    if(!positions[tx.ticker])positions[tx.ticker]=0;
+    positions[tx.ticker]+=tx.qty;
+    if(Math.abs(positions[tx.ticker])<0.0001)positions[tx.ticker]=0;
   }
+  const heldTickers=Object.entries(positions).filter(([,q])=>q>0).map(([t])=>t);
 
-  // Fetch short-range Yahoo history for all tickers, with FMP fallback
-  const tickerList=[...allTickersEverHeld];
-  const priceHistories={}; // ticker -> {YYMMDD: close}
-  const batchSize=8;
-  const failedTickers=[];
-  for(let i=0;i<tickerList.length;i+=batchSize){
-    const batch=tickerList.slice(i,i+batchSize);
-    const results=await Promise.all(batch.map(tk=>fetchYahooHistoryRange(tk,yahooRange).then(h=>({tk,h}))));
-    for(const{tk,h} of results){
-      priceHistories[tk]=h;
-      if(Object.keys(h).length===0)failedTickers.push(tk);
-    }
-    if(i+batchSize<tickerList.length)await new Promise(r=>setTimeout(r,300));
-  }
-
-  // FMP fallback for tickers that Yahoo failed on
-  if(failedTickers.length>0&&FMP_KEY){
-    const fromDate=`20${lastStoredDate.slice(0,2)}-${lastStoredDate.slice(2,4)}-${lastStoredDate.slice(4,6)}`;
-    const _etT=etNow();
-    const toDate=`${_etT.year}-${_etT.month}-${_etT.day}`;
-    console.log(`Yahoo failed for ${failedTickers.length} tickers, trying FMP: ${failedTickers.join(',')}`);
-    for(const tk of failedTickers){
-      try{
-        const h=await fetchFmpHistory(tk,fromDate,toDate);
-        if(Object.keys(h).length>0){
-          priceHistories[tk]=h;
-          console.log(`✓ FMP fallback ${tk}: ${Object.keys(h).length} days`);
-        }else{
-          console.warn(`✗ FMP fallback ${tk}: no data`);
-        }
-      }catch(e){console.warn(`✗ FMP fallback ${tk}: ${e.message}`)}
-      await new Promise(r=>setTimeout(r,200));
-    }
-  }else if(failedTickers.length>0){
-    console.warn(`Yahoo failed for ${failedTickers.length} tickers, no FMP key for fallback: ${failedTickers.join(',')}`);
-  }
-
-  // Get market days from the fetched data (union of all tickers' dates)
-  const allFetchedDates=new Set();
-  for(const h of Object.values(priceHistories)){
-    for(const d of Object.keys(h))allFetchedDates.add(d);
-  }
-  // Add today if market active and we have current prices
-  if(_etToday.marketActive)allFetchedDates.add(todayYymmdd);
-  
-  const marketDays=[...allFetchedDates].sort().filter(d=>d>lastStoredDate);
-  if(marketDays.length===0){
-    console.log('daily_value incremental: no new market days found');
-    dailyValueCache=stored;saveDVCache();
-    return;
+  // Fetch FMP history for gap period (only held tickers)
+  const fromYMD=`20${lastStoredDate.slice(0,2)}-${lastStoredDate.slice(2,4)}-${lastStoredDate.slice(4,6)}`;
+  const toYMD=`${_et.year}-${_et.month}-${_et.day}`;
+  const priceHistories={}; // ticker → {YYMMDD: close}
+  for(const tk of heldTickers){
+    const hist=await fetchFmpHistoryRange(tk,fromYMD,toYMD);
+    const lookup={};
+    for(const h of hist) lookup[h.date]=h.close;
+    priceHistories[tk]=lookup;
+    await new Promise(r=>setTimeout(r,150)); // rate limit
   }
 
   // Compute correction ratios
   const corrRatio=computePriceCorrectionRatios(priceHistories);
 
+  // Get market days from fetched data
+  const allFetchedDates=new Set();
+  for(const h of Object.values(priceHistories)){
+    for(const d of Object.keys(h))allFetchedDates.add(d);
+  }
+  if(_et.marketActive)allFetchedDates.add(todayYymmdd);
+  const marketDays=[...allFetchedDates].sort().filter(d=>d>lastStoredDate);
+  if(marketDays.length===0){
+    console.log('daily_value incremental: no new market days');
+    dailyValueCache=stored;saveDVCache();
+    return;
+  }
+
   function findClose(tk,date){
-    // For today, use live cachedPrices first
-    if(date===todayYymmdd&&cachedPrices[tk]&&cachedPrices[tk].current){
-      return cachedPrices[tk].current;
-    }
+    if(date===todayYymmdd&&cachedPrices[tk]&&cachedPrices[tk].current)return cachedPrices[tk].current;
     const hist=priceHistories[tk];
     if(!hist)return null;
     if(hist[date])return hist[date];
@@ -789,164 +815,77 @@ async function updateDailyValuesIncremental(){
     return null;
   }
 
-  // Replay transactions to get position state at lastStoredDate
+  // Replay transactions to get cash state at lastStoredDate
   const txByDate={};
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
     if(!txByDate[tx.date])txByDate[tx.date]=[];
     txByDate[tx.date].push(tx);
   }
-
   let cashSS=initialCashSS, cashKW=initialCashKW;
-  const positions={}; // ticker -> qty (split-adjusted)
-  
-  // Replay all transactions up to and including lastStoredDate
+  const pos={}; // ticker → qty (split-adjusted)
   const txDateList=Object.keys(txByDate).sort();
   let txDateIdx=0;
   while(txDateIdx<txDateList.length&&txDateList[txDateIdx]<=lastStoredDate){
-    const dayTxs=txByDate[txDateList[txDateIdx]];
-    for(const tx of dayTxs){
+    for(const tx of txByDate[txDateList[txDateIdx]]){
       const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
       const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
-      if(!positions[tx.ticker])positions[tx.ticker]=0;
-      positions[tx.ticker]+=tx.qty;
-      if(Math.abs(positions[tx.ticker])<0.0001)positions[tx.ticker]=0;
-      if(oq>0){
-        if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
-        else cashKW-=(Math.abs(oq)*op+tx.tax);
-      }else if(oq<0){
-        if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);
-        else cashKW+=(Math.abs(oq)*op-tx.tax);
-      }
+      if(!pos[tx.ticker])pos[tx.ticker]=0;
+      pos[tx.ticker]+=tx.qty;
+      if(Math.abs(pos[tx.ticker])<0.0001)pos[tx.ticker]=0;
+      if(oq>0){if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);else cashKW-=(Math.abs(oq)*op+tx.tax)}
+      else if(oq<0){if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);else cashKW+=(Math.abs(oq)*op-tx.tax)}
     }
     txDateIdx++;
   }
 
-  // Now compute value for each new market day
+  // Compute value for each new market day
   const newRows=[];
   for(const date of marketDays){
-    // Apply any transactions on this date
     while(txDateIdx<txDateList.length&&txDateList[txDateIdx]<=date){
-      const dayTxs=txByDate[txDateList[txDateIdx]];
-      for(const tx of dayTxs){
+      for(const tx of txByDate[txDateList[txDateIdx]]){
         const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
         const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
-        if(!positions[tx.ticker])positions[tx.ticker]=0;
-        positions[tx.ticker]+=tx.qty;
-        if(Math.abs(positions[tx.ticker])<0.0001)positions[tx.ticker]=0;
-        if(oq>0){
-          if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
-          else cashKW-=(Math.abs(oq)*op+tx.tax);
-        }else if(oq<0){
-          if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);
-          else cashKW+=(Math.abs(oq)*op-tx.tax);
-        }
+        if(!pos[tx.ticker])pos[tx.ticker]=0;
+        pos[tx.ticker]+=tx.qty;
+        if(Math.abs(pos[tx.ticker])<0.0001)pos[tx.ticker]=0;
+        if(oq>0){if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);else cashKW-=(Math.abs(oq)*op+tx.tax)}
+        else if(oq<0){if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);else cashKW+=(Math.abs(oq)*op-tx.tax)}
       }
       txDateIdx++;
     }
-
-    // Skip if already stored
     if(stored[date])continue;
-
     const cash=cashSS+cashKW;
     let holdingsValue=0;
-    const tickerValues={};
-    const tickerPrices={};
-    for(const[tk,qty] of Object.entries(positions)){
+    const tickerValues={}, tickerPrices={};
+    for(const[tk,qty] of Object.entries(pos)){
       if(qty<=0)continue;
       const rawClose=findClose(tk,date);
       let usedPrice;
-      if(rawClose!=null){
-        const cr=corrRatio[tk]||1;
-        usedPrice=rawClose*cr;
-      }else{
-        // Fallback: last transaction price
-        usedPrice=0;
-        for(let i=chronoTx.length-1;i>=0;i--){
-          if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}
-        }
-      }
+      if(rawClose!=null){const cr=corrRatio[tk]||1;usedPrice=rawClose*cr}
+      else{usedPrice=0;for(let i=chronoTx.length-1;i>=0;i--){if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}}}
       const val=qty*usedPrice;
       tickerValues[tk]=Math.round(val*100)/100;
       tickerPrices[tk]=Math.round(usedPrice*10000)/10000;
       holdingsValue+=val;
     }
-
     const totalValue=cash+holdingsValue;
     stored[date]={totalValue, cash, holdings:tickerValues, prices:tickerPrices};
     newRows.push([parseInt(date), Math.round(totalValue*100)/100, Math.round(cash*100)/100, JSON.stringify(tickerValues), JSON.stringify(tickerPrices)]);
   }
 
-  // Write to Sheet
   if(newRows.length>0){
     try{
-      for(let i=0;i<newRows.length;i+=500){
-        await writeDailyValuesToSheet(newRows.slice(i,i+500));
-      }
+      for(let i=0;i<newRows.length;i+=500) await writeDailyValuesToSheet(newRows.slice(i,i+500));
       console.log(`daily_value incremental: wrote ${newRows.length} new rows`);
     }catch(e){console.warn('Failed to write daily_value:',e)}
-  }else{
-    console.log('daily_value incremental: no new rows needed');
   }
-
-  dailyValueCache=stored;
-  saveDVCache();
+  dailyValueCache=stored;saveDVCache();
 }
 
-// Fetch Yahoo history for a specific range (shorter than 5y)
-async function fetchYahooHistoryRange(ticker,range){
-  const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=${range}`;
-  const proxies=[
-    u=>`https://corsproxy.io/?${encodeURIComponent(u)}`,
-    u=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
-  ];
-  for(const mkP of proxies){
-    try{
-      const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(12000)});
-      if(!r.ok)continue;
-      const d=await r.json();
-      const ts=d.chart?.result?.[0]?.timestamp||[];
-      const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
-      const lookup={};
-      const etFmt=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
-      for(let i=0;i<ts.length;i++){
-        if(closes[i]==null)continue;
-        const parts=etFmt.format(new Date(ts[i]*1000)).split('/');
-        const key=parts[2].slice(2)+parts[0]+parts[1];
-        lookup[key]=closes[i];
-      }
-      if(Object.keys(lookup).length>0)return lookup;
-    }catch(e){continue}
-  }
-  return {};
-}
+let historyPriceCache={}; // ticker → {YYMMDD: close} from daily_value
 
-// Fetch historical daily prices from FMP (fallback when Yahoo fails)
-// fromDate/toDate in YYYY-MM-DD format
-async function fetchFmpHistory(ticker,fromDate,toDate){
-  if(!FMP_KEY)return {};
-  const url=`https://financialmodelingprep.com/stable/historical-price-full/${ticker}?from=${fromDate}&to=${toDate}&apikey=${FMP_KEY}`;
-  try{
-    const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
-    if(!r.ok)return {};
-    const d=await r.json();
-    const historical=d.historical||d||[];
-    const arr=Array.isArray(historical)?historical:[];
-    const lookup={};
-    for(const day of arr){
-      if(!day.date||day.close==null)continue;
-      // day.date is YYYY-MM-DD → convert to YYMMDD
-      const parts=day.date.split('-');
-      if(parts.length!==3)continue;
-      const key=parts[0].slice(2)+parts[1]+parts[2];
-      lookup[key]=day.close;
-    }
-    return lookup;
-  }catch(e){
-    console.warn(`FMP history fetch failed for ${ticker}: ${e.message}`);
-    return {};
-  }
-}
+// Leveraged ETF → underlying ticker mapping for fundamentals
 // null = skip (no fundamentals available, e.g. index ETFs)
 // Tickers not in this map: fetch their own fundamentals directly
 const UNDERLYING_MAP={AMDL:'AMD',NVDL:'NVDA',TQQQ:null,SOXL:null,SQQQ:null,GGLL:'GOOGL',TSLL:'TSLA',QLD:null,QQQM:null,TNA:null,UGE:null,XLP:null,RSP:null};
@@ -2334,7 +2273,7 @@ async function loadDailyValuesFromSheet(){
 }
 
 async function writeDailyValuesToSheet(newRows){
-  // newRows: [[date, totalValue, cash, holdingsJSON, pricesJSON], ...]
+  // newRows: [[date, totalValue, cash], ...]
   if(!SHEET_ID||!SA_KEY||newRows.length===0)return;
   const token=await getAccessToken();
   // Ensure tab exists
@@ -2538,10 +2477,8 @@ async function computeDailyValues(el){
     const totalValue=cash+holdingsValue;
     const tickerPrices={};
     for(const[tk,qty] of Object.entries(positions)){
-      if(qty<=0)continue;
-      if(tickerValues[tk]!=null){
-        tickerPrices[tk]=Math.round((tickerValues[tk]/qty)*10000)/10000;
-      }
+      if(qty<=0||!tickerValues[tk])continue;
+      tickerPrices[tk]=Math.round((tickerValues[tk]/qty)*10000)/10000;
     }
     stored[date]={totalValue, cash, holdings:tickerValues, prices:tickerPrices};
     newRows.push([parseInt(date), Math.round(totalValue*100)/100, Math.round(cash*100)/100, JSON.stringify(tickerValues), JSON.stringify(tickerPrices)]);
@@ -2570,18 +2507,15 @@ async function computeDailyValues(el){
 }
 
 async function recalcDailyValues(){
-  const msg=`daily_value를 모두 삭제하고 다시 계산합니다.\n\nRecalc이 필요한 경우:\n• Split 처리 로직이 변경된 경우\n• 과거 거래 데이터가 수정된 경우\n• 가격이 잘못되어 재계산이 필요한 경우\n\n거래 내역(삼성/키움), fundamentals, fund_history 탭은 변경되지 않습니다.\n\n⚠️ Yahoo Finance에서 전체 5년 가격 데이터를 다시 가져옵니다.\n수십 개 종목의 경우 CORS proxy 제한으로 시간이 걸릴 수 있습니다.\n\n계속하시겠습니까?`;
+  const msg=`daily_value를 모두 삭제하고 다시 계산합니다.\n\n⚠️ Yahoo Finance에서 전체 5년 가격 데이터를 가져옵니다.\nCORS proxy 제한으로 시간이 걸릴 수 있습니다.\n\n계속하시겠습니까?`;
   if(!confirm(msg))return;
-  // Clear all caches
   dailyValueCache={};
   lastDailyValues=null;
   historyPriceCache={};
   try{localStorage.removeItem(CACHE_KEY_DV)}catch(e){}
-  // Delete entire daily_value tab (will be recreated)
   if(SHEET_ID&&SA_KEY){
     try{
       const token=await getAccessToken();
-      // Get sheet ID for daily_value tab
       const meta=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties`,{
         headers:{Authorization:`Bearer ${token}`}
       }).then(r=>r.json());
@@ -2591,24 +2525,14 @@ async function recalcDailyValues(){
           method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
           body:JSON.stringify({requests:[{deleteSheet:{sheetId:dvSheet.properties.sheetId}}]})
         });
-        console.log('Deleted daily_value tab');
       }
-    }catch(e){console.warn('Failed to delete daily_value tab:',e)}
+    }catch(e){}
   }
   toast('daily_value 초기화 완료. 전체 재계산 중...','ok');
-  
-  // Run full computation (fetches 5y Yahoo history)
   switchTab('chart');
   const el=document.getElementById('chartContent');
-  const dailyValues=await computeDailyValues(el);
-  
-  if(Object.keys(dailyValues).length===0){
-    el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px">재계산 실패 — Yahoo 데이터를 가져오지 못했습니다.</p>';
-    return;
-  }
-  
+  await computeDailyValues(el);
   toast('✅ Recalc 완료','ok');
-  // Now show the chart
   showTotalValueChart();
 }
 
@@ -2675,17 +2599,13 @@ async function showTotalValueChart(){
   if(SHEET_ID&&SA_KEY){
     try{
       const fromSheet=await loadDailyValuesFromSheet();
-      if(Object.keys(fromSheet).length>0){
-        dailyValues={...dailyValues,...fromSheet};
-      }
+      if(Object.keys(fromSheet).length>0) dailyValues={...dailyValues,...fromSheet};
     }catch(e){}
   }
-
   if(Object.keys(dailyValues).length===0){
     el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px">daily_value가 비어있습니다.<br>Price 버튼을 누르거나 Recalc을 실행하세요.</p>';
     return;
   }
-
   dailyValueCache=dailyValues;
   saveDVCache();
 
@@ -2714,20 +2634,12 @@ function redrawChart(dailyValues){
   const el=document.getElementById('chartContent');
   if(chartTxDates.length<1)return;
 
-  // Use daily_value dates as master x-axis (all market days with stored values)
-  // Fall back to TQQQ dates if daily_value is sparse
+  // Use daily_value dates as master x-axis (primary), TQQQ as fallback
   let masterDates=[];
   const dvDates=Object.keys(dv).sort();
   const tqqqArr=chartBenchData['TQQQ']||[];
   if(dvDates.length>0){
-    // Use daily_value dates as primary source
     masterDates=[...dvDates];
-    // If TQQQ has more dates in our range, use it to fill gaps
-    if(tqqqArr.length>0){
-      const tqqqDates=new Set(tqqqArr.map(d=>d.date));
-      // Only add TQQQ dates that we also have in dv (don't add dates without values)
-      // masterDates already has all dv dates
-    }
   }else if(tqqqArr.length>0){
     masterDates=tqqqArr.map(d=>d.date).sort();
   }else{
@@ -2739,7 +2651,6 @@ function redrawChart(dailyValues){
   masterDates=masterDates.filter(d=>d>=firstTxDate);
 
   // Inject a synthetic "day 0" = one market day before first tx = initialCash
-  // This ensures the chart starts at exactly the deposited amount
   const initCash=initialCashSS+initialCashKW;
   const allRefDates=tqqqArr.length>0?tqqqArr.map(d=>d.date).sort():[...dvDates];
   const preTxDays=allRefDates.filter(d=>d<firstTxDate);
@@ -3541,7 +3452,7 @@ function showHistory(ticker){
   }
 }
 
-let historyPriceCache={}; // ticker -> {YYMMDD: close} — built from daily_value
+// historyPriceCache defined above (line ~886)
 async function drawHistoryChart(ticker,period,btn){
   try{
   if(btn){btn.parentElement.querySelectorAll('.cbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on')}
@@ -3553,16 +3464,13 @@ async function drawHistoryChart(ticker,period,btn){
     const dv=dailyValueCache||{};
     const lookup={};
     for(const[date,entry] of Object.entries(dv)){
-      if(entry.prices&&entry.prices[ticker]!=null){
-        lookup[date]=entry.prices[ticker];
-      }
+      if(entry.prices&&entry.prices[ticker]!=null) lookup[date]=entry.prices[ticker];
     }
     historyPriceCache[ticker]=lookup;
     console.log(`${ticker} prices from daily_value: ${Object.keys(lookup).length} days`);
   }
   const priceLookup=historyPriceCache[ticker];
-  // No correction ratio needed — prices in daily_value are already corrected
-  const corrR=1;
+  // Prices in daily_value are already correction-adjusted
   function findClose(date){
     let p=priceLookup[date];
     if(!p){
@@ -3628,20 +3536,19 @@ async function drawHistoryChart(ticker,period,btn){
   const todayDate=_et.yymmdd;
   const usMarketActive=_et.marketActive;
 
-  // Expand snapshots: insert daily price points from daily_value between tx dates for smooth 평가액 line
-  // purchAmt and realized stay flat between tx dates; only totalValue changes daily
+  // Expand snapshots: insert daily price points from daily_value between tx dates
   if(Object.keys(priceLookup).length>0&&snapshots.length>=1){
     const allPriceDates=Object.keys(priceLookup).sort();
     const expanded=[];
     for(let si=0;si<snapshots.length;si++){
       expanded.push(snapshots[si]);
       const fromDate=snapshots[si].date;
-      const toDate=si<snapshots.length-1?snapshots[si+1].date:null; // null = expand to end
+      const toDate=si<snapshots.length-1?snapshots[si+1].date:null;
       const s=snapshots[si];
-      if(s.qty<=0)continue; // no holdings, no expansion needed
+      if(s.qty<=0)continue;
       for(const yd of allPriceDates){
         if(yd<=fromDate)continue;
-        if(toDate&&yd>=toDate)continue; // stop before next snapshot
+        if(toDate&&yd>=toDate)continue;
         expanded.push({date:yd, purchAmt:s.purchAmt, totalValue:s.qty*priceLookup[yd], realized:s.realized, qty:s.qty, price:priceLookup[yd]});
       }
     }
@@ -3658,7 +3565,7 @@ async function drawHistoryChart(ticker,period,btn){
       // Add new today point without modifying the last historical point
       snapshots.push({date:todayDate, purchAmt:last.purchAmt, totalValue:last.qty*curPrice, realized:last.realized, qty:last.qty, price:curPrice});
     }else if(last.date===todayDate){
-      // Today already exists (from daily_value or snapshot) — update with live price
+      // Today already exists (from Yahoo or snapshot) — update with live price
       last.totalValue=last.qty*curPrice;
       last.price=curPrice;
     }
