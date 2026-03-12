@@ -622,7 +622,7 @@ async function refreshPrices(){
     if(Object.keys(fmpPrices).length>0){
       cachedPrices={...cachedPrices,...fmpPrices};
     }else{
-      console.warn('FMP batch quote returned nothing, trying Yahoo fallback');
+      console.warn('FMP quote returned nothing, trying Yahoo fallback');
       const yPrices=await fetchPrices(tickers);
       cachedPrices={...cachedPrices,...yPrices};
     }
@@ -650,26 +650,27 @@ async function refreshPrices(){
   toast('✅ 가격 갱신 완료','ok');
 }
 
-// FMP batch quote: ONE API call for all tickers → {ticker: {current,prevClose,chgDay,chgWeek}}
+// FMP quote: fetch current prices for all tickers via individual /stable/quote calls
+// Batched 5 at a time with 200ms delay to respect rate limits
 async function fetchFmpBatchQuote(tickers){
   const prices={};
   if(!FMP_KEY||tickers.length===0)return prices;
-  const symbols=tickers.join(',');
 
-  // Try batch-quote endpoint first, then quote endpoint as fallback
-  const endpoints=[
-    `batch-quote?symbols=${symbols}`,
-    `quote?symbol=${symbols}`
-  ];
-
-  for(const ep of endpoints){
-    try{
-      const data=await fmpGet(ep);
-      console.log(`FMP ${ep.split('?')[0]} response type:`,Array.isArray(data)?`array[${data.length}]`:typeof data);
-      const arr=Array.isArray(data)?data:(data?[data]:[]);
-      for(const q of arr){
-        if(!q||!q.symbol)continue;
-        const tk=q.symbol;
+  const batchSize=5;
+  for(let i=0;i<tickers.length;i+=batchSize){
+    const batch=tickers.slice(i,i+batchSize);
+    const results=await Promise.all(batch.map(async tk=>{
+      try{
+        const data=await fmpGet(`quote?symbol=${tk}`);
+        const arr=Array.isArray(data)?data:(data?[data]:[]);
+        if(arr.length>0&&arr[0]&&arr[0].price){
+          return {tk, q:arr[0]};
+        }
+      }catch(e){}
+      return {tk, q:null};
+    }));
+    for(const{tk,q} of results){
+      if(q){
         prices[tk]={
           current:q.price||0,
           prevClose:q.previousClose||q.price||0,
@@ -677,15 +678,10 @@ async function fetchFmpBatchQuote(tickers){
           chgWeek:0
         };
       }
-      if(Object.keys(prices).length>0){
-        console.log(`FMP batch quote: ${Object.keys(prices).length}/${tickers.length} tickers via ${ep.split('?')[0]}`);
-        break; // success, stop trying endpoints
-      }
-    }catch(e){
-      console.warn(`FMP ${ep.split('?')[0]} failed:`,e.message);
     }
+    if(i+batchSize<tickers.length)await new Promise(r=>setTimeout(r,200));
   }
-
+  console.log(`FMP quote: ${Object.keys(prices).length}/${tickers.length} tickers`);
   return prices;
 }
 
