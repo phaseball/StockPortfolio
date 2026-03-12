@@ -2258,24 +2258,33 @@ async function updateBenchmarkIncremental(ticker){
 
   const existing=chartBenchData[ticker]||[];
   const existingDates=new Set(existing.map(d=>d.date));
-  let lastDate=existing.length>0?existing[existing.length-1].date:'000000';
 
-  // Fetch recent history from FMP
-  const lastY=parseInt('20'+lastDate.slice(0,2)),lastM=parseInt(lastDate.slice(2,4))-1,lastD=parseInt(lastDate.slice(4,6));
-  const fromDt=new Date(lastY,lastM,lastD);
+  // If no existing data, fetch 5 years of history from FMP
+  const isFullFetch=existing.length===0;
+  let fromYMD,toYMD;
   const now=new Date();
-  const daysSince=Math.ceil((now-fromDt)/86400000);
-  if(daysSince<=0)return true; // up to date
+  toYMD=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
 
-  const fromYMD=`${fromDt.getFullYear()}-${String(fromDt.getMonth()+1).padStart(2,'0')}-${String(fromDt.getDate()).padStart(2,'0')}`;
-  const toYMD=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  if(isFullFetch){
+    const from5y=new Date(now.getFullYear()-5,now.getMonth(),now.getDate());
+    fromYMD=`${from5y.getFullYear()}-${String(from5y.getMonth()+1).padStart(2,'0')}-${String(from5y.getDate()).padStart(2,'0')}`;
+  }else{
+    const lastDate=existing[existing.length-1].date;
+    const lastY=parseInt('20'+lastDate.slice(0,2)),lastM=parseInt(lastDate.slice(2,4))-1,lastD=parseInt(lastDate.slice(4,6));
+    const fromDt=new Date(lastY,lastM,lastD);
+    const daysSince=Math.ceil((now-fromDt)/86400000);
+    if(daysSince<=0)return true; // up to date
+    fromYMD=`${fromDt.getFullYear()}-${String(fromDt.getMonth()+1).padStart(2,'0')}-${String(fromDt.getDate()).padStart(2,'0')}`;
+  }
 
+  // FMP endpoint: different for stocks vs indices
   const ep=mapping.type==='index'
     ?`index-historical-price-eod/full?symbol=${encodeURIComponent(mapping.fmp)}&from=${fromYMD}&to=${toYMD}`
     :`historical-price-eod/full?symbol=${mapping.fmp}&from=${fromYMD}&to=${toYMD}`;
 
   try{
     const data=await fmpGet(ep);
+    if(!data){console.warn(`FMP benchmark ${ticker}: null response`);return false}
     const historical=Array.isArray(data)?data:(data?.historical||[]);
     let added=0;
     for(const day of historical){
@@ -2289,7 +2298,7 @@ async function updateBenchmarkIncremental(ticker){
         added++;
       }
     }
-    // Add today's live price if available
+    // Add today's live price if market active
     const _et=etNow();
     if(_et.marketActive){
       try{
@@ -2300,7 +2309,6 @@ async function updateBenchmarkIncremental(ticker){
         const qarr=Array.isArray(qdata)?qdata:(qdata?[qdata]:[]);
         if(qarr.length>0&&qarr[0].price){
           const todayYy=_et.yymmdd;
-          // Replace or add today's entry
           const idx=existing.findIndex(d=>d.date===todayYy);
           if(idx>=0)existing[idx].close=qarr[0].price;
           else existing.push({date:todayYy,close:qarr[0].price});
@@ -2309,29 +2317,26 @@ async function updateBenchmarkIncremental(ticker){
     }
     existing.sort((a,b)=>a.date.localeCompare(b.date));
     chartBenchData[ticker]=existing;
-    if(added>0)console.log(`Benchmark ${ticker}: +${added} days from FMP`);
-    return true;
+    console.log(`Benchmark ${ticker}: ${isFullFetch?'full':'incremental'} FMP → ${existing.length} total, +${added} new`);
+    return existing.length>0;
   }catch(e){
     console.warn(`FMP benchmark ${ticker} failed:`,e.message);
     return false;
   }
 }
 
-// Fetch benchmark: try Sheet → FMP incremental → Yahoo fallback
+// Fetch benchmark: FMP first (full or incremental), Yahoo as last resort
 async function fetchBenchmark(ticker){
-  // Already loaded from Sheet?
-  if(chartBenchData[ticker]&&chartBenchData[ticker].length>50)return;
-
   const el=document.getElementById('chartContent');
 
-  // Try FMP incremental first
+  // Try FMP (handles both full fetch and incremental)
   if(FMP_KEY){
     if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> ${BENCH_META[ticker]?.label||ticker} FMP 로딩...</p>`;
     const ok=await updateBenchmarkIncremental(ticker);
     if(ok&&chartBenchData[ticker]&&chartBenchData[ticker].length>0)return;
   }
 
-  // Fallback: Yahoo via CORS proxy (for initial load / Recalc)
+  // Fallback: Yahoo via CORS proxy
   if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> ${BENCH_META[ticker]?.label||ticker} Yahoo 로딩...</p>`;
   try{
     const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5y`;
@@ -2354,10 +2359,10 @@ async function fetchBenchmark(ticker){
           const date=parts[2].slice(2)+parts[0]+parts[1];
           arr.push({date,close:closes[i]});
         }
-        if(arr.length>0){chartBenchData[ticker]=arr;break}
+        if(arr.length>0){chartBenchData[ticker]=arr;console.log(`Benchmark ${ticker}: ${arr.length} days from Yahoo`);break}
       }catch(e){continue}
     }
-  }catch(e){console.error(`${ticker} fetch error:`,e)}
+  }catch(e){console.error(`${ticker} Yahoo fetch error:`,e)}
   if(!chartBenchData[ticker])chartBenchData[ticker]=[];
 }
 
@@ -2760,22 +2765,22 @@ async function showTotalValueChart(){
   dailyValueCache=dailyValues;
   saveDVCache();
 
-  // Load benchmarks from Sheet (instant), then FMP incremental for missing days
-  if(SHEET_ID&&SA_KEY&&Object.keys(chartBenchData).length===0){
-    await loadBenchmarksFromSheet();
+  // Ensure benchmarks loaded from Sheet first
+  if(SHEET_ID&&SA_KEY){
+    const hasBench=Object.values(chartBenchData).some(a=>a&&a.length>0);
+    if(!hasBench) await loadBenchmarksFromSheet();
   }
+  // Fetch or update each needed benchmark
   const toFetch=new Set([...chartBenches,'TQQQ']);
   let benchUpdated=false;
   for(const tk of toFetch){
     if(!chartBenchData[tk]||chartBenchData[tk].length===0){
+      // No data at all — full fetch needed
       await fetchBenchmark(tk);
       benchUpdated=true;
-    }else if(FMP_KEY){
-      // Incremental update for existing benchmarks
-      const updated=await updateBenchmarkIncremental(tk);
-      if(updated)benchUpdated=true;
     }
   }
+  // Save to Sheet if anything new
   if(benchUpdated&&SHEET_ID&&SA_KEY){
     saveBenchmarksToSheet().catch(e=>console.warn('Failed to save benchmarks:',e));
   }
