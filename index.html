@@ -395,11 +395,11 @@ const CACHE_KEY_CASH='cache_initialCash2';
 const CACHE_KEY_DATA_TS='cache_dataTimestamp';
 
 // ================ INIT ================
-document.addEventListener('DOMContentLoaded',()=>{
+document.addEventListener('DOMContentLoaded',async()=>{
   document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.p)));
   updateVerInfo();
   loadConfig();
-  restoreCache();
+  await restoreCache();
   updateDataInfo();
   updatePriceInfo();
   updateFundInfo();
@@ -549,7 +549,7 @@ function updateDataInfo(){
   const ts=localStorage.getItem(CACHE_KEY_DATA_TS);
   document.getElementById('dataInfo').textContent=ts?`data-${ts}`:'data-없음';
 }
-function restoreCache(){
+async function restoreCache(){
   try{
     const tx=localStorage.getItem(CACHE_KEY_TX);
     if(tx){allTransactions=JSON.parse(tx)}
@@ -563,6 +563,15 @@ function restoreCache(){
     if(ic){const c=JSON.parse(ic);initialCashSS=c.ss||0;initialCashKW=c.kw||0}
     populateInitCashFields();
     if(allTransactions.length>0){
+      // Auto-fetch prices if cache is empty (first load or cleared)
+      const held=getHeldTickers();
+      if(held.length>0&&Object.keys(cachedPrices).length===0){
+        try{
+          cachedPrices=await fetchPrices(held);
+          localStorage.setItem(CACHE_KEY_PRICES,JSON.stringify(cachedPrices));
+          savePriceTimestamp();
+        }catch(e){}
+      }
       computeOverview();
       renderOverview();
     }
@@ -3146,29 +3155,8 @@ async function drawHistoryChart(ticker,period,btn){
   // Fetch historical daily prices from Yahoo (cached)
   if(!historyPriceCache[ticker]){
     container.innerHTML='<p style="color:var(--text2);font-size:11px;padding:8px"><span class="spinner"></span> Loading price history...</p>';
-    try{
-      const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5y`;
-      const proxies=[u=>`https://corsproxy.io/?${encodeURIComponent(u)}`];
-      for(const mkP of proxies){
-        try{
-          const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(12000)});
-          if(!r.ok)continue;
-          const d=await r.json();
-          const ts=d.chart?.result?.[0]?.timestamp||[];
-          const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
-          const lookup={};
-          const etFmt2=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
-          for(let i=0;i<ts.length;i++){
-            if(closes[i]==null)continue;
-            const parts=etFmt2.format(new Date(ts[i]*1000)).split('/');
-            const key=parts[2].slice(2)+parts[0]+parts[1];
-            lookup[key]=closes[i];
-          }
-          if(Object.keys(lookup).length>0){historyPriceCache[ticker]=lookup;break}
-        }catch(e){continue}
-      }
-    }catch(e){console.warn(`${ticker} price fetch failed:`,e)}
-    if(!historyPriceCache[ticker])historyPriceCache[ticker]={};
+    historyPriceCache[ticker]=await fetchYahooHistory(ticker);
+    console.log(`${ticker} Yahoo history: ${Object.keys(historyPriceCache[ticker]).length} days`);
   }
   const priceLookup=historyPriceCache[ticker];
   // Compute correction ratio for this ticker (Yahoo is also split-adjusted like FMP)
