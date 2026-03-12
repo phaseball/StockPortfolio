@@ -1919,7 +1919,10 @@ async function fetchBenchmark(ticker){
   el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> ${ticker} 가격 불러오는 중...</p>`;
   try{
     const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5y`;
-    const proxies=[u=>`https://corsproxy.io/?${encodeURIComponent(u)}`];
+    const proxies=[
+      u=>`https://corsproxy.io/?${encodeURIComponent(u)}`,
+      u=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
+    ];
     for(const mkP of proxies){
       try{
         const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(15000)});
@@ -2091,17 +2094,35 @@ async function computeDailyValues(el){
     if(posTemp[tx.ticker]>0)allTickersEverHeld.add(tx.ticker);
   }
 
-  // Step 4: Fetch FULL Yahoo price history for every ticker (parallel batches)
+  // Step 4: Fetch FULL Yahoo price history for every ticker (sequential with small batches)
   const tickerList=[...allTickersEverHeld];
   const priceHistories={}; // ticker -> {YYMMDD: close}
-  const batchSize=8;
+  const batchSize=4; // smaller batches to avoid proxy rate limits
+  const failed=[];
   for(let i=0;i<tickerList.length;i+=batchSize){
     const batch=tickerList.slice(i,i+batchSize);
-    if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class=\"spinner\"></span> 가격 로딩 (${i+1}~${Math.min(i+batchSize,tickerList.length)} / ${tickerList.length})...</p>`;
+    if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 가격 로딩 (${i+1}~${Math.min(i+batchSize,tickerList.length)} / ${tickerList.length})...</p>`;
     const results=await Promise.all(batch.map(tk=>fetchYahooHistory(tk).then(h=>({tk,h}))));
     for(const{tk,h} of results){
       priceHistories[tk]=h;
-      if(Object.keys(h).length===0)console.warn(`⚠ ${tk}: Yahoo returned NO data`);
+      if(Object.keys(h).length===0)failed.push(tk);
+    }
+    // Small delay between batches to avoid rate limiting
+    if(i+batchSize<tickerList.length)await new Promise(r=>setTimeout(r,500));
+  }
+  // Retry failed tickers one by one
+  if(failed.length>0){
+    console.log(`Retrying ${failed.length} failed tickers: ${failed.join(',')}`);
+    if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 재시도 (${failed.length} tickers)...</p>`;
+    for(const tk of failed){
+      await new Promise(r=>setTimeout(r,300));
+      const h=await fetchYahooHistory(tk);
+      if(Object.keys(h).length>0){
+        priceHistories[tk]=h;
+        console.log(`✓ ${tk}: retry succeeded, ${Object.keys(h).length} days`);
+      }else{
+        console.warn(`✗ ${tk}: retry also failed`);
+      }
     }
   }
 
