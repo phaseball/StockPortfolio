@@ -361,45 +361,17 @@ let cachedPrices={};
 let cachedFundamentals={};
 let fundHistory={}; // {ticker: [{date, epsNorm, revNorm, targetPrice}]}
 const CACHE_KEY_TX='cache_transactions';
-
-// US Eastern Time date utilities
-function etNow(){
-  // Returns {year,month,day,hour,weekday,dateStr(YYYY-MM-DD),yymmdd} in US ET
-  const now=new Date();
-  const fmt=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hour12:false,weekday:'short'});
-  const p=fmt.formatToParts(now);
-  const year=p.find(x=>x.type==='year').value;
-  const month=p.find(x=>x.type==='month').value;
-  const day=p.find(x=>x.type==='day').value;
-  const hour=parseInt(p.find(x=>x.type==='hour').value);
-  const weekday=p.find(x=>x.type==='weekday').value;
-  return{year,month,day,hour,weekday,
-    dateStr:`${year}-${month}-${day}`,
-    yymmdd:year.slice(2)+month+day,
-    isWeekday:!['Sat','Sun'].includes(weekday),
-    marketActive:!['Sat','Sun'].includes(weekday)&&hour>=4};
-}
-function etDateStr(daysAgo){
-  // Returns YYYY-MM-DD in ET for N days ago
-  const d=new Date(Date.now()-daysAgo*86400000);
-  const fmt=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
-  const parts=fmt.format(d).split('/');
-  return`${parts[2]}-${parts[0]}-${parts[1]}`;
-}
-function etYymmdd(daysAgo){
-  const s=etDateStr(daysAgo||0);return s.slice(2,4)+s.slice(5,7)+s.slice(8,10);
-}
 const CACHE_KEY_PRICES='cache_prices';
 const CACHE_KEY_FUND='cache_fundamentals';
 const CACHE_KEY_CASH='cache_initialCash2';
 const CACHE_KEY_DATA_TS='cache_dataTimestamp';
 
 // ================ INIT ================
-document.addEventListener('DOMContentLoaded',async()=>{
+document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.p)));
   updateVerInfo();
   loadConfig();
-  await restoreCache();
+  restoreCache();
   updateDataInfo();
   updatePriceInfo();
   updateFundInfo();
@@ -549,7 +521,7 @@ function updateDataInfo(){
   const ts=localStorage.getItem(CACHE_KEY_DATA_TS);
   document.getElementById('dataInfo').textContent=ts?`data-${ts}`:'data-없음';
 }
-async function restoreCache(){
+function restoreCache(){
   try{
     const tx=localStorage.getItem(CACHE_KEY_TX);
     if(tx){allTransactions=JSON.parse(tx)}
@@ -563,15 +535,6 @@ async function restoreCache(){
     if(ic){const c=JSON.parse(ic);initialCashSS=c.ss||0;initialCashKW=c.kw||0}
     populateInitCashFields();
     if(allTransactions.length>0){
-      // Auto-fetch prices if cache is empty (first load or cleared)
-      const held=getHeldTickers();
-      if(held.length>0&&Object.keys(cachedPrices).length===0){
-        try{
-          cachedPrices=await fetchPrices(held);
-          localStorage.setItem(CACHE_KEY_PRICES,JSON.stringify(cachedPrices));
-          savePriceTimestamp();
-        }catch(e){}
-      }
       computeOverview();
       renderOverview();
     }
@@ -648,64 +611,60 @@ function debugFundData(){
   const tk=prompt('Ticker to inspect (e.g. MU, AMD, NVDA):');
   if(!tk)return;
   const ticker=tk.trim().toUpperCase();
-  const ftk0=getFundTicker(ticker)||ticker;
   const el=document.getElementById('overviewContent');
-  el.innerHTML='<p style="color:var(--text2);padding:16px">Loading FMP live data...</p>';
+  let html='<div style="padding:16px;font-family:monospace;font-size:11px;overflow:auto;max-height:80vh">';
+  html+=`<h3>${ticker} Fund Data Debug</h3>`;
 
-  const fetchLive=FMP_KEY?Promise.all([
-    fmpGet(`price-target-consensus?symbol=${ftk0}`),
-    fmpGet(`price-target?symbol=${ftk0}&limit=5`),
-    fmpGet(`analyst-estimates?symbol=${ftk0}&period=annual&limit=3`)
-  ]):Promise.resolve([null,null,null]);
-
-  fetchLive.then(([ptConsensus,ptRecent,annualEst])=>{
-    let html='<div style="padding:16px;font-family:monospace;font-size:11px;overflow:auto;max-height:80vh">';
-    html+=`<h3>${ticker} (underlying: ${ftk0}) Fund Data Debug</h3>`;
-
-    html+=`<h4>FMP Live: price-target-consensus</h4>`;
-    html+=`<pre style="white-space:pre-wrap;color:#afc">${JSON.stringify(ptConsensus,null,2)}</pre>`;
-    html+=`<h4>FMP Live: price-target (recent 5 analyst targets)</h4>`;
-    html+=`<pre style="white-space:pre-wrap;color:#afc">${JSON.stringify(ptRecent,null,2)}</pre>`;
-    html+=`<h4>FMP Live: analyst-estimates (annual, 3yr)</h4>`;
-    html+=`<pre style="white-space:pre-wrap;color:#afc">${JSON.stringify(annualEst,null,2)}</pre>`;
-
-    const fund=cachedFundamentals[ticker]||cachedFundamentals[ftk0];
-    html+=`<h4>cachedFundamentals[${ticker}]</h4>`;
-    if(fund){
-      html+=`<pre style="white-space:pre-wrap;color:#ccc">${JSON.stringify(fund,null,2)}</pre>`;
-    }else{
-      html+=`<p style="color:#f66">Not found</p>`;
+  // cachedFundamentals
+  const fund=cachedFundamentals[ticker];
+  html+=`<h4>cachedFundamentals[${ticker}]</h4>`;
+  if(fund){
+    html+=`<pre style="white-space:pre-wrap;color:#ccc">${JSON.stringify(fund,null,2)}</pre>`;
+  }else{
+    html+=`<p style="color:#f66">Not found. Try underlying: ${getFundTicker(ticker)||'(none)'}</p>`;
+    const ftk=getFundTicker(ticker);
+    if(ftk&&cachedFundamentals[ftk]){
+      html+=`<h4>cachedFundamentals[${ftk}] (underlying)</h4>`;
+      html+=`<pre style="white-space:pre-wrap;color:#ccc">${JSON.stringify(cachedFundamentals[ftk],null,2)}</pre>`;
     }
+  }
 
-    const hist=fundHistory[ftk0]||[];
-    html+=`<h4>fundHistory[${ftk0}] (${hist.length} entries)</h4>`;
-    if(hist.length>0){
-      html+='<table style="border-collapse:collapse"><tr><th style="border:1px solid #555;padding:2px 6px">date</th><th style="border:1px solid #555;padding:2px 6px">epsNorm</th><th style="border:1px solid #555;padding:2px 6px">revNorm</th><th style="border:1px solid #555;padding:2px 6px">targetPrice</th></tr>';
-      for(const h of hist.slice(-20)){
-        html+=`<tr><td style="border:1px solid #555;padding:2px 6px">${h.date}</td><td style="border:1px solid #555;padding:2px 6px">${h.epsNorm?.toFixed(4)??'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.revNorm?Math.round(h.revNorm):'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.targetPrice?.toFixed(2)??'—'}</td></tr>`;
-      }
-      html+='</table>';
-    }else{
-      html+=`<p style="color:#f66">No fund_history entries</p>`;
+  // fundHistory
+  const ftk2=getFundTicker(ticker)||ticker;
+  html+=`<h4>fundHistory[${ftk2}] (${(fundHistory[ftk2]||[]).length} entries)</h4>`;
+  const hist=fundHistory[ftk2]||[];
+  if(hist.length>0){
+    html+='<table style="border-collapse:collapse"><tr><th style="border:1px solid #555;padding:2px 6px">date</th><th style="border:1px solid #555;padding:2px 6px">epsNorm</th><th style="border:1px solid #555;padding:2px 6px">revNorm</th><th style="border:1px solid #555;padding:2px 6px">targetPrice</th></tr>';
+    for(const h of hist.slice(-20)){
+      html+=`<tr><td style="border:1px solid #555;padding:2px 6px">${h.date}</td><td style="border:1px solid #555;padding:2px 6px">${h.epsNorm?.toFixed(4)??'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.revNorm?Math.round(h.revNorm):'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.targetPrice?.toFixed(2)??'—'}</td></tr>`;
     }
+    html+='</table>';
+  }else{
+    html+=`<p style="color:#f66">No fund_history entries</p>`;
+  }
 
-    const _etD1d=etDateStr(1),_etD1w=etDateStr(7),_etD8d=etDateStr(8),_etD1m=etDateStr(30);
-    let e1w=null,e1m=null;
-    for(const h of hist){
-      if(h.date>=_etD1w&&h.date<=_etD1d&&!e1w)e1w=h;
-      if(h.date>=_etD1m&&h.date<=_etD8d&&!e1m)e1m=h;
-    }
-    html+=`<h4>Lookup results (ET dates)</h4>`;
-    html+=`<p>today(ET): ${etNow().dateStr}, d1d: ${_etD1d}, d1w: ${_etD1w}</p>`;
-    html+=`<p>~1w: ${e1w?`${e1w.date} eps=${e1w.epsNorm?.toFixed(4)} tp=${e1w.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
-    html+=`<p>~1m: ${e1m?`${e1m.date} eps=${e1m.epsNorm?.toFixed(4)} tp=${e1m.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
-    html+=`<p>Current epsNorm: ${fund?.epsNorm?.toFixed(4)??'—'}, targetPrice: ${fund?.targetPrice?.toFixed(2)??'—'}</p>`;
+  // Also show what 1w/1m lookup would find
+  const _now=new Date();const msDay=86400000;
+  const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const localToday=fmt(_now);
+  const localD1d=fmt(new Date(_now-1*msDay));
+  const localD1w=fmt(new Date(_now-7*msDay));
+  const localD8d=fmt(new Date(_now-8*msDay));
+  const localD1m=fmt(new Date(_now-30*msDay));
+  let e1w=null,e1m=null;
+  for(const h of hist){
+    if(h.date>=localD1w&&h.date<=localD1d)e1w=h;
+    if(h.date>=localD1m&&h.date<=localD8d)e1m=h;
+  }
+  html+=`<h4>Lookup results</h4>`;
+  html+=`<p>today(local): ${localToday}, d1d: ${localD1d}, d1w: ${localD1w}</p>`;
+  html+=`<p>~1w (${localD1w}~${localD1d}): ${e1w?`${e1w.date} eps=${e1w.epsNorm?.toFixed(4)} tp=${e1w.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+  html+=`<p>~1m (${localD1m}~${localD8d}): ${e1m?`${e1m.date} eps=${e1m.epsNorm?.toFixed(4)} tp=${e1m.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+  html+=`<p>Current epsNorm: ${fund?.epsNorm?.toFixed(4)??'—'}, targetPrice: ${fund?.targetPrice?.toFixed(2)??'—'}</p>`;
 
-    html+='<br><button class="btn btn-s" onclick="computeOverview();renderOverview()">← Back to Overview</button></div>';
-    el.innerHTML=html;
-  });
+  html+='<br><button class="btn btn-s" onclick="computeOverview();renderOverview()">← Back to Overview</button></div>';
+  el.innerHTML=html;
 }
-
 
 async function debugEarnings(ticker){
   if(!FMP_KEY){toast('FMP Key 없음','err');return}
@@ -1064,7 +1023,7 @@ async function refreshFundamentals(){
         targetPrice, targetHigh, targetLow,
         strongBuy, buy, hold, sell, strongSell, consensus,
         annual:annual||[],
-        fetchDate:etNow().dateStr
+        fetchDate:new Date().toISOString().slice(0,10)
       };
       console.log(`${tk} RESULT:`,newFund[tk]);
     }
@@ -1101,7 +1060,8 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
   if(!SHEET_ID||!SA_KEY)return;
   try{
     const token=await getAccessToken();
-    const today=etNow().dateStr;
+    const _n=new Date();
+    const today=`${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`;
 
     // Ensure eps_actuals tab has header
     try{
@@ -1426,7 +1386,7 @@ function computeOverview(){
   // Apply cached prices
   for(const h of allHoldings){
     const p=cachedPrices[h.ticker];
-    h.currentPrice=p&&p.current?p.current:h.avgPrice; // fallback to avg cost
+    h.currentPrice=p?p.current:0;
     h.chgDay=p?p.chgDay:0;
     h.chgWeek=p?p.chgWeek:0;
     h.marketValue=h.qty*h.currentPrice;
@@ -1713,10 +1673,14 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     const ftk=getFundTicker(ticker);
     const hist=fundHistory[ftk]||[];
     if(hist.length>=1){
-      const etD1d=etDateStr(1);
-      const etD1w=etDateStr(7);
-      const etD8d=etDateStr(8);
-      const etD1m=etDateStr(30);
+      // Use local dates for comparison (consistent with when Fund. was run)
+      const now=new Date();
+      const localToday=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+      const msDay=86400000;
+      const localD1d=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-1*msDay));
+      const localD1w=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-7*msDay));
+      const localD8d=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-8*msDay));
+      const localD1m=((d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)(new Date(now-30*msDay));
 
       // ~1w: oldest entry from yesterday back to 7 days ago (farthest for biggest change)
       // ~1m: oldest entry from 8-30 days ago
@@ -1726,8 +1690,8 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         }
         return null;
       }
-      const e1w=findInRange(etD1w,etD1d);
-      const e1m=findInRange(etD1m,etD8d);
+      const e1w=findInRange(localD1w,localD1d);
+      const e1m=findInRange(localD1m,localD8d);
 
       function valStyle(now,prev){
         if(prev==null)return 'color:var(--text3)';
@@ -1919,10 +1883,7 @@ async function fetchBenchmark(ticker){
   el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> ${ticker} 가격 불러오는 중...</p>`;
   try{
     const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5y`;
-    const proxies=[
-      u=>`https://corsproxy.io/?${encodeURIComponent(u)}`,
-      u=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
-    ];
+    const proxies=[u=>`https://corsproxy.io/?${encodeURIComponent(u)}`];
     for(const mkP of proxies){
       try{
         const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(15000)});
@@ -1931,12 +1892,13 @@ async function fetchBenchmark(ticker){
         const ts=d.chart?.result?.[0]?.timestamp||[];
         const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
         const arr=[];
-        const etFmtB=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
         for(let i=0;i<ts.length;i++){
           if(closes[i]==null)continue;
-          const parts=etFmtB.format(new Date(ts[i]*1000)).split('/'); // MM/DD/YYYY
-          const date=parts[2].slice(2)+parts[0]+parts[1]; // YYMMDD
-          arr.push({date,close:closes[i]});
+          const dt=new Date(ts[i]*1000);
+          const yy=String(dt.getFullYear()).slice(2);
+          const mm=String(dt.getMonth()+1).padStart(2,'0');
+          const dd=String(dt.getDate()).padStart(2,'0');
+          arr.push({date:`${yy}${mm}${dd}`,close:closes[i]});
         }
         if(arr.length>0){chartBenchData[ticker]=arr;break}
       }catch(e){continue}
@@ -2034,57 +1996,82 @@ async function writeDailyValuesToSheet(newRows){
 }
 
 async function computeDailyValues(el){
-  // CLEAN REWRITE: replay transactions, fetch ALL prices, compute daily values
+  // Replay ALL transactions in chronological order, computing:
+  //   - cash after each transaction (using origQty/origPrice)
+  //   - positions (qty per ticker, post-split) after each transaction
+  //   - at end of each trading day: totalValue = cash + Σ(qty × closePrice)
   const chronoTx=[...allTransactions].sort((a,b)=>{
     const dc=a.date.localeCompare(b.date);if(dc!==0)return dc;
     return(parseInt(a.seq)||0)-(parseInt(b.seq)||0);
   });
   if(chronoTx.length===0)return {};
 
-  // Step 1: Get market days from TQQQ benchmark
-  if(el)el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 시장일 로딩...</p>';
+  // Group transactions by date
+  const txByDate={};
+  for(const tx of chronoTx){
+    if(!tx.ticker)continue;
+    if(!txByDate[tx.date])txByDate[tx.date]=[];
+    txByDate[tx.date].push(tx);
+  }
+  const txDates=Object.keys(txByDate).sort();
+
+  // Get TQQQ dates as master trading days
   if(!chartBenchData['TQQQ'])await fetchBenchmark('TQQQ');
   const tqqqArr=chartBenchData['TQQQ']||[];
-  const txDates=[...new Set(chronoTx.map(t=>t.date))].sort();
   let marketDays=tqqqArr.map(d=>d.date).sort();
   marketDays=marketDays.filter(d=>d>=txDates[0]);
-  // Include today if market active
-  const _etToday=etNow();
-  if(_etToday.marketActive&&!marketDays.includes(_etToday.yymmdd)){
-    marketDays.push(_etToday.yymmdd);
-    marketDays.sort();
-  }
-  if(marketDays.length===0)return {};
 
-  // Step 2: Check cache — load from localStorage then Sheet
+  // Load existing daily_value from Sheet
+  if(el)el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> daily_value 로딩...</p>';
   let stored=loadDVCache();
   if(SHEET_ID&&SA_KEY){
-    try{
-      const fromSheet=await loadDailyValuesFromSheet();
-      if(Object.keys(fromSheet).length>0){
-        stored={...stored,...fromSheet};
-      }
-    }catch(e){}
+    const fromSheet=await loadDailyValuesFromSheet();
+    if(Object.keys(fromSheet).length>0){
+      stored={...stored,...fromSheet};
+      dailyValueCache=stored;
+      saveDVCache();
+    }
   }
 
-  // Invalidate if transactions changed
+  // Find missing dates
+  // Also invalidate dates where transactions exist but cache may be stale
+  // Compare tx hash to detect changes since last compute
   const txHash=chronoTx.map(t=>`${t.date}|${t.ticker}|${t.qty}|${t.price}`).join('\n');
   const prevHash=localStorage.getItem('dv_tx_hash')||'';
   if(txHash!==prevHash){
-    console.log('daily_value: transactions changed, clearing all cached values');
-    stored={};
+    // Transactions changed — invalidate all dates from first changed tx onward
+    console.log('daily_value: transactions changed, invalidating cache');
+    // Find earliest date that differs
+    const prevLines=prevHash.split('\n');
+    const curLines=txHash.split('\n');
+    let firstDiff=null;
+    for(let i=0;i<Math.max(prevLines.length,curLines.length);i++){
+      if(prevLines[i]!==curLines[i]){
+        const d=(curLines[i]||prevLines[i]||'').split('|')[0];
+        if(d){firstDiff=d;break}
+      }
+    }
+    if(firstDiff){
+      for(const d of Object.keys(stored)){
+        if(d>=firstDiff)delete stored[d];
+      }
+    }else{
+      // Can't determine diff — clear all
+      stored={};
+    }
     localStorage.setItem('dv_tx_hash',txHash);
+    dailyValueCache=stored;
+    saveDVCache();
   }
 
   const missingDates=marketDays.filter(d=>!stored[d]);
   if(missingDates.length===0){
     console.log('daily_value: all dates present');
-    dailyValueCache=stored;saveDVCache();
     return stored;
   }
   console.log(`daily_value: ${missingDates.length} missing dates to compute`);
 
-  // Step 3: Collect ALL tickers ever held
+  // Collect all tickers ever held
   const allTickersEverHeld=new Set();
   const posTemp={};
   for(const tx of chronoTx){
@@ -2094,42 +2081,21 @@ async function computeDailyValues(el){
     if(posTemp[tx.ticker]>0)allTickersEverHeld.add(tx.ticker);
   }
 
-  // Step 4: Fetch FULL Yahoo price history for every ticker (sequential with small batches)
+  // Fetch historical prices via Yahoo (parallel batches of 8)
   const tickerList=[...allTickersEverHeld];
   const priceHistories={}; // ticker -> {YYMMDD: close}
-  const batchSize=4; // smaller batches to avoid proxy rate limits
-  const failed=[];
+  const batchSize=8;
   for(let i=0;i<tickerList.length;i+=batchSize){
     const batch=tickerList.slice(i,i+batchSize);
     if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 가격 로딩 (${i+1}~${Math.min(i+batchSize,tickerList.length)} / ${tickerList.length})...</p>`;
     const results=await Promise.all(batch.map(tk=>fetchYahooHistory(tk).then(h=>({tk,h}))));
     for(const{tk,h} of results){
       priceHistories[tk]=h;
-      if(Object.keys(h).length===0)failed.push(tk);
-    }
-    // Small delay between batches to avoid rate limiting
-    if(i+batchSize<tickerList.length)await new Promise(r=>setTimeout(r,500));
-  }
-  // Retry failed tickers one by one
-  if(failed.length>0){
-    console.log(`Retrying ${failed.length} failed tickers: ${failed.join(',')}`);
-    if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 재시도 (${failed.length} tickers)...</p>`;
-    for(const tk of failed){
-      await new Promise(r=>setTimeout(r,300));
-      const h=await fetchYahooHistory(tk);
-      if(Object.keys(h).length>0){
-        priceHistories[tk]=h;
-        console.log(`✓ ${tk}: retry succeeded, ${Object.keys(h).length} days`);
-      }else{
-        console.warn(`✗ ${tk}: retry also failed`);
-      }
+      if(Object.keys(h).length===0)console.warn(`⚠ ${tk}: Yahoo returned NO data`);
     }
   }
 
-  // Step 5: Compute correction ratios (for tickers with untracked splits like GDXD)
-  const corrRatio=computePriceCorrectionRatios(priceHistories);
-
-  // Helper: find close price for ticker on date (or up to 7 days before)
+  // Helper: find close price on or before date
   function findClose(tk,date){
     const hist=priceHistories[tk];
     if(!hist)return null;
@@ -2143,34 +2109,25 @@ async function computeDailyValues(el){
     return null;
   }
 
-  // Step 6: Replay transactions day by day, compute value for each market day
-  if(el)el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class=\"spinner\"></span> 일별 가치 계산 중...</p>';
+  // Compute correction ratios: tx.price / FMP_close per ticker
+  const fmpCorrectionRatio=computePriceCorrectionRatios(priceHistories);
 
-  // Group transactions by date
-  const txByDate={};
-  for(const tx of chronoTx){
-    if(!tx.ticker)continue;
-    if(!txByDate[tx.date])txByDate[tx.date]=[];
-    txByDate[tx.date].push(tx);
-  }
-  const txDateList=Object.keys(txByDate).sort();
-
+  if(el)el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 일별 가치 계산 중...</p>';
+  
   let cashSS=initialCashSS, cashKW=initialCashKW;
-  const positions={}; // ticker -> qty (split-mark-corrected)
+  const positions={}; // ticker -> tx.qty (split-mark-corrected)
   let txDateIdx=0;
   const newRows=[];
 
   for(const date of marketDays){
-    // Apply all transactions up to and including this date
-    while(txDateIdx<txDateList.length&&txDateList[txDateIdx]<=date){
-      const dayTxs=txByDate[txDateList[txDateIdx]];
+    while(txDateIdx<txDates.length&&txDates[txDateIdx]<=date){
+      const dayTxs=txByDate[txDates[txDateIdx]];
       for(const tx of dayTxs){
         const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
         const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
         if(!positions[tx.ticker])positions[tx.ticker]=0;
-        positions[tx.ticker]+=tx.qty; // split-mark-corrected qty
+        positions[tx.ticker]+=tx.qty;
         if(Math.abs(positions[tx.ticker])<0.0001)positions[tx.ticker]=0;
-        // Cash = actual money flow (original values)
         if(oq>0){
           if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
           else cashKW-=(Math.abs(oq)*op+tx.tax);
@@ -2182,22 +2139,19 @@ async function computeDailyValues(el){
       txDateIdx++;
     }
 
-    // Skip if already cached
     if(stored[date])continue;
 
-    // Compute holdings value
     const cash=cashSS+cashKW;
     let holdingsValue=0;
     const tickerValues={};
     for(const[tk,qty] of Object.entries(positions)){
       if(qty<=0)continue;
-      const rawClose=findClose(tk,date);
+      const fmpClose=findClose(tk,date);
       let usedPrice;
-      if(rawClose!=null){
-        const cr=corrRatio[tk]||1;
-        usedPrice=rawClose*cr;
+      if(fmpClose!=null){
+        const ratio=fmpCorrectionRatio[tk]||1;
+        usedPrice=fmpClose*ratio;
       }else{
-        // Fallback: last transaction price
         usedPrice=0;
         for(let i=chronoTx.length-1;i>=0;i--){
           if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}
@@ -2213,10 +2167,11 @@ async function computeDailyValues(el){
     newRows.push([parseInt(date), Math.round(totalValue*100)/100, Math.round(cash*100)/100, JSON.stringify(tickerValues)]);
   }
 
-  // Step 7: Write to Sheet
+  // Write to Sheet
   if(SHEET_ID&&SA_KEY&&newRows.length>0){
-    if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class=\"spinner\"></span> Sheet에 ${newRows.length}일 저장 중...</p>`;
+    if(el)el.innerHTML=`<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> Sheet에 ${newRows.length}일 저장 중...</p>`;
     try{
+      // Write in batches of 500 to avoid payload limits
       for(let i=0;i<newRows.length;i+=500){
         await writeDailyValuesToSheet(newRows.slice(i,i+500));
       }
@@ -2226,12 +2181,12 @@ async function computeDailyValues(el){
 
   dailyValueCache=stored;
   saveDVCache();
-
+  
   const initCash=initialCashSS+initialCashKW;
   const firstDate=marketDays[0];
   const lastDate=marketDays[marketDays.length-1];
   console.log(`daily_value: initCash=${initCash}, first(${firstDate})=${stored[firstDate]?.totalValue?.toFixed(0)}, last(${lastDate})=${stored[lastDate]?.totalValue?.toFixed(0)}`);
-
+  
   return stored;
 }
 
@@ -2268,6 +2223,17 @@ async function showTotalValueChart(){
   switchTab('chart');
   const el=document.getElementById('chartContent');
   el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 차트 데이터 계산 중...</p>';
+
+  // Quietly refresh prices if stale (>5 min)
+  const priceAge=Date.now()-parseInt(localStorage.getItem('cache_priceEpoch')||'0');
+  if(priceAge>5*60*1000&&allTransactions.length>0){
+    const tickers=getHeldTickers();
+    if(tickers.length){
+      cachedPrices=await fetchPrices(tickers);
+      saveCache();savePriceTimestamp();
+      computeOverview();renderOverview();
+    }
+  }
 
   const chronoTx=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
   if(chronoTx.length===0){el.innerHTML='<p style="color:var(--text2)">거래 내역이 없습니다</p>';return}
@@ -2397,13 +2363,13 @@ function redrawChart(dailyValues){
 
   // Period filter
   if(chartPeriod!=='total'){
-    const et=etNow();
-    const etY=parseInt(et.year),etM=parseInt(et.month)-1,etD=parseInt(et.day);
+    const now=new Date();
     let cutoff,cutEnd=null;
-    if(chartPeriod==='1y')cutoff=new Date(etY-1,etM,etD);
-    else if(chartPeriod==='6m')cutoff=new Date(etY,etM-6,etD);
-    else if(chartPeriod==='3m')cutoff=new Date(etY,etM-3,etD);
+    if(chartPeriod==='1y')cutoff=new Date(now.getFullYear()-1,now.getMonth(),now.getDate());
+    else if(chartPeriod==='6m')cutoff=new Date(now.getFullYear(),now.getMonth()-6,now.getDate());
+    else if(chartPeriod==='3m')cutoff=new Date(now.getFullYear(),now.getMonth()-3,now.getDate());
     else if(/^\d{4}$/.test(chartPeriod)){
+      // Year filter: e.g. "2025"
       const yr=parseInt(chartPeriod);
       cutoff=new Date(yr,0,1);
       cutEnd=new Date(yr,11,31);
@@ -2563,7 +2529,10 @@ function redrawChart(dailyValues){
   const baseValue=chartData.length>0&&chartData[0]._baseValue?chartData[0]._baseValue:1;
 
   // Fix last data point: use actual current prices if US market is active
-  const usMarketActiveNow=etNow().marketActive;
+  const nowET=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',hour12:false}).format(new Date());
+  const etHourNow=parseInt(nowET);
+  const nowDay=new Date().getDay();
+  const usMarketActiveNow=nowDay>=1&&nowDay<=5&&etHourNow>=4;
 
   let actualTotalAsset=null;
   if(usMarketActiveNow){
@@ -3173,11 +3142,42 @@ async function drawHistoryChart(ticker,period,btn){
   const container=document.getElementById('historyChartArea');
   if(!container){console.warn('historyChartArea not found');return}
 
+  // Quietly refresh current price if stale (>5 min)
+  const priceAge2=Date.now()-parseInt(localStorage.getItem('cache_priceEpoch')||'0');
+  if(priceAge2>5*60*1000){
+    try{
+      const p=await fetchPrices([ticker]);
+      if(p&&p[ticker])cachedPrices[ticker]=p[ticker];
+      saveCache();
+    }catch(e){}
+  }
+
   // Fetch historical daily prices from Yahoo (cached)
   if(!historyPriceCache[ticker]){
     container.innerHTML='<p style="color:var(--text2);font-size:11px;padding:8px"><span class="spinner"></span> Loading price history...</p>';
-    historyPriceCache[ticker]=await fetchYahooHistory(ticker);
-    console.log(`${ticker} Yahoo history: ${Object.keys(historyPriceCache[ticker]).length} days`);
+    try{
+      const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=5y`;
+      const proxies=[u=>`https://corsproxy.io/?${encodeURIComponent(u)}`];
+      for(const mkP of proxies){
+        try{
+          const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(12000)});
+          if(!r.ok)continue;
+          const d=await r.json();
+          const ts=d.chart?.result?.[0]?.timestamp||[];
+          const closes=d.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[];
+          const lookup={};
+          const etFmt2=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
+          for(let i=0;i<ts.length;i++){
+            if(closes[i]==null)continue;
+            const parts=etFmt2.format(new Date(ts[i]*1000)).split('/');
+            const key=parts[2].slice(2)+parts[0]+parts[1];
+            lookup[key]=closes[i];
+          }
+          if(Object.keys(lookup).length>0){historyPriceCache[ticker]=lookup;break}
+        }catch(e){continue}
+      }
+    }catch(e){console.warn(`${ticker} price fetch failed:`,e)}
+    if(!historyPriceCache[ticker])historyPriceCache[ticker]={};
   }
   const priceLookup=historyPriceCache[ticker];
   // Compute correction ratio for this ticker (Yahoo is also split-adjusted like FMP)
@@ -3244,9 +3244,18 @@ async function drawHistoryChart(ticker,period,btn){
     }
   }
   pendingSnap();
-  const _et=etNow();
-  const todayDate=_et.yymmdd;
-  const usMarketActive=_et.marketActive;
+  const now=new Date();
+  // Use US Eastern time for all date/market checks
+  const etFmtFull=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hour12:false,weekday:'short'});
+  const etParts=etFmtFull.formatToParts(now);
+  const etYear=etParts.find(p=>p.type==='year').value;
+  const etMonth=etParts.find(p=>p.type==='month').value;
+  const etDay=etParts.find(p=>p.type==='day').value;
+  const etHour=parseInt(etParts.find(p=>p.type==='hour').value);
+  const etWeekday=etParts.find(p=>p.type==='weekday').value; // Mon,Tue,...
+  const todayDate=etYear.slice(2)+etMonth+etDay;
+  const isWeekdayET=!['Sat','Sun'].includes(etWeekday);
+  const usMarketActive=isWeekdayET&&etHour>=4;
 
   // Expand snapshots: insert daily Yahoo price points between tx dates for smooth 평가액 line
   // purchAmt and realized stay flat between tx dates; only totalValue changes daily
@@ -3287,11 +3296,9 @@ async function drawHistoryChart(ticker,period,btn){
   // Period filter
   let data=[...snapshots];
   if(period!=='total'){
-    const et2=etNow();
-    const etY2=parseInt(et2.year),etM2=parseInt(et2.month)-1,etD2=parseInt(et2.day);
     let cutoff;
-    if(period==='1y')cutoff=new Date(etY2-1,etM2,etD2);
-    else if(period==='6m')cutoff=new Date(etY2,etM2-6,etD2);
+    if(period==='1y')cutoff=new Date(now.getFullYear()-1,now.getMonth(),now.getDate());
+    else if(period==='6m')cutoff=new Date(now.getFullYear(),now.getMonth()-6,now.getDate());
     const cutStr=String(cutoff.getFullYear()).slice(2)+String(cutoff.getMonth()+1).padStart(2,'0')+String(cutoff.getDate()).padStart(2,'0');
     let startSnap=null;
     for(let i=data.length-1;i>=0;i--){if(data[i].date<=cutStr){startSnap=data[i];break}}
