@@ -655,36 +655,37 @@ async function fetchFmpBatchQuote(tickers){
   const prices={};
   if(!FMP_KEY||tickers.length===0)return prices;
   const symbols=tickers.join(',');
-  try{
-    const data=await fmpGet(`quote?symbol=${symbols}`);
-    const arr=Array.isArray(data)?data:(data?[data]:[]);
-    for(const q of arr){
-      if(!q||!q.symbol)continue;
-      const tk=q.symbol;
-      prices[tk]={
-        current:q.price||0,
-        prevClose:q.previousClose||q.price||0,
-        chgDay:q.changesPercentage||0,
-        chgWeek:0  // FMP batch doesn't give weekly; we compute below
-      };
+
+  // Try batch-quote endpoint first, then quote endpoint as fallback
+  const endpoints=[
+    `batch-quote?symbols=${symbols}`,
+    `quote?symbol=${symbols}`
+  ];
+
+  for(const ep of endpoints){
+    try{
+      const data=await fmpGet(ep);
+      console.log(`FMP ${ep.split('?')[0]} response type:`,Array.isArray(data)?`array[${data.length}]`:typeof data);
+      const arr=Array.isArray(data)?data:(data?[data]:[]);
+      for(const q of arr){
+        if(!q||!q.symbol)continue;
+        const tk=q.symbol;
+        prices[tk]={
+          current:q.price||0,
+          prevClose:q.previousClose||q.price||0,
+          chgDay:q.changesPercentage||0,
+          chgWeek:0
+        };
+      }
+      if(Object.keys(prices).length>0){
+        console.log(`FMP batch quote: ${Object.keys(prices).length}/${tickers.length} tickers via ${ep.split('?')[0]}`);
+        break; // success, stop trying endpoints
+      }
+    }catch(e){
+      console.warn(`FMP ${ep.split('?')[0]} failed:`,e.message);
     }
-    // Compute weekly change from FMP 5-day history for tickers that succeeded
-    // Only for held tickers (small set), sequential with 200ms delay
-    for(const tk of tickers){
-      if(!prices[tk])continue;
-      try{
-        const hist=await fetchFmpHistoryDays(tk,7);
-        if(hist.length>=5){
-          const weekPrice=hist[hist.length-5].close;
-          const curPrice=prices[tk].current;
-          prices[tk].chgWeek=weekPrice?((curPrice-weekPrice)/weekPrice*100):0;
-        }
-      }catch(e){}
-    }
-    console.log(`FMP batch quote: ${Object.keys(prices).length}/${tickers.length} tickers`);
-  }catch(e){
-    console.warn('FMP batch quote failed:',e);
   }
+
   return prices;
 }
 
