@@ -717,17 +717,41 @@ async function updateDailyValuesIncremental(){
     if(posTemp[tx.ticker]>0)allTickersEverHeld.add(tx.ticker);
   }
 
-  // Fetch short-range Yahoo history for all tickers
+  // Fetch short-range Yahoo history for all tickers, with FMP fallback
   const tickerList=[...allTickersEverHeld];
   const priceHistories={}; // ticker -> {YYMMDD: close}
   const batchSize=8;
+  const failedTickers=[];
   for(let i=0;i<tickerList.length;i+=batchSize){
     const batch=tickerList.slice(i,i+batchSize);
     const results=await Promise.all(batch.map(tk=>fetchYahooHistoryRange(tk,yahooRange).then(h=>({tk,h}))));
     for(const{tk,h} of results){
       priceHistories[tk]=h;
+      if(Object.keys(h).length===0)failedTickers.push(tk);
     }
     if(i+batchSize<tickerList.length)await new Promise(r=>setTimeout(r,300));
+  }
+
+  // FMP fallback for tickers that Yahoo failed on
+  if(failedTickers.length>0&&FMP_KEY){
+    const fromDate=`20${lastStoredDate.slice(0,2)}-${lastStoredDate.slice(2,4)}-${lastStoredDate.slice(4,6)}`;
+    const _etT=etNow();
+    const toDate=`${_etT.year}-${_etT.month}-${_etT.day}`;
+    console.log(`Yahoo failed for ${failedTickers.length} tickers, trying FMP: ${failedTickers.join(',')}`);
+    for(const tk of failedTickers){
+      try{
+        const h=await fetchFmpHistory(tk,fromDate,toDate);
+        if(Object.keys(h).length>0){
+          priceHistories[tk]=h;
+          console.log(`✓ FMP fallback ${tk}: ${Object.keys(h).length} days`);
+        }else{
+          console.warn(`✗ FMP fallback ${tk}: no data`);
+        }
+      }catch(e){console.warn(`✗ FMP fallback ${tk}: ${e.message}`)}
+      await new Promise(r=>setTimeout(r,200));
+    }
+  }else if(failedTickers.length>0){
+    console.warn(`Yahoo failed for ${failedTickers.length} tickers, no FMP key for fallback: ${failedTickers.join(',')}`);
   }
 
   // Get market days from the fetched data (union of all tickers' dates)
@@ -897,7 +921,32 @@ async function fetchYahooHistoryRange(ticker,range){
   return {};
 }
 
-// Leveraged ETF → underlying ticker mapping for fundamentals
+// Fetch historical daily prices from FMP (fallback when Yahoo fails)
+// fromDate/toDate in YYYY-MM-DD format
+async function fetchFmpHistory(ticker,fromDate,toDate){
+  if(!FMP_KEY)return {};
+  const url=`https://financialmodelingprep.com/stable/historical-price-full/${ticker}?from=${fromDate}&to=${toDate}&apikey=${FMP_KEY}`;
+  try{
+    const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
+    if(!r.ok)return {};
+    const d=await r.json();
+    const historical=d.historical||d||[];
+    const arr=Array.isArray(historical)?historical:[];
+    const lookup={};
+    for(const day of arr){
+      if(!day.date||day.close==null)continue;
+      // day.date is YYYY-MM-DD → convert to YYMMDD
+      const parts=day.date.split('-');
+      if(parts.length!==3)continue;
+      const key=parts[0].slice(2)+parts[1]+parts[2];
+      lookup[key]=day.close;
+    }
+    return lookup;
+  }catch(e){
+    console.warn(`FMP history fetch failed for ${ticker}: ${e.message}`);
+    return {};
+  }
+}
 // null = skip (no fundamentals available, e.g. index ETFs)
 // Tickers not in this map: fetch their own fundamentals directly
 const UNDERLYING_MAP={AMDL:'AMD',NVDL:'NVDA',TQQQ:null,SOXL:null,SQQQ:null,GGLL:'GOOGL',TSLL:'TSLA',QLD:null,QQQM:null,TNA:null,UGE:null,XLP:null,RSP:null};
