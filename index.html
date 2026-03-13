@@ -2446,8 +2446,8 @@ async function updateBenchmarkIncremental(ticker){
   toYMD=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
 
   if(isFullFetch){
-    const from5y=new Date(now.getFullYear()-5,now.getMonth(),now.getDate());
-    fromYMD=`${from5y.getFullYear()}-${String(from5y.getMonth()+1).padStart(2,'0')}-${String(from5y.getDate()).padStart(2,'0')}`;
+    // Fetch from Dec 2024 (provides normalization base before Jan 2025 transactions)
+    fromYMD='2024-12-01';
   }else{
     const lastDate=existing[existing.length-1].date;
     const lastY=parseInt('20'+lastDate.slice(0,2)),lastM=parseInt(lastDate.slice(2,4))-1,lastD=parseInt(lastDate.slice(4,6));
