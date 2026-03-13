@@ -196,10 +196,10 @@ table.t tr:hover td{background:var(--accentBg)}
       </div>
       <div class="chart-grp" style="margin-left:8px">
         <button class="cbtn on" onclick="toggleBench('TQQQ',this)">TQQQ</button>
-        <button class="cbtn on" onclick="toggleBench('%5EGSPC',this)">S&P500</button>
+        <button class="cbtn on" onclick="toggleBench('GSPC',this)">S&P500</button>
         <button class="cbtn" onclick="toggleBench('RSP',this)">RSP</button>
         <button class="cbtn" onclick="toggleBench('QQQ',this)">QQQ</button>
-        <button class="cbtn on" onclick="toggleBench('%5ESOX',this)">SOX</button>
+        <button class="cbtn on" onclick="toggleBench('SOX',this)">SOX</button>
         <button class="cbtn on" onclick="toggleBench('IWM',this)">Russell</button>
       </div>
       <div class="chart-grp" style="margin-left:8px">
@@ -2271,14 +2271,14 @@ let chartTxDates=[];     // sorted tx dates
 let chartBenchData={};   // {TQQQ:[{date,close}], ...}
 let chartPeriod='total';
 let chartMode='norm';    // 'norm' or 'chg'
-let chartBenches=new Set(['TQQQ','%5EGSPC','%5ESOX','IWM']);
+let chartBenches=new Set(['TQQQ','GSPC','SOX','IWM']);
 
 const BENCH_META={
   TQQQ:{color:'#888',label:'TQQQ'},
   QQQ:{color:'#ab47bc',label:'QQQ'},
-  '%5EGSPC':{color:'#e0e0e0',label:'S&P500'},
+  'GSPC':{color:'#e0e0e0',label:'S&P500'},
   RSP:{color:'#26c6da',label:'RSP'},
-  '%5ESOX':{color:'#66bb6a',label:'SOX'},
+  'SOX':{color:'#66bb6a',label:'SOX'},
   IWM:{color:'#ffa726',label:'Russell'}
 };
 const HOLD_COLORS=['#4fc3f7','#ff7043','#ab47bc','#66bb6a','#ffa726','#ef5350','#78909c','#fff176'];
@@ -2333,15 +2333,15 @@ function toggleBench(tk,btn){
 const BENCH_FMP_MAP={
   'TQQQ':{fmp:'TQQQ',type:'stock'},
   'QQQ':{fmp:'QQQ',type:'stock'},
-  '%5EGSPC':{fmp:'^GSPC',type:'index'},
+  'GSPC':{fmp:'^GSPC',type:'index'},
   'RSP':{fmp:'RSP',type:'stock'},
-  '%5ESOX':{fmp:'^SOX',type:'index'},
+  'SOX':{fmp:'^SOX',type:'index'},
   'IWM':{fmp:'IWM',type:'stock'}
 };
 
 // Load all benchmarks from Sheet → chartBenchData
-// Sheet format: date | TQQQ | QQQ | %5EGSPC | RSP | %5ESOX | IWM (tabular, one row per date)
-const BENCH_TICKERS_ALL=['TQQQ','QQQ','%5EGSPC','RSP','%5ESOX','IWM'];
+// Sheet format: date | TQQQ | QQQ | GSPC | RSP | SOX | IWM (tabular, one row per date)
+const BENCH_TICKERS_ALL=['TQQQ','QQQ','GSPC','RSP','SOX','IWM'];
 async function loadBenchmarksFromSheet(){
   if(!SHEET_ID||!SA_KEY)return;
   try{
@@ -2967,22 +2967,22 @@ function redrawChart(dailyValues){
     masterDates=[...chartTxDates];
   }
 
-  // Filter to start from first transaction
-  const firstTxDate=chartTxDates[0];
+  // Filter to start from first transaction (use original tx dates, not day0-injected)
+  const origTxDates=Object.keys(chartTxStates).filter(d=>chartTxStates[d].positions&&Object.keys(chartTxStates[d].positions).length>0||chartTxStates[d]._isDay0!==true).sort();
+  const firstTxDate=origTxDates.length>0?origTxDates[0]:chartTxDates[0];
   masterDates=masterDates.filter(d=>d>=firstTxDate);
 
   // Inject a synthetic "day 0" = one market day before first tx = initialCash
+  // Only inject once — mark it so we don't keep prepending
   const initCash=initialCashSS+initialCashKW;
   const allRefDates=tqqqArr.length>0?tqqqArr.map(d=>d.date).sort():[...dvDates];
   const preTxDays=allRefDates.filter(d=>d<firstTxDate);
   if(preTxDays.length>0){
     const day0=preTxDays[preTxDays.length-1];
-    masterDates=[day0,...masterDates];
-    // Inject into dv so totalValue lookup works
+    if(!masterDates.includes(day0))masterDates=[day0,...masterDates];
     if(!dv[day0])dv[day0]={totalValue:initCash, cash:initCash};
-    // Create a dummy state for day0 (no positions, full cash)
     if(!chartTxStates[day0]){
-      chartTxStates[day0]={cash:initCash, positions:{}, totalValue:initCash};
+      chartTxStates[day0]={cash:initCash, positions:{}, totalValue:initCash, _isDay0:true};
       chartTxDates=[day0,...chartTxDates];
     }
   }
