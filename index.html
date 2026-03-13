@@ -188,7 +188,7 @@ table.t tr:hover td{background:var(--accentBg)}
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;align-items:center">
       <div class="chart-grp">
-        <button class="cbtn on" onclick="setChartPeriod('total',this)">Total</button>
+        <button class="cbtn" onclick="setChartPeriod('total',this)">Total</button>
         <button class="cbtn" onclick="setChartPeriod('1y',this)">1Y</button>
         <button class="cbtn" onclick="setChartPeriod('6m',this)">6M</button>
         <button class="cbtn" onclick="setChartPeriod('3m',this)">3M</button>
@@ -2269,7 +2269,7 @@ function sumCard2(label,value,right,cls=''){
 let chartTxStates={};    // date -> {cash, positions:{tk:{qty,avgCost}}, totalValue}
 let chartTxDates=[];     // sorted tx dates
 let chartBenchData={};   // {TQQQ:[{date,close}], ...}
-let chartPeriod='total';
+let chartPeriod='2026';
 let chartMode='norm';    // 'norm' or 'chg'
 let chartBenches=new Set(['TQQQ','GSPC','SOX','IWM']);
 
@@ -2401,30 +2401,25 @@ async function saveBenchmarksToSheet(){
       dateSet.add(d.date);
     }
   }
-  const allDates=[...dateSet].sort(); // oldest first
+  const allDates=[...dateSet].sort();
+  if(allDates.length===0){console.log('No benchmark data to save');return}
   const header=['date',...BENCH_TICKERS_ALL];
   const rows=[header];
   for(const date of allDates){
     const row=[parseInt(date)];
-    for(const tk of BENCH_TICKERS_ALL){
-      row.push(lookups[tk][date]||'');
-    }
+    for(const tk of BENCH_TICKERS_ALL) row.push(lookups[tk][date]||'');
     rows.push(row);
   }
-  const range='benchmarks!A:G';
   try{
+    // Clear then PUT (not append)
+    const range='benchmarks!A:G';
     await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:clear`,{
       method:'POST',headers:{Authorization:`Bearer ${token}`}
     });
-    // Write in chunks (Sheets has body size limits)
-    for(let i=0;i<rows.length;i+=5000){
-      const chunk=rows.slice(i,i+5000);
-      const chunkRange=i===0?range:`benchmarks!A${i+1}:G${i+5000}`;
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{
-        method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-        body:JSON.stringify({range,majorDimension:'ROWS',values:chunk})
-      });
-    }
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent('benchmarks!A1:G'+rows.length)}?valueInputOption=USER_ENTERED`,{
+      method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({range:'benchmarks!A1:G'+rows.length, majorDimension:'ROWS', values:rows})
+    });
     console.log(`Saved benchmarks to Sheet: ${allDates.length} dates × ${BENCH_TICKERS_ALL.length} tickers`);
   }catch(e){
     console.warn('Failed to save benchmarks:',e);
