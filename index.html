@@ -655,7 +655,7 @@ async function refreshPrices(){
       }
     }
     if(benchUpdated&&SHEET_ID&&SA_KEY){
-      saveBenchmarksToSheet().catch(()=>{});
+      try{await saveBenchmarksToSheet()}catch(e){console.warn('Failed to save benchmarks:',e)}
     }
   }
 
@@ -2403,6 +2403,8 @@ async function saveBenchmarksToSheet(){
   }
   const allDates=[...dateSet].sort();
   if(allDates.length===0){console.log('No benchmark data to save');return}
+  const perTicker=BENCH_TICKERS_ALL.map(tk=>`${tk}:${Object.keys(lookups[tk]).length}`).join(', ');
+  console.log(`saveBenchmarks: ${allDates.length} dates, per-ticker: ${perTicker}`);
   const header=['date',...BENCH_TICKERS_ALL];
   const rows=[header];
   for(const date of allDates){
@@ -2416,11 +2418,16 @@ async function saveBenchmarksToSheet(){
     await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:clear`,{
       method:'POST',headers:{Authorization:`Bearer ${token}`}
     });
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent('benchmarks!A1:G'+rows.length)}?valueInputOption=USER_ENTERED`,{
+    const putResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent('benchmarks!A1:G'+rows.length)}?valueInputOption=USER_ENTERED`,{
       method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
       body:JSON.stringify({range:'benchmarks!A1:G'+rows.length, majorDimension:'ROWS', values:rows})
     });
-    console.log(`Saved benchmarks to Sheet: ${allDates.length} dates × ${BENCH_TICKERS_ALL.length} tickers`);
+    if(!putResp.ok){
+      const err=await putResp.text();
+      console.warn(`Benchmark PUT failed ${putResp.status}:`,err);
+    }else{
+      console.log(`Saved benchmarks to Sheet: ${allDates.length} dates × ${BENCH_TICKERS_ALL.length} tickers`);
+    }
   }catch(e){
     console.warn('Failed to save benchmarks:',e);
   }
@@ -2928,7 +2935,7 @@ async function showTotalValueChart(){
   }
   // Save to Sheet if anything new
   if(benchUpdated&&SHEET_ID&&SA_KEY){
-    saveBenchmarksToSheet().catch(e=>console.warn('Failed to save benchmarks:',e));
+    try{await saveBenchmarksToSheet()}catch(e){console.warn('Failed to save benchmarks:',e)}
   }
 
   redrawChart(dailyValues);
