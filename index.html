@@ -2391,15 +2391,21 @@ async function saveBenchmarksToSheet(){
       });
     }catch(e2){console.warn('Failed to create benchmarks tab:',e2);return}
   }
-  // Collect all dates across all benchmarks
+  // Collect all dates across all benchmarks, only from Dec 2024 onward
+  const minDate='241201'; // only store from Dec 2024
   const dateSet=new Set();
   const lookups={};
   for(const tk of BENCH_TICKERS_ALL){
     lookups[tk]={};
     for(const d of (chartBenchData[tk]||[])){
+      if(d.date<minDate)continue;
       lookups[tk][d.date]=d.close;
       dateSet.add(d.date);
     }
+  }
+  // Also trim in-memory data to free old Yahoo data
+  for(const tk of BENCH_TICKERS_ALL){
+    if(chartBenchData[tk]) chartBenchData[tk]=chartBenchData[tk].filter(d=>d.date>=minDate);
   }
   const allDates=[...dateSet].sort();
   if(allDates.length===0){console.log('No benchmark data to save');return}
