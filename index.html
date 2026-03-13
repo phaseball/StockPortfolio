@@ -1984,7 +1984,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     if(fund.revNorm!=null){
       const revB=(fund.revNorm/1e9).toFixed(1);
       const yoy=fund.revYoy12m!=null?` (${fund.revYoy12m>=0?'+':''}${fund.revYoy12m.toFixed(0)}% YOY)`:'';
-      revRow=`${revB}B${yoy}`;
+      revRow=`<span style="color:var(--text2)">${revB}B${yoy}</span>`;
     }
 
     // -- Col4 & Col5: EPS est / Target now > ~1w > ~1m --
@@ -2206,25 +2206,45 @@ const BENCH_FMP_MAP={
 };
 
 // Load all benchmarks from Sheet → chartBenchData
+// Sheet format: date | TQQQ | QQQ | %5EGSPC | RSP | %5ESOX | IWM (tabular, one row per date)
+const BENCH_TICKERS_ALL=['TQQQ','QQQ','%5EGSPC','RSP','%5ESOX','IWM'];
 async function loadBenchmarksFromSheet(){
   if(!SHEET_ID||!SA_KEY)return;
   try{
-    const resp=await sheetsGet('benchmarks!A:B');
+    const resp=await sheetsGet('benchmarks!A:G');
     const rows=resp&&resp.values?resp.values:[];
-    for(const r of rows){
-      if(!r[0]||r[0]==='ticker')continue;
-      try{
-        const arr=JSON.parse(r[1]);
-        if(Array.isArray(arr)&&arr.length>0) chartBenchData[r[0]]=arr;
-      }catch(e){}
+    if(rows.length<2)return;
+    const header=rows[0]; // date, TQQQ, QQQ, ...
+    const colMap={}; // ticker → column index
+    for(let i=1;i<header.length;i++) colMap[header[i]]=i;
+    // Init arrays
+    for(const tk of BENCH_TICKERS_ALL) if(!chartBenchData[tk])chartBenchData[tk]=[];
+    const existingDates={};
+    for(const tk of BENCH_TICKERS_ALL) existingDates[tk]=new Set((chartBenchData[tk]||[]).map(d=>d.date));
+    for(let r=1;r<rows.length;r++){
+      const date=String(rows[r][0]);
+      if(!date||date==='date')continue;
+      for(const tk of BENCH_TICKERS_ALL){
+        const ci=colMap[tk];
+        if(ci==null)continue;
+        const v=parseFloat(rows[r][ci]);
+        if(!isNaN(v)&&v>0&&!existingDates[tk].has(date)){
+          chartBenchData[tk].push({date,close:v});
+          existingDates[tk].add(date);
+        }
+      }
     }
-    console.log(`Loaded benchmarks from Sheet: ${Object.keys(chartBenchData).filter(k=>chartBenchData[k].length>0).join(',')}`);
+    for(const tk of BENCH_TICKERS_ALL){
+      if(chartBenchData[tk])chartBenchData[tk].sort((a,b)=>a.date.localeCompare(b.date));
+    }
+    const counts=BENCH_TICKERS_ALL.map(tk=>`${tk}:${(chartBenchData[tk]||[]).length}`).join(', ');
+    console.log(`Loaded benchmarks from Sheet: ${counts}`);
   }catch(e){
     console.log('benchmarks tab not found or empty');
   }
 }
 
-// Save all benchmarks to Sheet (overwrite entire tab)
+// Save all benchmarks to Sheet (overwrite entire tab, tabular format)
 async function saveBenchmarksToSheet(){
   if(!SHEET_ID||!SA_KEY)return;
   const token=await getAccessToken();
@@ -2235,20 +2255,46 @@ async function saveBenchmarksToSheet(){
         method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
         body:JSON.stringify({requests:[{addSheet:{properties:{title:'benchmarks'}}}]})
       });
-    }catch(e2){}
+    }catch(e2){console.warn('Failed to create benchmarks tab:',e2);return}
   }
-  const rows=[['ticker','data']];
-  for(const[tk,arr] of Object.entries(chartBenchData)){
-    if(arr&&arr.length>0) rows.push([tk,JSON.stringify(arr)]);
+  // Collect all dates across all benchmarks
+  const dateSet=new Set();
+  const lookups={};
+  for(const tk of BENCH_TICKERS_ALL){
+    lookups[tk]={};
+    for(const d of (chartBenchData[tk]||[])){
+      lookups[tk][d.date]=d.close;
+      dateSet.add(d.date);
+    }
   }
-  const range='benchmarks!A:B';
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:clear`,{
-    method:'POST',headers:{Authorization:`Bearer ${token}`}
-  });
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,{
-    method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-    body:JSON.stringify({range,majorDimension:'ROWS',values:rows})
-  });
+  const allDates=[...dateSet].sort(); // oldest first
+  const header=['date',...BENCH_TICKERS_ALL];
+  const rows=[header];
+  for(const date of allDates){
+    const row=[parseInt(date)];
+    for(const tk of BENCH_TICKERS_ALL){
+      row.push(lookups[tk][date]||'');
+    }
+    rows.push(row);
+  }
+  const range='benchmarks!A:G';
+  try{
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:clear`,{
+      method:'POST',headers:{Authorization:`Bearer ${token}`}
+    });
+    // Write in chunks (Sheets has body size limits)
+    for(let i=0;i<rows.length;i+=5000){
+      const chunk=rows.slice(i,i+5000);
+      const chunkRange=i===0?range:`benchmarks!A${i+1}:G${i+5000}`;
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{
+        method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+        body:JSON.stringify({range,majorDimension:'ROWS',values:chunk})
+      });
+    }
+    console.log(`Saved benchmarks to Sheet: ${allDates.length} dates × ${BENCH_TICKERS_ALL.length} tickers`);
+  }catch(e){
+    console.warn('Failed to save benchmarks:',e);
+  }
 }
 
 // Incrementally update benchmark with recent FMP data + today's live price
