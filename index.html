@@ -719,10 +719,13 @@ async function fetchFmpHistoryRange(ticker,fromYMD,toYMD){
     const historical=Array.isArray(data)?data:(data?.historical||[]);
     const result=[];
     for(const day of historical){
-      if(!day.date||day.close==null)continue;
+      if(!day.date)continue;
+      // Prefer adjClose (split+dividend adjusted), fall back to close
+      const price=day.adjClose||day.close;
+      if(price==null)continue;
       const parts=day.date.split('-');
       if(parts.length!==3)continue;
-      result.push({date:parts[0].slice(2)+parts[1]+parts[2], close:day.close});
+      result.push({date:parts[0].slice(2)+parts[1]+parts[2], close:price});
     }
     result.sort((a,b)=>a.date.localeCompare(b.date));
     return result;
@@ -804,7 +807,11 @@ async function updateDailyValuesIncremental(){
     const lookup={};
     for(const h of hist) lookup[h.date]=h.close;
     priceHistories[tk]=lookup;
-    if(i%10===9)await new Promise(r=>setTimeout(r,200)); // rate limit every 10
+    const nDays=Object.keys(lookup).length;
+    if(nDays===0)console.warn(`FMP: ${tk} returned 0 days for ${fromYMD}~${toYMD}`);
+    else if(isFullBuild&&nDays<50)console.warn(`FMP: ${tk} only ${nDays} days (expected ~300+)`);
+    // Rate limit: 300ms between each request to avoid FMP throttling
+    await new Promise(r=>setTimeout(r,300));
   }
 
   // Compute correction ratios
@@ -815,7 +822,9 @@ async function updateDailyValuesIncremental(){
   for(const h of Object.values(priceHistories)){
     for(const d of Object.keys(h))allFetchedDates.add(d);
   }
-  if(_et.marketActive)allFetchedDates.add(todayYymmdd);
+  // Only add today if market is active AND we have live prices to use
+  const haveLivePrices=Object.keys(cachedPrices).length>0;
+  if(_et.marketActive&&haveLivePrices)allFetchedDates.add(todayYymmdd);
 
   let marketDays;
   if(isFullBuild){
@@ -832,15 +841,17 @@ async function updateDailyValuesIncremental(){
   }
 
   function findClose(tk,date){
-    if(date===todayYymmdd&&cachedPrices[tk]&&cachedPrices[tk].current)return cachedPrices[tk].current;
+    // Returns {price, exact} — exact=true means FMP had this date, false means fallback
+    if(date===todayYymmdd&&cachedPrices[tk]&&cachedPrices[tk].current)return {price:cachedPrices[tk].current, exact:true};
     const hist=priceHistories[tk];
     if(!hist)return null;
-    if(hist[date])return hist[date];
+    if(hist[date])return {price:hist[date], exact:true};
+    // Fallback: look back up to 5 days (weekends/holidays only, not missing data)
     const y=parseInt('20'+date.slice(0,2)),m=parseInt(date.slice(2,4))-1,d=parseInt(date.slice(4,6));
-    for(let off=1;off<=7;off++){
+    for(let off=1;off<=5;off++){
       const dt=new Date(y,m,d-off);
       const key=String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
-      if(hist[key])return hist[key];
+      if(hist[key])return {price:hist[key], exact:false};
     }
     return null;
   }
@@ -856,6 +867,7 @@ async function updateDailyValuesIncremental(){
   const pos={}; // ticker → qty (split-adjusted)
   const txDateList=Object.keys(txByDate).sort();
   let txDateIdx=0;
+  const newRows=[];
 
   // For incremental, replay up to last stored date
   if(!isFullBuild){
@@ -872,10 +884,60 @@ async function updateDailyValuesIncremental(){
       }
       txDateIdx++;
     }
+    // Re-check last 10 stored days — correct stale/fallback prices if we now have exact FMP data
+    const recentStored=storedDates.slice(-10);
+    const correctedDates=[];
+    for(const date of recentStored){
+      const entry=stored[date];
+      if(!entry||!entry.prices)continue;
+      let improved=false;
+      for(const[tk,oldPrice] of Object.entries(entry.prices)){
+        const hist=priceHistories[tk];
+        if(!hist||!hist[date])continue;
+        const cr=corrRatio[tk]||1;
+        const newPrice=hist[date]*cr;
+        if(Math.abs(newPrice-oldPrice)/Math.max(oldPrice,0.01)>0.001){
+          entry.prices[tk]=Math.round(newPrice*10000)/10000;
+          const qty=pos[tk]||0;
+          if(qty>0) entry.holdings[tk]=Math.round(qty*newPrice*100)/100;
+          improved=true;
+        }
+      }
+      if(improved){
+        let hv=0;
+        for(const v of Object.values(entry.holdings||{})) hv+=v;
+        entry.totalValue=entry.cash+hv;
+        correctedDates.push(date);
+        console.log(`daily_value: corrected stale prices for ${date}`);
+      }
+    }
+    // Update corrected rows in Sheet by finding their row numbers
+    if(correctedDates.length>0&&SHEET_ID&&SA_KEY){
+      try{
+        const dvResp=await sheetsGet('daily_value!A:A');
+        const dateCol=dvResp&&dvResp.values?dvResp.values:[];
+        const token=await getAccessToken();
+        for(const date of correctedDates){
+          const dateNum=parseInt(date);
+          // Find row index (1-based, +1 for header)
+          let rowIdx=-1;
+          for(let r=0;r<dateCol.length;r++){
+            if(String(dateCol[r][0])===String(dateNum)){rowIdx=r+1;break}
+          }
+          if(rowIdx<0)continue;
+          const entry=stored[date];
+          const rowRange=`daily_value!A${rowIdx}:E${rowIdx}`;
+          await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(rowRange)}?valueInputOption=USER_ENTERED`,{
+            method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+            body:JSON.stringify({range:rowRange,majorDimension:'ROWS',values:[[dateNum, Math.round(entry.totalValue*100)/100, Math.round(entry.cash*100)/100, JSON.stringify(entry.holdings), JSON.stringify(entry.prices)]]})
+          });
+        }
+        console.log(`daily_value: updated ${correctedDates.length} corrected rows in Sheet`);
+      }catch(e){console.warn('Failed to update corrected rows:',e)}
+    }
   }
 
   // Compute value for each new market day
-  const newRows=[];
   for(const date of marketDays){
     while(txDateIdx<txDateList.length&&txDateList[txDateIdx]<=date){
       for(const tx of txByDate[txDateList[txDateIdx]]){
@@ -893,19 +955,30 @@ async function updateDailyValuesIncremental(){
     const cash=cashSS+cashKW;
     let holdingsValue=0;
     const tickerValues={}, tickerPrices={};
+    let hasAllExactPrices=true;
     for(const[tk,qty] of Object.entries(pos)){
       if(qty<=0)continue;
-      const rawClose=findClose(tk,date);
+      const result=findClose(tk,date);
       let usedPrice;
-      if(rawClose!=null){const cr=corrRatio[tk]||1;usedPrice=rawClose*cr}
-      else{usedPrice=0;for(let i=chronoTx.length-1;i>=0;i--){if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}}}
+      if(result!=null){
+        const cr=corrRatio[tk]||1;
+        usedPrice=result.price*cr;
+        tickerPrices[tk]=Math.round(usedPrice*10000)/10000;
+        if(!result.exact)hasAllExactPrices=false;
+      }else{
+        // Last resort: transaction price
+        usedPrice=0;
+        for(let i=chronoTx.length-1;i>=0;i--){if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}}
+        if(usedPrice>0)tickerPrices[tk]=Math.round(usedPrice*10000)/10000;
+        hasAllExactPrices=false;
+      }
       const val=qty*usedPrice;
       tickerValues[tk]=Math.round(val*100)/100;
-      tickerPrices[tk]=Math.round(usedPrice*10000)/10000;
       holdingsValue+=val;
     }
     const totalValue=cash+holdingsValue;
-    stored[date]={totalValue, cash, holdings:tickerValues, prices:tickerPrices};
+    // Only store if we have at least some prices; mark incomplete rows
+    stored[date]={totalValue, cash, holdings:tickerValues, prices:tickerPrices, _complete:hasAllExactPrices};
     newRows.push([parseInt(date), Math.round(totalValue*100)/100, Math.round(cash*100)/100, JSON.stringify(tickerValues), JSON.stringify(tickerPrices)]);
   }
 
