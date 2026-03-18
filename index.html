@@ -165,6 +165,7 @@ table.t tr:hover td{background:var(--accentBg)}
       <div class="filter-btns">
         <button class="fbtn on" onclick="setFilter('삼성',this)">🔵 삼성</button>
         <button class="fbtn" onclick="setFilter('키움',this)">🔴 키움</button>
+        <button class="fbtn" onclick="setFilter('메리츠',this)">🟢 메리츠</button>
         <button class="fbtn" onclick="setFilter('all',this)">Total</button>
       </div>
       <div style="display:flex;gap:4px;align-items:center">
@@ -247,7 +248,10 @@ ASTS,-4,85.5650,3
 
 #키움 260212
 CLS,1,287.0000,1
-CLS,1,282.5800,2"></textarea>
+CLS,1,282.5800,2
+
+#메리츠 260212
+NVDA,2,130.5000,1"></textarea>
       <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
         <button class="btn btn-p" onclick="doImport()">📥 가져오기 → Google Sheets</button>
         <button class="btn btn-s btn-sm" onclick="previewImport()">👁 미리보기</button>
@@ -261,7 +265,7 @@ CLS,1,282.5800,2"></textarea>
       <div style="font-size:12px;color:var(--text2);line-height:1.7">
         <p><code style="background:var(--surface2);padding:2px 6px;border-radius:3px;font-size:11px">#증권사 날짜(YYMMDD)</code> 로 그룹 시작</p>
         <p><code style="background:var(--surface2);padding:2px 6px;border-radius:3px;font-size:11px">종목,수량(매도=-),체결단가,순서</code> 로 각 거래</p>
-        <p>빈 줄로 그룹 구분. tax/total 자동 계산 (삼성 0.03%, 키움 0.07%)</p>
+        <p>빈 줄로 그룹 구분. tax/total 자동 계산 (삼성 0.07%, 키움 0.07%, 메리츠 0%)</p>
       </div>
     </div>
   </div>
@@ -271,7 +275,7 @@ CLS,1,282.5800,2"></textarea>
     <div class="card">
       <div class="card-hdr"><span class="ico">✏️</span> 수동 거래 입력</div>
       <div class="g2">
-        <label class="f"><span>증권사</span><select id="mBk"><option value="삼성">삼성 (0.03%)</option><option value="키움">키움 (0.07%)</option></select></label>
+        <label class="f"><span>증권사</span><select id="mBk"><option value="삼성">삼성 (0.07%)</option><option value="키움">키움 (0.07%)</option><option value="메리츠">메리츠 (0%)</option></select></label>
         <label class="f"><span>날짜 (YYMMDD)</span><input type="text" id="mDt" placeholder="260212" maxlength="6"/></label>
       </div>
       <div class="g4">
@@ -308,7 +312,7 @@ CLS,1,282.5800,2"></textarea>
         <div class="step"><h3>Google Cloud 프로젝트 생성</h3><p><a href="https://console.cloud.google.com/projectcreate" target="_blank" style="color:var(--accent)">console.cloud.google.com</a> → 새 프로젝트</p></div>
         <div class="step"><h3>Google Sheets API 활성화</h3><p><a href="https://console.cloud.google.com/apis/library/sheets.googleapis.com" target="_blank" style="color:var(--accent)">Sheets API</a> → "사용" 클릭</p></div>
         <div class="step"><h3>서비스 계정 생성</h3><p><a href="https://console.cloud.google.com/iam-admin/serviceaccounts/create" target="_blank" style="color:var(--accent)">서비스 계정</a> → 생성 → "키" 탭 → JSON 다운로드</p></div>
-        <div class="step"><h3>Google Sheet 준비</h3><p>새 Sheet → 탭: <code>삼성</code>, <code>키움</code>, <code>config</code>. config 탭: A1=<code>initial_cash_삼성</code> B1=금액, A2=<code>initial_cash_키움</code> B2=금액</p></div>
+        <div class="step"><h3>Google Sheet 준비</h3><p>새 Sheet → 탭: <code>삼성</code>, <code>키움</code>, <code>메리츠</code>, <code>config</code>. config 탭: A1=<code>initial_cash_삼성</code> B1=금액, A2=<code>initial_cash_키움</code> B2=금액, A3=<code>initial_cash_메리츠</code> B3=금액</p></div>
         <div class="step"><h3>시트 공유</h3><p>JSON의 <code>client_email</code> → Sheet "공유" → 편집자 권한</p></div>
       </div>
     </div>
@@ -332,9 +336,10 @@ CLS,1,282.5800,2"></textarea>
       <div class="g2" style="margin-bottom:8px">
         <label class="f"><span>🔵 삼성</span><input type="number" id="initCashSS" placeholder="30000" step="100"/></label>
         <label class="f"><span>🔴 키움</span><input type="number" id="initCashKW" placeholder="20000" step="100"/></label>
+        <label class="f"><span>🟢 메리츠</span><input type="number" id="initCashMR" placeholder="10000" step="100"/></label>
       </div>
       <button class="btn btn-p btn-sm" onclick="saveInitCash()">저장 → Sheet</button>
-      <p style="font-size:11px;color:var(--text2);margin-top:6px">config 탭 형식: A1=initial_cash_삼성, B1=금액, A2=initial_cash_키움, B2=금액</p>
+      <p style="font-size:11px;color:var(--text2);margin-top:6px">config 탭 형식: A1=initial_cash_삼성, B1=금액, A2=initial_cash_키움, B2=금액, A3=initial_cash_메리츠, B3=금액</p>
     </div>
     <div class="card">
       <div class="card-hdr"><span class="ico">📊</span> FMP API Key (Financial Modeling Prep)</div>
@@ -352,11 +357,12 @@ CLS,1,282.5800,2"></textarea>
 
 <script>
 // ================ CONFIG ================
-const TAX={삼성:0.0003,키움:0.0007};
+const TAX={삼성:0.0007,키움:0.0007,메리츠:0};
 const SCOPES='https://www.googleapis.com/auth/spreadsheets';
 let SA_KEY=null,SHEET_ID='',FMP_KEY='',gToken=null,gTokenExp=0;
 let allTransactions=[];
-let initialCashSS=0,initialCashKW=0;
+let initialCashSS=0,initialCashKW=0,initialCashMR=0;
+const BROKER_ICON={삼성:'🔵',키움:'🔴',메리츠:'🟢'};
 let cachedPrices={};
 let cachedFundamentals={};
 let fundHistory={}; // {ticker: [{date, epsNorm, revNorm, targetPrice}]}
@@ -487,13 +493,14 @@ function updateSt(id,cls,txt){const el=document.getElementById(id);el.className=
 async function saveInitCash(){
   const ss=parseFloat(document.getElementById('initCashSS').value);
   const kw=parseFloat(document.getElementById('initCashKW').value);
-  if((!ss&&!kw)||!SHEET_ID||!SA_KEY){toast('금액과 Sheet 설정을 확인하세요','err');return}
+  const mr=parseFloat(document.getElementById('initCashMR').value);
+  if((!ss&&!kw&&!mr)||!SHEET_ID||!SA_KEY){toast('금액과 Sheet 설정을 확인하세요','err');return}
   try{
     const token=await getAccessToken();
-    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A1:B2?valueInputOption=USER_ENTERED`;
+    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A1:B3?valueInputOption=USER_ENTERED`;
     await fetch(url,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-      body:JSON.stringify({range:'config!A1:B2',values:[['initial_cash_삼성',ss||0],['initial_cash_키움',kw||0]]})});
-    initialCashSS=ss||0;initialCashKW=kw||0;
+      body:JSON.stringify({range:'config!A1:B3',values:[['initial_cash_삼성',ss||0],['initial_cash_키움',kw||0],['initial_cash_메리츠',mr||0]]})});
+    initialCashSS=ss||0;initialCashKW=kw||0;initialCashMR=mr||0;
     toast('Initial cash 저장 완료','ok');
   }catch(e){toast('저장 실패: '+e.message,'err')}
 }
@@ -540,7 +547,7 @@ function saveCache(){
     localStorage.setItem(CACHE_KEY_TX,JSON.stringify(allTransactions));
     localStorage.setItem(CACHE_KEY_PRICES,JSON.stringify(cachedPrices));
     localStorage.setItem(CACHE_KEY_FUND,JSON.stringify(cachedFundamentals));
-    localStorage.setItem(CACHE_KEY_CASH,JSON.stringify({ss:initialCashSS,kw:initialCashKW}));
+    localStorage.setItem(CACHE_KEY_CASH,JSON.stringify({ss:initialCashSS,kw:initialCashKW,mr:initialCashMR}));
     localStorage.setItem('cache_fundHistory',JSON.stringify(fundHistory));
   }catch(e){}
 }
@@ -568,7 +575,7 @@ async function restoreCache(){
     const fh=localStorage.getItem('cache_fundHistory');
     if(fh){fundHistory=JSON.parse(fh)}
     const ic=localStorage.getItem(CACHE_KEY_CASH);
-    if(ic){const c=JSON.parse(ic);initialCashSS=c.ss||0;initialCashKW=c.kw||0}
+    if(ic){const c=JSON.parse(ic);initialCashSS=c.ss||0;initialCashKW=c.kw||0;initialCashMR=c.mr||0}
     populateInitCashFields();
     if(allTransactions.length>0){
       // Auto-fetch prices if cache is empty (first load or cleared)
@@ -591,6 +598,7 @@ async function restoreCache(){
 function populateInitCashFields(){
   if(initialCashSS)document.getElementById('initCashSS').value=initialCashSS;
   if(initialCashKW)document.getElementById('initCashKW').value=initialCashKW;
+  if(initialCashMR)document.getElementById('initCashMR').value=initialCashMR;
 }
 
 // Three separate refresh functions
@@ -863,7 +871,7 @@ async function updateDailyValuesIncremental(){
     if(!txByDate[tx.date])txByDate[tx.date]=[];
     txByDate[tx.date].push(tx);
   }
-  let cashSS=initialCashSS, cashKW=initialCashKW;
+  let cashSS=initialCashSS, cashKW=initialCashKW, cashMR=initialCashMR;
   const pos={}; // ticker → qty (split-adjusted)
   const txDateList=Object.keys(txByDate).sort();
   let txDateIdx=0;
@@ -879,8 +887,8 @@ async function updateDailyValuesIncremental(){
         if(!pos[tx.ticker])pos[tx.ticker]=0;
         pos[tx.ticker]+=tx.qty;
         if(Math.abs(pos[tx.ticker])<0.0001)pos[tx.ticker]=0;
-        if(oq>0){if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);else cashKW-=(Math.abs(oq)*op+tx.tax)}
-        else if(oq<0){if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);else cashKW+=(Math.abs(oq)*op-tx.tax)}
+        if(oq>0){if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);else if(tx.broker==='키움')cashKW-=(Math.abs(oq)*op+tx.tax);else cashMR-=(Math.abs(oq)*op+tx.tax)}
+        else if(oq<0){if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);else if(tx.broker==='키움')cashKW+=(Math.abs(oq)*op-tx.tax);else cashMR+=(Math.abs(oq)*op-tx.tax)}
       }
       txDateIdx++;
     }
@@ -946,13 +954,13 @@ async function updateDailyValuesIncremental(){
         if(!pos[tx.ticker])pos[tx.ticker]=0;
         pos[tx.ticker]+=tx.qty;
         if(Math.abs(pos[tx.ticker])<0.0001)pos[tx.ticker]=0;
-        if(oq>0){if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);else cashKW-=(Math.abs(oq)*op+tx.tax)}
-        else if(oq<0){if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);else cashKW+=(Math.abs(oq)*op-tx.tax)}
+        if(oq>0){if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);else if(tx.broker==='키움')cashKW-=(Math.abs(oq)*op+tx.tax);else cashMR-=(Math.abs(oq)*op+tx.tax)}
+        else if(oq<0){if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);else if(tx.broker==='키움')cashKW+=(Math.abs(oq)*op-tx.tax);else cashMR+=(Math.abs(oq)*op-tx.tax)}
       }
       txDateIdx++;
     }
     if(stored[date])continue;
-    const cash=cashSS+cashKW;
+    const cash=cashSS+cashKW+cashMR;
     let holdingsValue=0;
     const tickerValues={}, tickerPrices={};
     let hasAllExactPrices=true;
@@ -1749,7 +1757,7 @@ function getHeldTickers(){
 // ================ LOAD ALL TRANSACTIONS ================
 async function loadAllTransactions(){
   allTransactions=[];
-  for(const broker of['삼성','키움']){
+  for(const broker of['삼성','키움','메리츠']){
     try{
       const d=await sheetsGet(`${broker}!A:H`);
       const rows=d.values||[];let curDate='';
@@ -1766,11 +1774,12 @@ async function loadAllTransactions(){
   }
   // Load initial cash per broker from config tab
   try{
-    const d=await sheetsGet('config!A1:B2');
+    const d=await sheetsGet('config!A1:B3');
     if(d.values){
       for(const row of d.values){
         if(row[0]==='initial_cash_삼성')initialCashSS=parseFloat(row[1])||0;
         if(row[0]==='initial_cash_키움')initialCashKW=parseFloat(row[1])||0;
+        if(row[0]==='initial_cash_메리츠')initialCashMR=parseFloat(row[1])||0;
         // Legacy: single initial_cash
         if(row[0]==='initial_cash'){initialCashSS=parseFloat(row[1])||0;initialCashKW=0}
       }
@@ -1918,7 +1927,7 @@ function computeOverview(){
     h.unrealizedPL=h.marketValue-h.purchasedAmt;
   }
 
-  const cashByBroker={삼성:0,키움:0};
+  const cashByBroker={삼성:0,키움:0,메리츠:0};
   for(const tx of allTransactions){
     const q=tx.origQty!==undefined?tx.origQty:tx.qty;
     const p=tx.origPrice!==undefined?tx.origPrice:tx.price;
@@ -1969,14 +1978,17 @@ function renderOverview(){
   // Cash
   let cash=0,initCash=0;
   if(f==='all'){
-    initCash=initialCashSS+initialCashKW;
-    cash=initCash+cashByBroker['삼성']+cashByBroker['키움'];
+    initCash=initialCashSS+initialCashKW+initialCashMR;
+    cash=initCash+cashByBroker['삼성']+cashByBroker['키움']+cashByBroker['메리츠'];
   }else if(f==='삼성'){
     initCash=initialCashSS;
     cash=initialCashSS+cashByBroker['삼성'];
-  }else{
+  }else if(f==='키움'){
     initCash=initialCashKW;
     cash=initialCashKW+cashByBroker['키움'];
+  }else{
+    initCash=initialCashMR;
+    cash=initialCashMR+cashByBroker['메리츠'];
   }
   const totalEarning=cash+totalMarketValue-initCash;
 
@@ -2081,7 +2093,7 @@ function renderOverview(){
           const ps=m.parts.map(p=>`${p.qty}(${p.broker})`).join('+');
           qtyStr=`${m.qty}주 = ${ps}`;
         }else{
-          qtyStr=`${m.qty}주 · ${m.parts[0].broker==='삼성'?'🔵':'🔴'} ${m.parts[0].broker}`;
+          qtyStr=`${m.qty}주 · ${BROKER_ICON[m.parts[0].broker]||'⚪'} ${m.parts[0].broker}`;
         }
         html+=renderHoldCard(m.ticker,qtyStr,avgPrice,m.currentPrice,m.chgDay,m.chgWeek,m.unrealizedPL,plCls,m.marketValue,m.purchasedAmt,realPL,realCls,realPLYtd,realYtdCls);
       }
@@ -2124,7 +2136,7 @@ function renderOverview(){
         const realPLYtd=hm?hm.realizedPLThisYear:0;
         const realCls=realPL>=0?'c-up':'c-dn';
         const realYtdCls=realPLYtd>=0?'c-up':'c-dn';
-        const qtyStr=`${h.qty}주 · ${h.broker==='삼성'?'🔵':'🔴'} ${h.broker}`;
+        const qtyStr=`${h.qty}주 · ${BROKER_ICON[h.broker]||'⚪'} ${h.broker}`;
         html+=renderHoldCard(h.ticker,qtyStr,h.avgPrice,h.currentPrice,h.chgDay,h.chgWeek,h.unrealizedPL,plCls,h.marketValue,h.purchasedAmt,realPL,realCls,realPLYtd,realYtdCls);
       }
     }
@@ -2810,7 +2822,7 @@ async function computeDailyValues(el){
   }
   const txDateList=Object.keys(txByDate).sort();
 
-  let cashSS=initialCashSS, cashKW=initialCashKW;
+  let cashSS=initialCashSS, cashKW=initialCashKW, cashMR=initialCashMR;
   const positions={}; // ticker -> qty (split-mark-corrected)
   let txDateIdx=0;
   const newRows=[];
@@ -2828,10 +2840,12 @@ async function computeDailyValues(el){
         // Cash = actual money flow (original values)
         if(oq>0){
           if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
-          else cashKW-=(Math.abs(oq)*op+tx.tax);
+          else if(tx.broker==='키움')cashKW-=(Math.abs(oq)*op+tx.tax);
+          else cashMR-=(Math.abs(oq)*op+tx.tax);
         }else if(oq<0){
           if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);
-          else cashKW+=(Math.abs(oq)*op-tx.tax);
+          else if(tx.broker==='키움')cashKW+=(Math.abs(oq)*op-tx.tax);
+          else cashMR+=(Math.abs(oq)*op-tx.tax);
         }
       }
       txDateIdx++;
@@ -2841,7 +2855,7 @@ async function computeDailyValues(el){
     if(stored[date])continue;
 
     // Compute holdings value
-    const cash=cashSS+cashKW;
+    const cash=cashSS+cashKW+cashMR;
     let holdingsValue=0;
     const tickerValues={};
     for(const[tk,qty] of Object.entries(positions)){
@@ -2887,7 +2901,7 @@ async function computeDailyValues(el){
   dailyValueCache=stored;
   saveDVCache();
 
-  const initCash=initialCashSS+initialCashKW;
+  const initCash=initialCashSS+initialCashKW+initialCashMR;
   const firstDate=marketDays[0];
   const lastDate=marketDays[marketDays.length-1];
   console.log(`daily_value: initCash=${initCash}, first(${firstDate})=${stored[firstDate]?.totalValue?.toFixed(0)}, last(${lastDate})=${stored[lastDate]?.totalValue?.toFixed(0)}`);
@@ -2934,7 +2948,7 @@ async function showTotalValueChart(){
 
   // Build position state at each transaction date (for bottom chart cost basis + cash)
   const posMap={};
-  let cashSS=initialCashSS, cashKW=initialCashKW;
+  let cashSS=initialCashSS, cashKW=initialCashKW, cashMR=initialCashMR;
   const txDateStates={};
   let lastDate=null;
 
@@ -2947,7 +2961,7 @@ async function showTotalValueChart(){
         mktVal+=p.qty*(txPrices[tk]||p.avgCost);
       }
     }
-    txDateStates[date]={cash:cashSS+cashKW,positions:{...positions},totalValue:cashSS+cashKW+mktVal};
+    txDateStates[date]={cash:cashSS+cashKW+cashMR,positions:{...positions},totalValue:cashSS+cashKW+cashMR+mktVal};
   }
 
   const txPrices={};
@@ -2964,13 +2978,15 @@ async function showTotalValueChart(){
       pos.qty+=tx.qty;
       pos.avgCost=pos.qty>0?newCost/pos.qty:0;
       if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
-      else cashKW-=(Math.abs(oq)*op+tx.tax);
+      else if(tx.broker==='키움')cashKW-=(Math.abs(oq)*op+tx.tax);
+      else cashMR-=(Math.abs(oq)*op+tx.tax);
     }else if(tx.qty<0){
       const sq=Math.abs(tx.qty);
       pos.qty-=sq;
       if(pos.qty<=0){pos.qty=0;pos.avgCost=0}
       if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);
-      else cashKW+=(Math.abs(oq)*op-tx.tax);
+      else if(tx.broker==='키움')cashKW+=(Math.abs(oq)*op-tx.tax);
+      else cashMR+=(Math.abs(oq)*op-tx.tax);
     }
     if(tx.date!==lastDate){
       if(lastDate)captureState(lastDate,txPrices);
@@ -3055,7 +3071,7 @@ function redrawChart(dailyValues){
 
   // Inject a synthetic "day 0" = one market day before first tx = initialCash
   // Only inject once — mark it so we don't keep prepending
-  const initCash=initialCashSS+initialCashKW;
+  const initCash=initialCashSS+initialCashKW+initialCashMR;
   const allRefDates=tqqqArr.length>0?tqqqArr.map(d=>d.date).sort():[...dvDates];
   const preTxDays=allRefDates.filter(d=>d<firstTxDate);
   if(preTxDays.length>0){
@@ -3215,9 +3231,9 @@ function redrawChart(dailyValues){
       if(di===0){
         // Use dv totalValue at first date, or initialCash for day0
         const firstDv=dv[date];
-        entry._baseValue=firstDv?firstDv.totalValue:(initialCashSS+initialCashKW);
+        entry._baseValue=firstDv?firstDv.totalValue:(initialCashSS+initialCashKW+initialCashMR);
       }
-      const baseVal=chartData.length>0?chartData[0]._baseValue:(entry._baseValue||(initialCashSS+initialCashKW));
+      const baseVal=chartData.length>0?chartData[0]._baseValue:(entry._baseValue||(initialCashSS+initialCashKW+initialCashMR));
       entry.portfolio=(totalValue/baseVal)*100;
       for(const tk of chartBenches){
         if(!lookups[tk]||!baseBench[tk])continue;
@@ -3751,7 +3767,7 @@ function showHistory(ticker){
       for(const tx of dTxs){
         const cls=tx.qty>0?'c-buy':'c-sell';
         const side=tx.qty>0?'매수':'매도';
-        const bk=tx.broker==='삼성'?'🔵삼성':'🔴키움';
+        const bk=`${BROKER_ICON[tx.broker]||'⚪'}${tx.broker}`;
         const amt=Math.abs(tx.qty)*tx.price;
         let priceStr=tx.price.toFixed(2);
         const k=`${tx.date}|${tx.seq}|${tx.broker}`;
@@ -3821,7 +3837,7 @@ function showHistory(ticker){
       for(const tx of dTxs){
         const cls=tx.qty>0?'c-buy':'c-sell';
         const side=tx.qty>0?'매수':'매도';
-        const bk=tx.broker==='삼성'?'🔵삼성':'🔴키움';
+        const bk=`${BROKER_ICON[tx.broker]||'⚪'}${tx.broker}`;
         const amt=Math.abs(tx.qty)*tx.price;
         let priceStr=tx.price.toFixed(2);
         const k=`${tx.date}|${tx.seq}|${tx.broker}`;
@@ -4289,7 +4305,7 @@ function parseImportText(text){
   const lines=text.trim().split('\n');const groups=[];let cur=null;
   for(let line of lines){
     line=line.trim();if(!line)continue;
-    if(line.startsWith('#')){const m=line.match(/^#\s*(삼성|키움)\s+(\d{6})/);if(m){cur={broker:m[1],date:m[2],rows:[]};groups.push(cur)}continue}
+    if(line.startsWith('#')){const m=line.match(/^#\s*(삼성|키움|메리츠)\s+(\d{6})/);if(m){cur={broker:m[1],date:m[2],rows:[]};groups.push(cur)}continue}
     if(!cur)continue;
     const p=line.split(',').map(s=>s.trim());
     if(p.length>=3){const tk=p[0].toUpperCase(),qty=parseInt(p[1]),pr=parseFloat(p[2]),seq=p[3]?parseInt(p[3]):cur.rows.length+1;
@@ -4322,7 +4338,7 @@ async function doImport(){
 
   // Load existing dates per broker for dedup
   const existingDates={};
-  for(const broker of ['삼성','키움']){
+  for(const broker of ['삼성','키움','메리츠']){
     try{
       const resp=await sheetsGet(`${broker}!A:A`);
       const dates=new Set();
@@ -4372,11 +4388,11 @@ async function loadFromSheet(){
   view.innerHTML='<p style="color:var(--text2);text-align:center;padding:16px"><span class="spinner"></span> 불러오는 중...</p>';
   await loadAllTransactions();
   let html='';
-  for(const broker of['삼성','키움']){
+  for(const broker of['삼성','키움','메리츠']){
     const txs=allTransactions.filter(t=>t.broker===broker);
     if(!txs.length)continue;
-    html+=`<div class="card bk-card ${broker==='삼성'?'ss':'kw'}">`;
-    html+=`<div class="card-hdr"><span class="ico">${broker==='삼성'?'🔵':'🔴'}</span>${broker} (${txs.length}건)</div>`;
+    html+=`<div class="card bk-card">`;
+    html+=`<div class="card-hdr"><span class="ico">${BROKER_ICON[broker]||'⚪'}</span>${broker} (${txs.length}건)</div>`;
     const dates=[...new Set(txs.map(t=>t.date))];
     for(const date of dates.slice(0,20)){
       const dTxs=txs.filter(t=>t.date===date);
@@ -4395,7 +4411,7 @@ async function loadFromSheet(){
 async function downloadXlsx(){
   if(!SHEET_ID||!SA_KEY){toast('Sheets 설정 필요','err');return}
   try{const wb=XLSX.utils.book_new();
-    for(const b of['삼성','키움']){const d=await sheetsGet(`${b}!A:H`);const ws=XLSX.utils.aoa_to_sheet(d.values||[]);XLSX.utils.book_append_sheet(wb,ws,b)}
+    for(const b of['삼성','키움','메리츠']){const d=await sheetsGet(`${b}!A:H`);const ws=XLSX.utils.aoa_to_sheet(d.values||[]);XLSX.utils.book_append_sheet(wb,ws,b)}
     XLSX.writeFile(wb,`미국주식내역_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.xlsx`);toast('다운로드 완료','ok');
   }catch(e){toast('실패: '+e.message,'err')}
 }
