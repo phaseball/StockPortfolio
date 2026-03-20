@@ -822,8 +822,8 @@ async function updateDailyValuesIncremental(){
     await new Promise(r=>setTimeout(r,300));
   }
 
-  // Compute correction ratios
-  const corrRatio=computePriceCorrectionRatios(priceHistories);
+  // FMP prices are split-adjusted — use as-is (no correction ratio needed)
+  // This matches Overview which also uses raw FMP prices
 
   // Get market days from fetched data
   const allFetchedDates=new Set();
@@ -902,8 +902,7 @@ async function updateDailyValuesIncremental(){
       for(const[tk,oldPrice] of Object.entries(entry.prices)){
         const hist=priceHistories[tk];
         if(!hist||!hist[date])continue;
-        const cr=corrRatio[tk]||1;
-        const newPrice=hist[date]*cr;
+        const newPrice=hist[date];
         if(Math.abs(newPrice-oldPrice)/Math.max(oldPrice,0.01)>0.001){
           entry.prices[tk]=Math.round(newPrice*10000)/10000;
           const qty=pos[tk]||0;
@@ -969,8 +968,7 @@ async function updateDailyValuesIncremental(){
       const result=findClose(tk,date);
       let usedPrice;
       if(result!=null){
-        const cr=corrRatio[tk]||1;
-        usedPrice=result.price*cr;
+        usedPrice=result.price;
         tickerPrices[tk]=Math.round(usedPrice*10000)/10000;
         if(!result.exact)hasAllExactPrices=false;
       }else{
@@ -1917,24 +1915,10 @@ function computeOverview(){
     purchasedAmt:h.avgCost*h.totalQty
   }));
 
-  // Apply cached prices (with correction ratio for tickers with untracked splits)
-  // Compute correction ratios from cachedPrices
-  const overviewCorrRatios={};
-  const chronoTxForCorr=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
-  // We can't use FMP historical here, so estimate from tx.price vs cachedPrices
-  // For tickers where tx.price and FMP price differ by >2x, apply correction
-  for(const tx of chronoTxForCorr){
-    if(!tx.ticker||overviewCorrRatios[tx.ticker]!=null)continue;
-    const p=cachedPrices[tx.ticker];
-    if(!p||!p.current||!tx.price)continue;
-    const raw=tx.price/p.current;
-    overviewCorrRatios[tx.ticker]=(raw<0.5||raw>2.0)?raw:1.0;
-  }
+  // Apply cached prices
   for(const h of allHoldings){
     const p=cachedPrices[h.ticker];
-    const cr=overviewCorrRatios[h.ticker]||1;
-    const rawPrice=p&&p.current?p.current:0;
-    h.currentPrice=rawPrice>0?(rawPrice*cr):h.avgPrice; // apply correction, fallback to avg cost
+    h.currentPrice=p&&p.current?p.current:h.avgPrice; // fallback to avg cost
     h.chgDay=p?p.chgDay:0;
     h.chgWeek=p?p.chgWeek:0;
     h.marketValue=h.qty*h.currentPrice;
