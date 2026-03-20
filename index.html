@@ -1917,10 +1917,24 @@ function computeOverview(){
     purchasedAmt:h.avgCost*h.totalQty
   }));
 
-  // Apply cached prices
+  // Apply cached prices (with correction ratio for tickers with untracked splits)
+  // Compute correction ratios from cachedPrices
+  const overviewCorrRatios={};
+  const chronoTxForCorr=[...allTransactions].sort((a,b)=>a.date.localeCompare(b.date));
+  // We can't use FMP historical here, so estimate from tx.price vs cachedPrices
+  // For tickers where tx.price and FMP price differ by >2x, apply correction
+  for(const tx of chronoTxForCorr){
+    if(!tx.ticker||overviewCorrRatios[tx.ticker]!=null)continue;
+    const p=cachedPrices[tx.ticker];
+    if(!p||!p.current||!tx.price)continue;
+    const raw=tx.price/p.current;
+    overviewCorrRatios[tx.ticker]=(raw<0.5||raw>2.0)?raw:1.0;
+  }
   for(const h of allHoldings){
     const p=cachedPrices[h.ticker];
-    h.currentPrice=p&&p.current?p.current:h.avgPrice; // fallback to avg cost
+    const cr=overviewCorrRatios[h.ticker]||1;
+    const rawPrice=p&&p.current?p.current:0;
+    h.currentPrice=rawPrice>0?(rawPrice*cr):h.avgPrice; // apply correction, fallback to avg cost
     h.chgDay=p?p.chgDay:0;
     h.chgWeek=p?p.chgWeek:0;
     h.marketValue=h.qty*h.currentPrice;
