@@ -760,8 +760,11 @@ async function fetchFmpHistoryRange(ticker,fromYMD,toYMD){
   }
 }
 
-// Incremental daily_value update: fetch only missing recent days via FMP
-// Also handles empty state: full FMP fetch from first transaction date
+// Update daily_value:
+// - Always recalculate the LATEST stored row with fresh FMP prices (overwrite in Sheet)
+// - Append new rows for missing days since last stored date
+// - Never modify historical rows (only Recalc does that)
+// - If empty, build from scratch
 async function updateDailyValuesIncremental(){
   const chronoTx=[...allTransactions].sort((a,b)=>{
     const dc=a.date.localeCompare(b.date);if(dc!==0)return dc;
@@ -778,18 +781,18 @@ async function updateDailyValuesIncremental(){
     }catch(e){}
   }
 
-  const storedDates=Object.keys(stored).sort();
+  let storedDates=Object.keys(stored).sort();
   const isFullBuild=storedDates.length===0;
   const _et=etNow();
   const todayYymmdd=_et.yymmdd;
 
-  // Determine from-date and tickers to fetch
+  // --- Determine what to fetch ---
   let fromYMD, tickersToFetch;
+  let latestDateToRefresh=null; // the latest stored date to overwrite
+
   if(isFullBuild){
-    // Full build from first transaction date
     const firstTxDate=chronoTx[0].date;
     fromYMD=`20${firstTxDate.slice(0,2)}-${firstTxDate.slice(2,4)}-${firstTxDate.slice(4,6)}`;
-    // Need ALL tickers ever held
     const allTickersEverHeld=new Set();
     const posTemp={};
     for(const tx of chronoTx){
@@ -802,25 +805,15 @@ async function updateDailyValuesIncremental(){
     toast(`📊 daily_value 전체 구축 중 (${tickersToFetch.length} tickers)...`,'ok');
     console.log(`daily_value: full build from ${fromYMD}, ${tickersToFetch.length} tickers`);
   }else{
-    const lastStoredDate=storedDates[storedDates.length-1];
-    if(lastStoredDate>=todayYymmdd){
-      // Today already stored — delete it so it gets recomputed with latest live prices
-      if(stored[todayYymmdd]&&Object.keys(cachedPrices).length>0){
-        delete stored[todayYymmdd];
-        storedDates.pop(); // remove today from storedDates
-        console.log(`daily_value: cleared today (${todayYymmdd}) for recompute with live prices`);
-        // Don't return — fall through to recompute today
-      }else{
-        console.log('daily_value: up to date');
-        dailyValueCache=stored;saveDVCache();
-        return;
-      }
-    }
-    // lastStoredDate for fromYMD: go back 14 days to allow re-check of recent stored rows
-    const lastForFrom=storedDates.length>0?storedDates[storedDates.length-1]:todayYymmdd;
-    const lastY=parseInt('20'+lastForFrom.slice(0,2)),lastM=parseInt(lastForFrom.slice(2,4))-1,lastD=parseInt(lastForFrom.slice(4,6));
-    const fromDt=new Date(lastY,lastM,lastD-14); // 14 calendar days back = ~10 trading days
-    fromYMD=`${fromDt.getFullYear()}-${String(fromDt.getMonth()+1).padStart(2,'0')}-${String(fromDt.getDate()).padStart(2,'0')}`;
+    // Remove the latest stored row — we'll recompute it with fresh prices
+    latestDateToRefresh=storedDates[storedDates.length-1];
+    delete stored[latestDateToRefresh];
+    storedDates=Object.keys(stored).sort();
+
+    // Fetch from the day before the latest (to get FMP EOD for the latest date)
+    const prevDate=storedDates.length>0?storedDates[storedDates.length-1]:latestDateToRefresh;
+    fromYMD=`20${prevDate.slice(0,2)}-${prevDate.slice(2,4)}-${prevDate.slice(4,6)}`;
+
     // Only currently held tickers
     const positions={};
     for(const tx of chronoTx){
@@ -830,13 +823,12 @@ async function updateDailyValuesIncremental(){
       if(Math.abs(positions[tx.ticker])<0.0001)positions[tx.ticker]=0;
     }
     tickersToFetch=Object.entries(positions).filter(([,q])=>q>0).map(([t])=>t);
-    const daysSince=Math.ceil((new Date()-new Date(parseInt(fromYMD.slice(0,4)),parseInt(fromYMD.slice(5,7))-1,parseInt(fromYMD.slice(8,10))))/86400000);
-    console.log(`daily_value incremental: last=${lastStoredDate}, today=${todayYymmdd}, gap=${daysSince}d`);
+    console.log(`daily_value: refreshing ${latestDateToRefresh}→today(${todayYymmdd}), ${tickersToFetch.length} tickers`);
   }
 
   const toYMD=`${_et.year}-${_et.month}-${_et.day}`;
 
-  // Fetch FMP history for each ticker
+  // --- Fetch FMP historical prices ---
   const priceHistories={}; // ticker → {YYMMDD: close}
   for(let i=0;i<tickersToFetch.length;i++){
     const tk=tickersToFetch[i];
@@ -844,56 +836,55 @@ async function updateDailyValuesIncremental(){
     const lookup={};
     for(const h of hist) lookup[h.date]=h.close;
     priceHistories[tk]=lookup;
-    const nDays=Object.keys(lookup).length;
-    if(nDays===0)console.warn(`FMP: ${tk} returned 0 days for ${fromYMD}~${toYMD}`);
-    else if(isFullBuild&&nDays<50)console.warn(`FMP: ${tk} only ${nDays} days (expected ~300+)`);
-    // Rate limit: 300ms between each request to avoid FMP throttling
-    await new Promise(r=>setTimeout(r,300));
+    if(i%10===9)await new Promise(r=>setTimeout(r,200));
   }
 
-  // FMP prices are split-adjusted — use as-is (no correction ratio needed)
-  // This matches Overview which also uses raw FMP prices
-
-  // Get market days from fetched data
+  // --- Determine market days to compute ---
   const allFetchedDates=new Set();
   for(const h of Object.values(priceHistories)){
     for(const d of Object.keys(h))allFetchedDates.add(d);
   }
-  // Only add today if market is active AND we have live prices to use
-  const haveLivePrices=Object.keys(cachedPrices).length>0;
-  if(_et.marketActive&&haveLivePrices)allFetchedDates.add(todayYymmdd);
+  // Add today if we have live prices
+  if(Object.keys(cachedPrices).length>0)allFetchedDates.add(todayYymmdd);
 
   let marketDays;
   if(isFullBuild){
     const firstTxDate=chronoTx[0].date;
     marketDays=[...allFetchedDates].sort().filter(d=>d>=firstTxDate);
   }else{
-    const lastStoredDate=storedDates[storedDates.length-1];
-    marketDays=[...allFetchedDates].sort().filter(d=>d>lastStoredDate);
+    // Include the latest date we removed + any new dates
+    const cutoff=storedDates.length>0?storedDates[storedDates.length-1]:'000000';
+    marketDays=[...allFetchedDates].sort().filter(d=>d>cutoff);
   }
   if(marketDays.length===0){
-    console.log('daily_value: no new market days');
+    console.log('daily_value: no market days to compute');
     dailyValueCache=stored;saveDVCache();
     return;
   }
 
-  function findClose(tk,date){
-    // Returns {price, exact} — exact=true means FMP had this date, false means fallback
-    if(date===todayYymmdd&&cachedPrices[tk]&&cachedPrices[tk].current)return {price:cachedPrices[tk].current, exact:true};
+  // --- Price lookup function ---
+  function getPrice(tk,date){
+    // For today (or latest): use live cachedPrices first
+    if(cachedPrices[tk]&&cachedPrices[tk].current){
+      // Use live price if this is the latest date being computed
+      if(date>=todayYymmdd||date===marketDays[marketDays.length-1]){
+        return cachedPrices[tk].current;
+      }
+    }
+    // FMP historical
     const hist=priceHistories[tk];
-    if(!hist)return null;
-    if(hist[date])return {price:hist[date], exact:true};
-    // Fallback: look back up to 5 days (weekends/holidays only, not missing data)
+    if(hist&&hist[date])return hist[date];
+    // Fallback: look back up to 3 days (weekends/holidays)
     const y=parseInt('20'+date.slice(0,2)),m=parseInt(date.slice(2,4))-1,d=parseInt(date.slice(4,6));
-    for(let off=1;off<=5;off++){
+    for(let off=1;off<=3;off++){
       const dt=new Date(y,m,d-off);
       const key=String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
-      if(hist[key])return {price:hist[key], exact:false};
+      if(hist&&hist[key])return hist[key];
     }
     return null;
   }
 
-  // Replay transactions to get cash/position state
+  // --- Replay transactions ---
   const txByDate={};
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
@@ -904,12 +895,11 @@ async function updateDailyValuesIncremental(){
   const pos={}; // ticker → qty (split-adjusted)
   const txDateList=Object.keys(txByDate).sort();
   let txDateIdx=0;
-  const newRows=[];
 
-  // For incremental, replay up to last stored date
+  // For incremental: replay up to the day before our computation window
   if(!isFullBuild){
-    const lastStoredDate=storedDates[storedDates.length-1];
-    while(txDateIdx<txDateList.length&&txDateList[txDateIdx]<=lastStoredDate){
+    const replayUpTo=storedDates.length>0?storedDates[storedDates.length-1]:marketDays[0];
+    while(txDateIdx<txDateList.length&&txDateList[txDateIdx]<=replayUpTo){
       for(const tx of txByDate[txDateList[txDateIdx]]){
         const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
         const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
@@ -921,85 +911,12 @@ async function updateDailyValuesIncremental(){
       }
       txDateIdx++;
     }
-    // Re-check last 10 stored days — correct stale/fallback prices if we now have exact FMP data
-    const recentStored=storedDates.slice(-10);
-    const correctedDates=[];
-    for(const date of recentStored){
-      const entry=stored[date];
-      if(!entry||!entry.prices)continue;
-      let improved=false;
-      for(const[tk,oldPrice] of Object.entries(entry.prices)){
-        const hist=priceHistories[tk];
-        if(!hist||!hist[date])continue;
-        const newPrice=hist[date];
-        if(Math.abs(newPrice-oldPrice)/Math.max(oldPrice,0.01)>0.001){
-          entry.prices[tk]=Math.round(newPrice*10000)/10000;
-          const qty=pos[tk]||0;
-          if(qty>0) entry.holdings[tk]=Math.round(qty*newPrice*100)/100;
-          improved=true;
-        }
-      }
-      if(improved){
-        let hv=0;
-        for(const v of Object.values(entry.holdings||{})) hv+=v;
-        entry.totalValue=entry.cash+hv;
-        correctedDates.push(date);
-        console.log(`daily_value: corrected stale prices for ${date}`);
-      }
-    }
-    // Always recompute today's row with latest live prices (cachedPrices may have changed)
-    const _etNow=etNow();
-    const todayDate=_etNow.yymmdd;
-    if(stored[todayDate]){
-      const entry=stored[todayDate];
-      let improved=false;
-      for(const[tk,oldPrice] of Object.entries(entry.prices||{})){
-        const cp=cachedPrices[tk];
-        if(!cp||!cp.current)continue;
-        const livePrice=cp.current;
-        if(Math.abs(livePrice-oldPrice)/Math.max(oldPrice,0.01)>0.001){
-          entry.prices[tk]=Math.round(livePrice*10000)/10000;
-          const qty=pos[tk]||0;
-          if(qty>0) entry.holdings[tk]=Math.round(qty*livePrice*100)/100;
-          improved=true;
-        }
-      }
-      if(improved){
-        let hv=0;
-        for(const v of Object.values(entry.holdings||{})) hv+=v;
-        entry.totalValue=entry.cash+hv;
-        if(!correctedDates.includes(todayDate))correctedDates.push(todayDate);
-        console.log(`daily_value: updated today (${todayDate}) with live prices`);
-      }
-    }
-    // Update corrected rows in Sheet by finding their row numbers
-    if(correctedDates.length>0&&SHEET_ID&&SA_KEY){
-      try{
-        const dvResp=await sheetsGet('daily_value!A:A');
-        const dateCol=dvResp&&dvResp.values?dvResp.values:[];
-        const token=await getAccessToken();
-        for(const date of correctedDates){
-          const dateNum=parseInt(date);
-          // Find row index (1-based, +1 for header)
-          let rowIdx=-1;
-          for(let r=0;r<dateCol.length;r++){
-            if(String(dateCol[r][0])===String(dateNum)){rowIdx=r+1;break}
-          }
-          if(rowIdx<0)continue;
-          const entry=stored[date];
-          const rowRange=`daily_value!A${rowIdx}:E${rowIdx}`;
-          await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(rowRange)}?valueInputOption=USER_ENTERED`,{
-            method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-            body:JSON.stringify({range:rowRange,majorDimension:'ROWS',values:[[dateNum, Math.round(entry.totalValue*100)/100, Math.round(entry.cash*100)/100, JSON.stringify(entry.holdings), JSON.stringify(entry.prices)]]})
-          });
-        }
-        console.log(`daily_value: updated ${correctedDates.length} corrected rows in Sheet`);
-      }catch(e){console.warn('Failed to update corrected rows:',e)}
-    }
   }
 
-  // Compute value for each new market day
+  // --- Compute value for each market day ---
+  const newRows=[];
   for(const date of marketDays){
+    // Apply transactions for this date
     while(txDateIdx<txDateList.length&&txDateList[txDateIdx]<=date){
       for(const tx of txByDate[txDateList[txDateIdx]]){
         const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
@@ -1012,41 +929,69 @@ async function updateDailyValuesIncremental(){
       }
       txDateIdx++;
     }
-    if(stored[date])continue;
+    if(stored[date])continue; // don't overwrite historical rows
     const cash=cashSS+cashKW+cashMR;
     let holdingsValue=0;
     const tickerValues={}, tickerPrices={};
-    let hasAllExactPrices=true;
     for(const[tk,qty] of Object.entries(pos)){
       if(qty<=0)continue;
-      const result=findClose(tk,date);
-      let usedPrice;
-      if(result!=null){
-        usedPrice=result.price;
-        tickerPrices[tk]=Math.round(usedPrice*10000)/10000;
-        if(!result.exact)hasAllExactPrices=false;
-      }else{
+      const price=getPrice(tk,date);
+      let usedPrice=price||0;
+      if(!price){
         // Last resort: transaction price
-        usedPrice=0;
         for(let i=chronoTx.length-1;i>=0;i--){if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}}
-        if(usedPrice>0)tickerPrices[tk]=Math.round(usedPrice*10000)/10000;
-        hasAllExactPrices=false;
       }
-      const val=qty*usedPrice;
-      tickerValues[tk]=Math.round(val*100)/100;
-      holdingsValue+=val;
+      tickerValues[tk]=Math.round(qty*usedPrice*100)/100;
+      tickerPrices[tk]=Math.round(usedPrice*10000)/10000;
+      holdingsValue+=qty*usedPrice;
     }
     const totalValue=cash+holdingsValue;
-    // Only store if we have at least some prices; mark incomplete rows
-    stored[date]={totalValue, cash, holdings:tickerValues, prices:tickerPrices, _complete:hasAllExactPrices};
+    stored[date]={totalValue, cash, holdings:tickerValues, prices:tickerPrices};
     newRows.push([parseInt(date), Math.round(totalValue*100)/100, Math.round(cash*100)/100, JSON.stringify(tickerValues), JSON.stringify(tickerPrices)]);
   }
 
-  if(newRows.length>0){
-    try{
-      for(let i=0;i<newRows.length;i+=500) await writeDailyValuesToSheet(newRows.slice(i,i+500));
-      console.log(`daily_value: wrote ${newRows.length} rows (${isFullBuild?'full build':'incremental'})`);
-    }catch(e){console.warn('Failed to write daily_value:',e)}
+  // --- Write to Sheet ---
+  if(newRows.length>0&&SHEET_ID&&SA_KEY){
+    // If we're refreshing the latest row, overwrite it in Sheet
+    if(latestDateToRefresh&&newRows.length>0){
+      try{
+        const dvResp=await sheetsGet('daily_value!A:A');
+        const dateCol=dvResp&&dvResp.values?dvResp.values:[];
+        const dateNum=parseInt(latestDateToRefresh);
+        let rowIdx=-1;
+        for(let r=0;r<dateCol.length;r++){
+          if(String(dateCol[r][0])===String(dateNum)){rowIdx=r+1;break}
+        }
+        if(rowIdx>0){
+          // Overwrite the latest row
+          const token=await getAccessToken();
+          const rowRange=`daily_value!A${rowIdx}:E${rowIdx}`;
+          await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(rowRange)}?valueInputOption=USER_ENTERED`,{
+            method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+            body:JSON.stringify({range:rowRange,majorDimension:'ROWS',values:[newRows[0]]})
+          });
+          console.log(`daily_value: overwrote latest row ${latestDateToRefresh}`);
+          // Append remaining new rows (if any new days)
+          if(newRows.length>1){
+            await writeDailyValuesToSheet(newRows.slice(1));
+            console.log(`daily_value: appended ${newRows.length-1} new rows`);
+          }
+        }else{
+          // Latest row not found in Sheet — append all
+          await writeDailyValuesToSheet(newRows);
+          console.log(`daily_value: appended ${newRows.length} rows (latest not found for overwrite)`);
+        }
+      }catch(e){
+        console.warn('Failed to write daily_value:',e);
+        try{await writeDailyValuesToSheet(newRows)}catch(e2){}
+      }
+    }else{
+      // Full build or no latest to overwrite — just append
+      try{
+        for(let i=0;i<newRows.length;i+=500) await writeDailyValuesToSheet(newRows.slice(i,i+500));
+        console.log(`daily_value: wrote ${newRows.length} rows (${isFullBuild?'full build':'incremental'})`);
+      }catch(e){console.warn('Failed to write daily_value:',e)}
+    }
   }
   dailyValueCache=stored;saveDVCache();
 }
