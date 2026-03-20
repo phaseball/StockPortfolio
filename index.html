@@ -805,14 +805,18 @@ async function updateDailyValuesIncremental(){
     toast(`📊 daily_value 전체 구축 중 (${tickersToFetch.length} tickers)...`,'ok');
     console.log(`daily_value: full build from ${fromYMD}, ${tickersToFetch.length} tickers`);
   }else{
-    // Remove the latest stored row — we'll recompute it with fresh prices
-    latestDateToRefresh=storedDates[storedDates.length-1];
-    delete stored[latestDateToRefresh];
+    // Remove the last 2 stored rows — we'll recompute them with fresh FMP EOD prices
+    // This ensures yesterday's row also gets corrected if it had intraday prices
+    const rowsToRefresh=storedDates.slice(-2);
+    latestDateToRefresh=rowsToRefresh[0]; // the earlier of the two (for Sheet overwrite tracking)
+    for(const d of rowsToRefresh) delete stored[d];
     storedDates=Object.keys(stored).sort();
 
-    // Fetch from the day before the latest (to get FMP EOD for the latest date)
-    const prevDate=storedDates.length>0?storedDates[storedDates.length-1]:latestDateToRefresh;
-    fromYMD=`20${prevDate.slice(0,2)}-${prevDate.slice(2,4)}-${prevDate.slice(4,6)}`;
+    // Fetch from a few days before the earliest refreshed row
+    const earliest=rowsToRefresh[0];
+    const eY=parseInt('20'+earliest.slice(0,2)),eM=parseInt(earliest.slice(2,4))-1,eD=parseInt(earliest.slice(4,6));
+    const fromDt=new Date(eY,eM,eD-3); // 3 days back for weekend coverage
+    fromYMD=`${fromDt.getFullYear()}-${String(fromDt.getMonth()+1).padStart(2,'0')}-${String(fromDt.getDate()).padStart(2,'0')}`;
 
     // Only currently held tickers
     const positions={};
@@ -892,23 +896,30 @@ async function updateDailyValuesIncremental(){
     txByDate[tx.date].push(tx);
   }
   let cashSS=initialCashSS, cashKW=initialCashKW, cashMR=initialCashMR;
-  const pos={}; // ticker → qty (split-adjusted)
+  const pos={}; // ticker → qty (split-adjusted, combined)
+  const posBk={}; // 'broker|ticker' → qty (per-broker)
   const txDateList=Object.keys(txByDate).sort();
   let txDateIdx=0;
+
+  function applyTx(tx){
+    const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
+    const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
+    if(!pos[tx.ticker])pos[tx.ticker]=0;
+    pos[tx.ticker]+=tx.qty;
+    if(Math.abs(pos[tx.ticker])<0.0001)pos[tx.ticker]=0;
+    const bk=`${tx.broker}|${tx.ticker}`;
+    if(!posBk[bk])posBk[bk]=0;
+    posBk[bk]+=tx.qty;
+    if(Math.abs(posBk[bk])<0.0001)posBk[bk]=0;
+    if(oq>0){if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);else if(tx.broker==='키움')cashKW-=(Math.abs(oq)*op+tx.tax);else cashMR-=(Math.abs(oq)*op+tx.tax)}
+    else if(oq<0){if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);else if(tx.broker==='키움')cashKW+=(Math.abs(oq)*op-tx.tax);else cashMR+=(Math.abs(oq)*op-tx.tax)}
+  }
 
   // For incremental: replay up to the day before our computation window
   if(!isFullBuild){
     const replayUpTo=storedDates.length>0?storedDates[storedDates.length-1]:marketDays[0];
     while(txDateIdx<txDateList.length&&txDateList[txDateIdx]<=replayUpTo){
-      for(const tx of txByDate[txDateList[txDateIdx]]){
-        const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
-        const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
-        if(!pos[tx.ticker])pos[tx.ticker]=0;
-        pos[tx.ticker]+=tx.qty;
-        if(Math.abs(pos[tx.ticker])<0.0001)pos[tx.ticker]=0;
-        if(oq>0){if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);else if(tx.broker==='키움')cashKW-=(Math.abs(oq)*op+tx.tax);else cashMR-=(Math.abs(oq)*op+tx.tax)}
-        else if(oq<0){if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);else if(tx.broker==='키움')cashKW+=(Math.abs(oq)*op-tx.tax);else cashMR+=(Math.abs(oq)*op-tx.tax)}
-      }
+      for(const tx of txByDate[txDateList[txDateIdx]]) applyTx(tx);
       txDateIdx++;
     }
   }
@@ -916,80 +927,81 @@ async function updateDailyValuesIncremental(){
   // --- Compute value for each market day ---
   const newRows=[];
   for(const date of marketDays){
-    // Apply transactions for this date
     while(txDateIdx<txDateList.length&&txDateList[txDateIdx]<=date){
-      for(const tx of txByDate[txDateList[txDateIdx]]){
-        const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
-        const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
-        if(!pos[tx.ticker])pos[tx.ticker]=0;
-        pos[tx.ticker]+=tx.qty;
-        if(Math.abs(pos[tx.ticker])<0.0001)pos[tx.ticker]=0;
-        if(oq>0){if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);else if(tx.broker==='키움')cashKW-=(Math.abs(oq)*op+tx.tax);else cashMR-=(Math.abs(oq)*op+tx.tax)}
-        else if(oq<0){if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);else if(tx.broker==='키움')cashKW+=(Math.abs(oq)*op-tx.tax);else cashMR+=(Math.abs(oq)*op-tx.tax)}
-      }
+      for(const tx of txByDate[txDateList[txDateIdx]]) applyTx(tx);
       txDateIdx++;
     }
-    if(stored[date])continue; // don't overwrite historical rows
+    if(stored[date])continue;
+    const cashObj={삼성:Math.round(cashSS*100)/100, 키움:Math.round(cashKW*100)/100, 메리츠:Math.round(cashMR*100)/100};
     const cash=cashSS+cashKW+cashMR;
     let holdingsValue=0;
     const tickerValues={}, tickerPrices={};
+    // Per-broker holdings values
+    const bkHoldings={}; // 'broker|ticker' → value
     for(const[tk,qty] of Object.entries(pos)){
       if(qty<=0)continue;
       const price=getPrice(tk,date);
       let usedPrice=price||0;
       if(!price){
-        // Last resort: transaction price
         for(let i=chronoTx.length-1;i>=0;i--){if(chronoTx[i].ticker===tk&&chronoTx[i].date<=date){usedPrice=chronoTx[i].price;break}}
       }
       tickerValues[tk]=Math.round(qty*usedPrice*100)/100;
       tickerPrices[tk]=Math.round(usedPrice*10000)/10000;
       holdingsValue+=qty*usedPrice;
     }
+    // Compute per-broker holdings
+    for(const[bkTk,qty] of Object.entries(posBk)){
+      if(qty<=0)continue;
+      const tk=bkTk.split('|')[1];
+      const price=tickerPrices[tk]||0;
+      bkHoldings[bkTk]=Math.round(qty*price*100)/100;
+    }
     const totalValue=cash+holdingsValue;
-    stored[date]={totalValue, cash, holdings:tickerValues, prices:tickerPrices};
-    newRows.push([parseInt(date), Math.round(totalValue*100)/100, Math.round(cash*100)/100, JSON.stringify(tickerValues), JSON.stringify(tickerPrices)]);
+    stored[date]={totalValue, cash:cashObj, holdings:tickerValues, prices:tickerPrices, bkHoldings};
+    newRows.push([parseInt(date), Math.round(totalValue*100)/100, JSON.stringify(cashObj), JSON.stringify(tickerValues), JSON.stringify(tickerPrices)]);
   }
 
   // --- Write to Sheet ---
   if(newRows.length>0&&SHEET_ID&&SA_KEY){
-    // If we're refreshing the latest row, overwrite it in Sheet
-    if(latestDateToRefresh&&newRows.length>0){
+    if(latestDateToRefresh){
+      // Some rows are refreshed (overwrite) + possibly new rows (append)
       try{
         const dvResp=await sheetsGet('daily_value!A:A');
         const dateCol=dvResp&&dvResp.values?dvResp.values:[];
-        const dateNum=parseInt(latestDateToRefresh);
-        let rowIdx=-1;
-        for(let r=0;r<dateCol.length;r++){
-          if(String(dateCol[r][0])===String(dateNum)){rowIdx=r+1;break}
-        }
-        if(rowIdx>0){
-          // Overwrite the latest row
-          const token=await getAccessToken();
-          const rowRange=`daily_value!A${rowIdx}:E${rowIdx}`;
-          await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(rowRange)}?valueInputOption=USER_ENTERED`,{
-            method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-            body:JSON.stringify({range:rowRange,majorDimension:'ROWS',values:[newRows[0]]})
-          });
-          console.log(`daily_value: overwrote latest row ${latestDateToRefresh}`);
-          // Append remaining new rows (if any new days)
-          if(newRows.length>1){
-            await writeDailyValuesToSheet(newRows.slice(1));
-            console.log(`daily_value: appended ${newRows.length-1} new rows`);
+        const token=await getAccessToken();
+        const toAppend=[];
+        for(const row of newRows){
+          const dateNum=row[0];
+          // Find existing row in Sheet
+          let rowIdx=-1;
+          for(let r=0;r<dateCol.length;r++){
+            if(String(dateCol[r][0])===String(dateNum)){rowIdx=r+1;break}
           }
-        }else{
-          // Latest row not found in Sheet — append all
-          await writeDailyValuesToSheet(newRows);
-          console.log(`daily_value: appended ${newRows.length} rows (latest not found for overwrite)`);
+          if(rowIdx>0){
+            // Overwrite existing row
+            const rowRange=`daily_value!A${rowIdx}:E${rowIdx}`;
+            await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(rowRange)}?valueInputOption=USER_ENTERED`,{
+              method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+              body:JSON.stringify({range:rowRange,majorDimension:'ROWS',values:[row]})
+            });
+            console.log(`daily_value: overwrote row ${dateNum}`);
+          }else{
+            toAppend.push(row);
+          }
+        }
+        if(toAppend.length>0){
+          await writeDailyValuesToSheet(toAppend);
+          console.log(`daily_value: appended ${toAppend.length} new rows`);
         }
       }catch(e){
         console.warn('Failed to write daily_value:',e);
         try{await writeDailyValuesToSheet(newRows)}catch(e2){}
       }
     }else{
-      // Full build or no latest to overwrite — just append
+      // Full build — just append all
       try{
         for(let i=0;i<newRows.length;i+=500) await writeDailyValuesToSheet(newRows.slice(i,i+500));
-        console.log(`daily_value: wrote ${newRows.length} rows (${isFullBuild?'full build':'incremental'})`);
+        console.log(`daily_value: wrote ${newRows.length} rows (full build)`);
       }catch(e){console.warn('Failed to write daily_value:',e)}
     }
   }
@@ -1972,22 +1984,76 @@ function renderOverview(){
     totalPurchased+=h.purchasedAmt;
   }
 
-  // Cash
-  let cash=0,initCash=0;
-  if(f==='all'){
-    initCash=initialCashSS+initialCashKW+initialCashMR;
-    cash=initCash+cashByBroker['삼성']+cashByBroker['키움']+cashByBroker['메리츠'];
-  }else if(f==='삼성'){
-    initCash=initialCashSS;
-    cash=initialCashSS+cashByBroker['삼성'];
-  }else if(f==='키움'){
-    initCash=initialCashKW;
-    cash=initialCashKW+cashByBroker['키움'];
+  // === Read totals from daily_value (single source of truth) ===
+  const dvDates=dailyValueCache?Object.keys(dailyValueCache).sort():[];
+  const latestDv=dvDates.length>0?dailyValueCache[dvDates[dvDates.length-1]]:null;
+  const prevDv=dvDates.length>=2?dailyValueCache[dvDates[dvDates.length-2]]:null;
+
+  let cash=0,initCash=0,totalAsset=0,totalMarketValue=0;
+  let totalDayChgAmt=0;
+
+  if(latestDv){
+    const cashObj=typeof latestDv.cash==='object'?latestDv.cash:{삼성:0,키움:0,메리츠:0};
+    // Backward compat: if cash is a plain number, treat as total
+    const cashTotal=typeof latestDv.cash==='number'?latestDv.cash:((cashObj['삼성']||0)+(cashObj['키움']||0)+(cashObj['메리츠']||0));
+
+    if(f==='all'){
+      initCash=initialCashSS+initialCashKW+initialCashMR;
+      cash=cashTotal;
+      totalAsset=latestDv.totalValue;
+      totalMarketValue=totalAsset-cash;
+      if(prevDv)totalDayChgAmt=latestDv.totalValue-prevDv.totalValue;
+    }else{
+      // Per-broker: use per-broker cash from daily_value
+      const brokerCash=cashObj[f]||0;
+      if(f==='삼성')initCash=initialCashSS;
+      else if(f==='키움')initCash=initialCashKW;
+      else initCash=initialCashMR;
+      cash=brokerCash;
+      // Per-broker market value: sum bkHoldings for this broker
+      let brokerMkt=0;
+      if(latestDv.bkHoldings){
+        for(const[bkTk,val] of Object.entries(latestDv.bkHoldings)){
+          if(bkTk.startsWith(f+'|'))brokerMkt+=val;
+        }
+      }else{
+        // Fallback: sum from per-broker holdings in allHoldings
+        for(const h of holdings) brokerMkt+=h.marketValue;
+      }
+      totalMarketValue=brokerMkt;
+      totalAsset=cash+totalMarketValue;
+      // Per-broker daily change: compare with previous day
+      if(prevDv){
+        const prevCashObj=typeof prevDv.cash==='object'?prevDv.cash:{};
+        const prevBrokerCash=prevCashObj[f]||0;
+        let prevBrokerMkt=0;
+        if(prevDv.bkHoldings){
+          for(const[bkTk,val] of Object.entries(prevDv.bkHoldings)){
+            if(bkTk.startsWith(f+'|'))prevBrokerMkt+=val;
+          }
+        }
+        totalDayChgAmt=totalAsset-(prevBrokerCash+prevBrokerMkt);
+      }
+    }
   }else{
-    initCash=initialCashMR;
-    cash=initialCashMR+cashByBroker['메리츠'];
+    // No daily_value — fallback to old calculation
+    if(f==='all'){
+      initCash=initialCashSS+initialCashKW+initialCashMR;
+      cash=initCash+cashByBroker['삼성']+cashByBroker['키움']+cashByBroker['메리츠'];
+    }else if(f==='삼성'){
+      initCash=initialCashSS;
+      cash=initialCashSS+cashByBroker['삼성'];
+    }else if(f==='키움'){
+      initCash=initialCashKW;
+      cash=initialCashKW+cashByBroker['키움'];
+    }else{
+      initCash=initialCashMR;
+      cash=initialCashMR+cashByBroker['메리츠'];
+    }
+    totalMarketValue=holdings.reduce((s,h)=>s+h.marketValue,0);
+    totalAsset=cash+totalMarketValue;
   }
-  const totalEarning=cash+totalMarketValue-initCash;
+  const totalEarning=totalAsset-initCash;
 
   let html='';
 
@@ -1995,30 +2061,16 @@ function renderOverview(){
   const valueDiff=totalMarketValue-totalPurchased;
   const valueDiffPct=totalPurchased>0?((valueDiff/totalPurchased)*100):0;
   const vdCls=valueDiff>=0?'up':'dn';
-  const totalAsset=cash+totalMarketValue;
   const cashPct=totalAsset>0?((cash/totalAsset)*100):0;
   const earnPct=initCash>0?((totalEarning/initCash)*100):0;
   const earnCls=totalEarning>=0?'up':'dn';
   const realCls=totalRealizedPL>=0?'up':'dn';
   const realYtdCls=totalRealizedPLThisYear>=0?'up':'dn';
 
-  // Compute portfolio-level daily change (weighted by market value)
-  let prevDayMktTotal=0, curDayMktTotal=0;
-  for(const h of holdings){
-    const p=cachedPrices[h.ticker];
-    if(p&&p.prevClose&&p.current&&h.qty>0){
-      prevDayMktTotal+=h.qty*p.prevClose;
-      curDayMktTotal+=h.qty*p.current;
-    }else{
-      prevDayMktTotal+=h.marketValue;
-      curDayMktTotal+=h.marketValue;
-    }
-  }
-  const portfolioDayChgPct=prevDayMktTotal>0?((curDayMktTotal-prevDayMktTotal)/prevDayMktTotal*100):0;
-  const portfolioDayChgAmt=curDayMktTotal-prevDayMktTotal;
-  const dayChgCls=portfolioDayChgPct>=0?'c-up':'c-dn';
-  const dayTriangle=portfolioDayChgPct>=0?'▲':'▼';
-  const totalDayChgAmt=portfolioDayChgAmt; // for total value card too
+  // Daily change
+  const portfolioDayChgPct=totalMarketValue>0?((totalDayChgAmt/(totalAsset-totalDayChgAmt))*100):0;
+  const dayChgCls=totalDayChgAmt>=0?'c-up':'c-dn';
+  const dayTriangle=totalDayChgAmt>=0?'▲':'▼';
 
   html+=`<div class="summary-grid">`;
 
@@ -2684,7 +2736,20 @@ async function loadDailyValuesFromSheet(){
     const map={};
     for(const r of rows){
       if(!r[0]||r[0]==='date')continue;
-      const entry={totalValue:parseFloat(r[1])||0, cash:parseFloat(r[2])||0};
+      const entry={totalValue:parseFloat(r[1])||0};
+      // Cash: new format is JSON {"삼성":..,"키움":..,"메리츠":..}, old format is a single number
+      if(r[2]){
+        try{
+          const parsed=JSON.parse(r[2]);
+          if(typeof parsed==='object'&&parsed!==null){
+            entry.cash=parsed; // per-broker JSON
+          }else{
+            entry.cash=parseFloat(r[2])||0; // legacy single number
+          }
+        }catch(e){
+          entry.cash=parseFloat(r[2])||0; // legacy single number
+        }
+      }else{entry.cash=0}
       if(r[3]){try{entry.holdings=JSON.parse(r[3])}catch(e){}}
       if(r[4]){try{entry.prices=JSON.parse(r[4])}catch(e){}}
       map[String(r[0])]=entry;
@@ -3235,10 +3300,10 @@ function redrawChart(dailyValues){
         }
         entry['mv_'+g.label]=sum;
       }
-      entry.mvCash=dv[date].cash;
+      entry.mvCash=dvCashTotal(dv[date].cash);
     }else{
       // Fallback: proportional approximation
-      const holdMktVal=totalValue-(dv[date]?dv[date].cash:state.cash);
+      const holdMktVal=totalValue-(dv[date]?dvCashTotal(dv[date].cash):state.cash);
       const holdCostAtState=totalCostBasis||1;
       const mktRatio=holdMktVal/holdCostAtState;
       for(const g of HOLD_GROUPS){
@@ -4440,6 +4505,11 @@ async function downloadXlsx(){
 }
 
 // ================ HELPERS ================
+function dvCashTotal(c){
+  if(typeof c==='number')return c;
+  if(typeof c==='object'&&c)return (c['삼성']||0)+(c['키움']||0)+(c['메리츠']||0);
+  return 0;
+}
 function rd(n){return Math.round(n*100)/100}
 function fmtDate(d){d=String(d);return d.length===6?`20${d.slice(0,2)}-${d.slice(2,4)}-${d.slice(4,6)}`:d}
 function fmtUSD(n){return(n>=0?'':'-')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
