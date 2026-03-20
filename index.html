@@ -587,6 +587,16 @@ async function restoreCache(){
           savePriceTimestamp();
         }catch(e){}
       }
+      // Load daily_value from Sheet for accurate Overview display
+      if(SHEET_ID&&SA_KEY){
+        try{
+          const fromSheet=await loadDailyValuesFromSheet();
+          if(Object.keys(fromSheet).length>0){
+            dailyValueCache={...(dailyValueCache||{}),...fromSheet};
+            saveDVCache();
+          }
+        }catch(e){}
+      }
       computeOverview();
       renderOverview();
     }
