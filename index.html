@@ -1983,7 +1983,7 @@ function renderOverview(){
     totalPurchased+=h.purchasedAmt;
   }
 
-  // === Read totals from daily_value (single source of truth) ===
+  // === Read totals from daily_value (single source of truth for Total view) ===
   const dvDates=dailyValueCache?Object.keys(dailyValueCache).sort():[];
   const latestDv=dvDates.length>0?dailyValueCache[dvDates[dvDates.length-1]]:null;
   const prevDv=dvDates.length>=2?dailyValueCache[dvDates[dvDates.length-2]]:null;
@@ -1991,51 +1991,19 @@ function renderOverview(){
   let cash=0,initCash=0,totalAsset=0,totalMarketValue=0;
   let totalDayChgAmt=0;
 
-  if(latestDv){
-    const cashObj=typeof latestDv.cash==='object'?latestDv.cash:{삼성:0,키움:0,메리츠:0};
-    // Backward compat: if cash is a plain number, treat as total
-    const cashTotal=typeof latestDv.cash==='number'?latestDv.cash:((cashObj['삼성']||0)+(cashObj['키움']||0)+(cashObj['메리츠']||0));
+  // Total market value from holdings (used for per-broker views and 평가손익)
+  const holdingsMktValue=holdings.reduce((s,h)=>s+h.marketValue,0);
 
-    if(f==='all'){
-      initCash=initialCashSS+initialCashKW+initialCashMR;
-      cash=cashTotal;
-      totalAsset=latestDv.totalValue;
-      totalMarketValue=totalAsset-cash;
-      if(prevDv)totalDayChgAmt=latestDv.totalValue-prevDv.totalValue;
-    }else{
-      // Per-broker: use per-broker cash from daily_value
-      const brokerCash=cashObj[f]||0;
-      if(f==='삼성')initCash=initialCashSS;
-      else if(f==='키움')initCash=initialCashKW;
-      else initCash=initialCashMR;
-      cash=brokerCash;
-      // Per-broker market value: sum bkHoldings for this broker
-      let brokerMkt=0;
-      if(latestDv.bkHoldings){
-        for(const[bkTk,val] of Object.entries(latestDv.bkHoldings)){
-          if(bkTk.startsWith(f+'|'))brokerMkt+=val;
-        }
-      }else{
-        // Fallback: sum from per-broker holdings in allHoldings
-        for(const h of holdings) brokerMkt+=h.marketValue;
-      }
-      totalMarketValue=brokerMkt;
-      totalAsset=cash+totalMarketValue;
-      // Per-broker daily change: compare with previous day
-      if(prevDv){
-        const prevCashObj=typeof prevDv.cash==='object'?prevDv.cash:{};
-        const prevBrokerCash=prevCashObj[f]||0;
-        let prevBrokerMkt=0;
-        if(prevDv.bkHoldings){
-          for(const[bkTk,val] of Object.entries(prevDv.bkHoldings)){
-            if(bkTk.startsWith(f+'|'))prevBrokerMkt+=val;
-          }
-        }
-        totalDayChgAmt=totalAsset-(prevBrokerCash+prevBrokerMkt);
-      }
-    }
+  if(f==='all'&&latestDv){
+    // Total view: read from daily_value
+    initCash=initialCashSS+initialCashKW+initialCashMR;
+    const cashTotal=typeof latestDv.cash==='number'?latestDv.cash:dvCashTotal(latestDv.cash);
+    cash=cashTotal;
+    totalAsset=latestDv.totalValue;
+    totalMarketValue=totalAsset-cash;
+    if(prevDv)totalDayChgAmt=latestDv.totalValue-prevDv.totalValue;
   }else{
-    // No daily_value — fallback to old calculation
+    // Per-broker view OR no daily_value: compute from transactions + cachedPrices
     if(f==='all'){
       initCash=initialCashSS+initialCashKW+initialCashMR;
       cash=initCash+cashByBroker['삼성']+cashByBroker['키움']+cashByBroker['메리츠'];
@@ -2049,10 +2017,25 @@ function renderOverview(){
       initCash=initialCashMR;
       cash=initialCashMR+cashByBroker['메리츠'];
     }
-    totalMarketValue=holdings.reduce((s,h)=>s+h.marketValue,0);
+    totalMarketValue=holdingsMktValue;
     totalAsset=cash+totalMarketValue;
+    // Per-broker daily change: use per-ticker cachedPrices.prevClose
+    let prevDayMkt=0,curDayMkt=0;
+    for(const h of holdings){
+      const p=cachedPrices[h.ticker];
+      if(p&&p.prevClose&&p.current&&h.qty>0){
+        prevDayMkt+=h.qty*p.prevClose;
+        curDayMkt+=h.qty*p.current;
+      }else{
+        prevDayMkt+=h.marketValue;
+        curDayMkt+=h.marketValue;
+      }
+    }
+    totalDayChgAmt=curDayMkt-prevDayMkt;
   }
   const totalEarning=totalAsset-initCash;
+
+  console.log(`Overview(${f}): totalAsset=${totalAsset.toFixed(0)}, cash=${cash.toFixed(0)}, mkt=${totalMarketValue.toFixed(0)}, dayChg=${totalDayChgAmt.toFixed(2)}, earning=${totalEarning.toFixed(0)}, initCash=${initCash.toFixed(0)}`);
 
   let html='';
 
