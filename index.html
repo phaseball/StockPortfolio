@@ -787,11 +787,21 @@ async function updateDailyValuesIncremental(){
   }else{
     const lastStoredDate=storedDates[storedDates.length-1];
     if(lastStoredDate>=todayYymmdd){
-      console.log('daily_value: up to date');
-      dailyValueCache=stored;saveDVCache();
-      return;
+      // Today already stored — delete it so it gets recomputed with latest live prices
+      if(stored[todayYymmdd]&&Object.keys(cachedPrices).length>0){
+        delete stored[todayYymmdd];
+        storedDates.pop(); // remove today from storedDates
+        console.log(`daily_value: cleared today (${todayYymmdd}) for recompute with live prices`);
+        // Don't return — fall through to recompute today
+      }else{
+        console.log('daily_value: up to date');
+        dailyValueCache=stored;saveDVCache();
+        return;
+      }
     }
-    fromYMD=`20${lastStoredDate.slice(0,2)}-${lastStoredDate.slice(2,4)}-${lastStoredDate.slice(4,6)}`;
+    // lastStoredDate for fromYMD: use the actual last stored date (may be yesterday now)
+    const lastForFrom=storedDates.length>0?storedDates[storedDates.length-1]:todayYymmdd;
+    fromYMD=`20${lastForFrom.slice(0,2)}-${lastForFrom.slice(2,4)}-${lastForFrom.slice(4,6)}`;
     // Only currently held tickers
     const positions={};
     for(const tx of chronoTx){
@@ -2569,7 +2579,26 @@ async function updateBenchmarkIncremental(ticker){
     const lastY=parseInt('20'+lastDate.slice(0,2)),lastM=parseInt(lastDate.slice(2,4))-1,lastD=parseInt(lastDate.slice(4,6));
     const fromDt=new Date(lastY,lastM,lastD);
     const daysSince=Math.ceil((now-fromDt)/86400000);
-    if(daysSince<=0)return true; // up to date
+    if(daysSince<=0){
+      // Already has today — but still update today's entry with live quote
+      const _et2=etNow();
+      if(_et2.marketActive){
+        try{
+          const qep2=mapping.type==='index'?`index-quote?symbol=${encodeURIComponent(mapping.fmp)}`:`quote?symbol=${mapping.fmp}`;
+          const qd2=await fmpGet(qep2);
+          const qa2=Array.isArray(qd2)?qd2:(qd2?[qd2]:[]);
+          if(qa2.length>0&&qa2[0].price){
+            const todayYy2=_et2.yymmdd;
+            const idx2=existing.findIndex(d=>d.date===todayYy2);
+            if(idx2>=0)existing[idx2].close=qa2[0].price;
+            else existing.push({date:todayYy2,close:qa2[0].price});
+            existing.sort((a,b)=>a.date.localeCompare(b.date));
+            chartBenchData[ticker]=existing;
+          }
+        }catch(e){}
+      }
+      return true;
+    }
     fromYMD=`${fromDt.getFullYear()}-${String(fromDt.getMonth()+1).padStart(2,'0')}-${String(fromDt.getDate()).padStart(2,'0')}`;
   }
 
