@@ -626,26 +626,16 @@ async function refreshPrices(){
   if(!tickers.length){toast('보유 종목 없음','err');return}
   toast('💲 가격 불러오는 중...','ok');
 
-  // Step 1: FMP batch quote — ONE call for all held tickers (no CORS proxy needed)
+  // Step 1: Fetch live prices from FMP (needed for today's daily_value row)
   if(FMP_KEY){
     const fmpPrices=await fetchFmpBatchQuote(tickers);
     if(Object.keys(fmpPrices).length>0){
       cachedPrices={...cachedPrices,...fmpPrices};
-    }else{
-      console.warn('FMP quote returned nothing, trying Yahoo fallback');
-      const yPrices=await fetchPrices(tickers);
-      cachedPrices={...cachedPrices,...yPrices};
     }
-  }else{
-    // No FMP key — use old Yahoo fetch
-    cachedPrices=await fetchPrices(tickers);
   }
-  saveCache();
-  savePriceTimestamp();
-  computeOverview();
-  renderOverview();
 
-  // Step 2: Update daily_value for missing recent days (FMP history, no CORS)
+  // Step 2: Update daily_value — this is the SINGLE SOURCE OF TRUTH
+  // Uses cachedPrices for today, FMP historical for past days
   if(SHEET_ID&&SA_KEY&&allTransactions.length>0){
     try{
       await updateDailyValuesIncremental();
@@ -653,43 +643,34 @@ async function refreshPrices(){
     }catch(e){console.warn('daily_value incremental update failed:',e)}
   }
 
-  // Diagnostic: compare Overview total vs daily_value total
-  if(cachedOverviewData&&dailyValueCache){
+  // Step 3: Sync cachedPrices FROM daily_value's latest entry
+  // This ensures Overview uses the EXACT SAME prices as the chart
+  if(dailyValueCache){
     const dvDates=Object.keys(dailyValueCache).sort();
-    const lastDvDate=dvDates[dvDates.length-1];
-    const lastDv=dailyValueCache[lastDvDate];
-    if(lastDv){
-      const{allHoldings,cashByBroker}=cachedOverviewData;
-      const ovMkt=allHoldings.reduce((s,h)=>s+h.marketValue,0);
-      const ovCash=(initialCashSS+initialCashKW+initialCashMR)+(cashByBroker['삼성']||0)+(cashByBroker['키움']||0)+(cashByBroker['메리츠']||0);
-      const ovTotal=ovMkt+ovCash;
-      const dvTotal=lastDv.totalValue;
-      const diff=ovTotal-dvTotal;
-      console.log(`=== TOTAL VALUE DIAGNOSTIC (${lastDvDate}) ===`);
-      console.log(`  Overview: mkt=${ovMkt.toFixed(0)} + cash=${ovCash.toFixed(0)} = ${ovTotal.toFixed(0)}`);
-      console.log(`  daily_value: total=${dvTotal.toFixed(0)}, cash=${lastDv.cash.toFixed(0)}, holdings=${(dvTotal-lastDv.cash).toFixed(0)}`);
-      console.log(`  DIFF: ${diff.toFixed(2)} (overview - daily_value)`);
-      if(Math.abs(diff)>1){
-        console.log(`  Cash diff: ${(ovCash-lastDv.cash).toFixed(2)}`);
-        console.log(`  Holdings diff: ${(ovMkt-(dvTotal-lastDv.cash)).toFixed(2)}`);
-        // Per-ticker comparison
-        const dvPrices=lastDv.prices||{};
-        const dvHoldings=lastDv.holdings||{};
-        for(const h of allHoldings){
-          const dvP=dvPrices[h.ticker]||0;
-          const dvV=dvHoldings[h.ticker]||0;
-          const ovV=h.marketValue;
-          const pDiff=h.currentPrice-dvP;
-          const vDiff=ovV-dvV;
-          if(Math.abs(vDiff)>0.5){
-            console.log(`  ${h.ticker}: ov=${h.currentPrice.toFixed(4)}×${h.qty}=${ovV.toFixed(0)} vs dv=${dvP.toFixed(4)}×?=${dvV.toFixed(0)} → diff=${vDiff.toFixed(2)} (price diff=${pDiff.toFixed(4)})`);
+    if(dvDates.length>0){
+      const latestEntry=dailyValueCache[dvDates[dvDates.length-1]];
+      if(latestEntry&&latestEntry.prices){
+        for(const[tk,price] of Object.entries(latestEntry.prices)){
+          if(price>0){
+            const existing=cachedPrices[tk]||{};
+            cachedPrices[tk]={
+              current:price,
+              prevClose:existing.prevClose||price,
+              chgDay:existing.chgDay||0,
+              chgWeek:existing.chgWeek||0
+            };
           }
         }
       }
     }
   }
 
-  // Step 3: Update benchmark prices (FMP, for chart overlays)
+  saveCache();
+  savePriceTimestamp();
+  computeOverview();
+  renderOverview();
+
+  // Step 4: Update benchmark prices (FMP, for chart overlays)
   if(FMP_KEY){
     let benchUpdated=false;
     for(const tk of Object.keys(BENCH_FMP_MAP)){
@@ -835,9 +816,11 @@ async function updateDailyValuesIncremental(){
         return;
       }
     }
-    // lastStoredDate for fromYMD: use the actual last stored date (may be yesterday now)
+    // lastStoredDate for fromYMD: go back 14 days to allow re-check of recent stored rows
     const lastForFrom=storedDates.length>0?storedDates[storedDates.length-1]:todayYymmdd;
-    fromYMD=`20${lastForFrom.slice(0,2)}-${lastForFrom.slice(2,4)}-${lastForFrom.slice(4,6)}`;
+    const lastY=parseInt('20'+lastForFrom.slice(0,2)),lastM=parseInt(lastForFrom.slice(2,4))-1,lastD=parseInt(lastForFrom.slice(4,6));
+    const fromDt=new Date(lastY,lastM,lastD-14); // 14 calendar days back = ~10 trading days
+    fromYMD=`${fromDt.getFullYear()}-${String(fromDt.getMonth()+1).padStart(2,'0')}-${String(fromDt.getDate()).padStart(2,'0')}`;
     // Only currently held tickers
     const positions={};
     for(const tx of chronoTx){
@@ -2613,8 +2596,8 @@ async function updateBenchmarkIncremental(ticker){
   }else{
     const lastDate=existing[existing.length-1].date;
     const lastY=parseInt('20'+lastDate.slice(0,2)),lastM=parseInt(lastDate.slice(2,4))-1,lastD=parseInt(lastDate.slice(4,6));
-    const fromDt=new Date(lastY,lastM,lastD);
-    const daysSince=Math.ceil((now-fromDt)/86400000);
+    const fromDt=new Date(lastY,lastM,lastD-14); // go back 14 days to correct recent stale entries
+    const daysSince=Math.ceil((now-new Date(lastY,lastM,lastD))/86400000);
     if(daysSince<=0){
       // Already has today — but still update today's entry with live quote
       const _et2=etNow();
@@ -2633,7 +2616,7 @@ async function updateBenchmarkIncremental(ticker){
           }
         }catch(e){}
       }
-      return true;
+      // Still re-check recent entries even if daysSince<=0
     }
     fromYMD=`${fromDt.getFullYear()}-${String(fromDt.getMonth()+1).padStart(2,'0')}-${String(fromDt.getDate()).padStart(2,'0')}`;
   }
@@ -2647,7 +2630,7 @@ async function updateBenchmarkIncremental(ticker){
     const data=await fmpGet(ep);
     if(!data){console.warn(`FMP benchmark ${ticker}: null response`);return false}
     const historical=Array.isArray(data)?data:(data?.historical||[]);
-    let added=0;
+    let added=0,updated=0;
     for(const day of historical){
       if(!day.date||day.close==null)continue;
       const parts=day.date.split('-');
@@ -2657,6 +2640,13 @@ async function updateBenchmarkIncremental(ticker){
         existing.push({date:yymmdd,close:day.close});
         existingDates.add(yymmdd);
         added++;
+      }else{
+        // Update existing entry if price changed
+        const idx=existing.findIndex(d=>d.date===yymmdd);
+        if(idx>=0&&Math.abs(existing[idx].close-day.close)/Math.max(day.close,0.01)>0.001){
+          existing[idx].close=day.close;
+          updated++;
+        }
       }
     }
     // Add today's live price if market active
@@ -2678,7 +2668,7 @@ async function updateBenchmarkIncremental(ticker){
     }
     existing.sort((a,b)=>a.date.localeCompare(b.date));
     chartBenchData[ticker]=existing;
-    console.log(`Benchmark ${ticker}: ${isFullFetch?'full':'incremental'} FMP → ${existing.length} total, +${added} new`);
+    console.log(`Benchmark ${ticker}: ${isFullFetch?'full':'incremental'} FMP → ${existing.length} total, +${added} new, ~${updated} corrected`);
     return existing.length>0;
   }catch(e){
     console.warn(`FMP benchmark ${ticker} failed:`,e.message);
