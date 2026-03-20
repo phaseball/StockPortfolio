@@ -1997,41 +1997,35 @@ function renderOverview(){
   if(f==='all'&&latestDv){
     // Total view: read from daily_value
     initCash=initialCashSS+initialCashKW+initialCashMR;
-    const cashTotal=typeof latestDv.cash==='number'?latestDv.cash:dvCashTotal(latestDv.cash);
-    cash=cashTotal;
+    cash=typeof latestDv.cash==='number'?latestDv.cash:dvCashTotal(latestDv.cash);
     totalAsset=latestDv.totalValue;
     totalMarketValue=totalAsset-cash;
     if(prevDv)totalDayChgAmt=latestDv.totalValue-prevDv.totalValue;
-  }else{
-    // Per-broker view OR no daily_value: compute from transactions + cachedPrices
-    if(f==='all'){
-      initCash=initialCashSS+initialCashKW+initialCashMR;
-      cash=initCash+cashByBroker['삼성']+cashByBroker['키움']+cashByBroker['메리츠'];
-    }else if(f==='삼성'){
-      initCash=initialCashSS;
-      cash=initialCashSS+cashByBroker['삼성'];
-    }else if(f==='키움'){
-      initCash=initialCashKW;
-      cash=initialCashKW+cashByBroker['키움'];
-    }else{
-      initCash=initialCashMR;
-      cash=initialCashMR+cashByBroker['메리츠'];
-    }
+  }else if(f!=='all'){
+    // Per-broker view: cash from transactions, holdings from transactions + daily_value prices
+    if(f==='삼성')initCash=initialCashSS;
+    else if(f==='키움')initCash=initialCashKW;
+    else initCash=initialCashMR;
+    cash=initCash+(cashByBroker[f]||0);
     totalMarketValue=holdingsMktValue;
     totalAsset=cash+totalMarketValue;
-    // Per-broker daily change: use per-ticker cachedPrices.prevClose
-    let prevDayMkt=0,curDayMkt=0;
-    for(const h of holdings){
-      const p=cachedPrices[h.ticker];
-      if(p&&p.prevClose&&p.current&&h.qty>0){
-        prevDayMkt+=h.qty*p.prevClose;
-        curDayMkt+=h.qty*p.current;
-      }else{
-        prevDayMkt+=h.marketValue;
-        curDayMkt+=h.marketValue;
+    // Per-broker daily change: use prices from daily_value latest vs previous
+    if(latestDv&&prevDv&&latestDv.prices&&prevDv.prices){
+      let curVal=0,prevVal=0;
+      for(const h of holdings){
+        const latestP=latestDv.prices[h.ticker]||0;
+        const prevP=prevDv.prices[h.ticker]||latestP;
+        curVal+=h.qty*latestP;
+        prevVal+=h.qty*prevP;
       }
+      totalDayChgAmt=curVal-prevVal;
     }
-    totalDayChgAmt=curDayMkt-prevDayMkt;
+  }else{
+    // No daily_value fallback
+    initCash=initialCashSS+initialCashKW+initialCashMR;
+    cash=initCash+cashByBroker['삼성']+cashByBroker['키움']+cashByBroker['메리츠'];
+    totalMarketValue=holdingsMktValue;
+    totalAsset=cash+totalMarketValue;
   }
   const totalEarning=totalAsset-initCash;
 
