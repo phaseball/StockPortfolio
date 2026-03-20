@@ -653,6 +653,42 @@ async function refreshPrices(){
     }catch(e){console.warn('daily_value incremental update failed:',e)}
   }
 
+  // Diagnostic: compare Overview total vs daily_value total
+  if(cachedOverviewData&&dailyValueCache){
+    const dvDates=Object.keys(dailyValueCache).sort();
+    const lastDvDate=dvDates[dvDates.length-1];
+    const lastDv=dailyValueCache[lastDvDate];
+    if(lastDv){
+      const{allHoldings,cashByBroker}=cachedOverviewData;
+      const ovMkt=allHoldings.reduce((s,h)=>s+h.marketValue,0);
+      const ovCash=(initialCashSS+initialCashKW+initialCashMR)+(cashByBroker['삼성']||0)+(cashByBroker['키움']||0)+(cashByBroker['메리츠']||0);
+      const ovTotal=ovMkt+ovCash;
+      const dvTotal=lastDv.totalValue;
+      const diff=ovTotal-dvTotal;
+      console.log(`=== TOTAL VALUE DIAGNOSTIC (${lastDvDate}) ===`);
+      console.log(`  Overview: mkt=${ovMkt.toFixed(0)} + cash=${ovCash.toFixed(0)} = ${ovTotal.toFixed(0)}`);
+      console.log(`  daily_value: total=${dvTotal.toFixed(0)}, cash=${lastDv.cash.toFixed(0)}, holdings=${(dvTotal-lastDv.cash).toFixed(0)}`);
+      console.log(`  DIFF: ${diff.toFixed(2)} (overview - daily_value)`);
+      if(Math.abs(diff)>1){
+        console.log(`  Cash diff: ${(ovCash-lastDv.cash).toFixed(2)}`);
+        console.log(`  Holdings diff: ${(ovMkt-(dvTotal-lastDv.cash)).toFixed(2)}`);
+        // Per-ticker comparison
+        const dvPrices=lastDv.prices||{};
+        const dvHoldings=lastDv.holdings||{};
+        for(const h of allHoldings){
+          const dvP=dvPrices[h.ticker]||0;
+          const dvV=dvHoldings[h.ticker]||0;
+          const ovV=h.marketValue;
+          const pDiff=h.currentPrice-dvP;
+          const vDiff=ovV-dvV;
+          if(Math.abs(vDiff)>0.5){
+            console.log(`  ${h.ticker}: ov=${h.currentPrice.toFixed(4)}×${h.qty}=${ovV.toFixed(0)} vs dv=${dvP.toFixed(4)}×?=${dvV.toFixed(0)} → diff=${vDiff.toFixed(2)} (price diff=${pDiff.toFixed(4)})`);
+          }
+        }
+      }
+    }
+  }
+
   // Step 3: Update benchmark prices (FMP, for chart overlays)
   if(FMP_KEY){
     let benchUpdated=false;
