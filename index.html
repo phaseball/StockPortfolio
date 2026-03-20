@@ -918,6 +918,31 @@ async function updateDailyValuesIncremental(){
         console.log(`daily_value: corrected stale prices for ${date}`);
       }
     }
+    // Always recompute today's row with latest live prices (cachedPrices may have changed)
+    const _etNow=etNow();
+    const todayDate=_etNow.yymmdd;
+    if(stored[todayDate]){
+      const entry=stored[todayDate];
+      let improved=false;
+      for(const[tk,oldPrice] of Object.entries(entry.prices||{})){
+        const cp=cachedPrices[tk];
+        if(!cp||!cp.current)continue;
+        const livePrice=cp.current;
+        if(Math.abs(livePrice-oldPrice)/Math.max(oldPrice,0.01)>0.001){
+          entry.prices[tk]=Math.round(livePrice*10000)/10000;
+          const qty=pos[tk]||0;
+          if(qty>0) entry.holdings[tk]=Math.round(qty*livePrice*100)/100;
+          improved=true;
+        }
+      }
+      if(improved){
+        let hv=0;
+        for(const v of Object.values(entry.holdings||{})) hv+=v;
+        entry.totalValue=entry.cash+hv;
+        if(!correctedDates.includes(todayDate))correctedDates.push(todayDate);
+        console.log(`daily_value: updated today (${todayDate}) with live prices`);
+      }
+    }
     // Update corrected rows in Sheet by finding their row numbers
     if(correctedDates.length>0&&SHEET_ID&&SA_KEY){
       try{
