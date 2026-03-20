@@ -1978,9 +1978,8 @@ function renderOverview(){
     totalRealizedPLThisYear+=h.realizedPLThisYear;
   }
 
-  let totalMarketValue=0,totalPurchased=0;
+  let totalPurchased=0;
   for(const h of holdings){
-    totalMarketValue+=h.marketValue;
     totalPurchased+=h.purchasedAmt;
   }
 
