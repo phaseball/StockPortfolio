@@ -473,15 +473,52 @@ function saveSA(){try{const r=document.getElementById('saKey').value.trim();SA_K
 function saveSheetId(){SHEET_ID=document.getElementById('sheetId').value.trim();localStorage.setItem('sheet_id',SHEET_ID);updateSt('st-sid','ok',SHEET_ID.slice(0,8)+'...');toast('저장 완료','ok')}
 function saveFmpKey(){FMP_KEY=document.getElementById('fmpKey').value.trim();localStorage.setItem('fmp_key',FMP_KEY);toast('FMP API Key 저장 완료','ok')}
 let fundTickerList=[]; // configured tickers for fundamentals
-function saveFundTickers(){
+async function saveFundTickers(){
   const raw=document.getElementById('fundTickers').value.trim();
   const tickers=raw.split(/[,\s]+/).map(s=>s.trim().toUpperCase()).filter(Boolean);
   fundTickerList=tickers;
   localStorage.setItem('fund_tickers',JSON.stringify(tickers));
   document.getElementById('fundTickerInfo').textContent=`${tickers.length}종목: ${tickers.join(', ')}`;
-  toast(`Fund 대상 ${tickers.length}종목 저장`,'ok');
+  // Save to Sheet (fund_tickers tab, single row)
+  if(SHEET_ID&&SA_KEY){
+    try{
+      const token=await getAccessToken();
+      // Ensure tab exists
+      const meta=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties`,{
+        headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json());
+      if(!meta.sheets?.some(s=>s.properties?.title==='fund_tickers')){
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`,{
+          method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+          body:JSON.stringify({requests:[{addSheet:{properties:{title:'fund_tickers'}}}]})});
+      }
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_tickers!A1:A1?valueInputOption=USER_ENTERED`,{
+        method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+        body:JSON.stringify({values:[[tickers.join(',')]]})});
+      toast(`Fund 대상 ${tickers.length}종목 저장 (Sheet + local)`,'ok');
+    }catch(e){toast(`Fund 대상 저장 (local만): ${e.message}`,'ok')}
+  }else{
+    toast(`Fund 대상 ${tickers.length}종목 저장 (local)`,'ok');
+  }
 }
-function loadFundTickers(){
+async function loadFundTickers(){
+  // Try Sheet first
+  if(SHEET_ID&&SA_KEY){
+    try{
+      const resp=await sheetsGet('fund_tickers!A1:A1');
+      const val=resp&&resp.values&&resp.values[0]?resp.values[0][0]:'';
+      if(val){
+        const tickers=String(val).split(/[,\s]+/).map(s=>s.trim().toUpperCase()).filter(Boolean);
+        if(tickers.length>0){
+          fundTickerList=tickers;
+          localStorage.setItem('fund_tickers',JSON.stringify(tickers));
+          document.getElementById('fundTickers').value=tickers.join(', ');
+          document.getElementById('fundTickerInfo').textContent=`${tickers.length}종목: ${tickers.join(', ')}`;
+          return;
+        }
+      }
+    }catch(e){}
+  }
+  // Fallback to localStorage
   try{
     const s=localStorage.getItem('fund_tickers');
     if(s){fundTickerList=JSON.parse(s);document.getElementById('fundTickers').value=fundTickerList.join(', ');
@@ -2268,6 +2305,9 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   const dash='<span style="color:var(--text3)">—</span>';
 
   const fund=cachedFundamentals[ticker];
+  // Only show fund info if this ticker (or its underlying) is in the configured fund tickers list
+  const fundTk=getFundTicker(ticker)||ticker;
+  const isFundTarget=fundTickerList.length===0||fundTickerList.includes(ticker)||fundTickerList.includes(fundTk);
 
   // Fiscal label for top row
   let fiscalLabel='';
@@ -2278,7 +2318,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   // Col5: Target price now > 1w > 1m
   let targetCol=dash;
 
-  if(fund){
+  if(fund&&isFundTarget){
     // -- Fiscal label: "Dec 26 (16 anal)" --
     const analStr=fund.numAnalystsEps?` (${fund.numAnalystsEps} anal)`:'';
     fiscalLabel=`Dec ${(fund.targetYear||'26').slice(2)}${analStr}`;
