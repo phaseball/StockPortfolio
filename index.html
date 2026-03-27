@@ -154,8 +154,6 @@ table.t tr:hover td{background:var(--accentBg)}
     <button class="on" data-p="overview">📊 Overview</button>
     <button data-p="history" id="navHistory">📜 History</button>
     <button data-p="import">📥 +File</button>
-    <button data-p="manual">✏️ 입력</button>
-    <button data-p="data">📋 데이터</button>
     <button data-p="setup">⚙️ 설정</button>
   </nav>
 
@@ -271,31 +269,6 @@ NVDA,2,130.5000,1"></textarea>
   </div>
 
   <!-- ==================== MANUAL ==================== -->
-  <div id="p-manual" class="panel">
-    <div class="card">
-      <div class="card-hdr"><span class="ico">✏️</span> 수동 거래 입력</div>
-      <div class="g2">
-        <label class="f"><span>증권사</span><select id="mBk"><option value="삼성">삼성 (0.07%)</option><option value="키움">키움 (0.07%)</option><option value="메리츠">메리츠 (0%)</option></select></label>
-        <label class="f"><span>날짜 (YYMMDD)</span><input type="text" id="mDt" placeholder="260212" maxlength="6"/></label>
-      </div>
-      <div class="g4">
-        <label class="f"><span>종목</span><input type="text" id="mTk" placeholder="AAPL" style="text-transform:uppercase"/></label>
-        <label class="f"><span>매매</span><select id="mSd"><option value="buy">매수</option><option value="sell">매도</option></select></label>
-        <label class="f"><span>수량</span><input type="number" id="mQt" placeholder="1" min="1"/></label>
-        <label class="f"><span>체결단가</span><input type="number" id="mPr" placeholder="150.00" step="0.0001"/></label>
-      </div>
-      <button class="btn btn-p btn-full" onclick="addManual()">➕ 추가 → Google Sheets 저장</button>
-    </div>
-  </div>
-
-  <!-- ==================== DATA ==================== -->
-  <div id="p-data" class="panel">
-    <div class="btn-row" style="margin-bottom:12px">
-      <button class="btn btn-s btn-sm" onclick="loadFromSheet()">🔄 시트에서 불러오기</button>
-      <button class="btn btn-s btn-sm" onclick="downloadXlsx()">📥 xlsx 다운로드</button>
-    </div>
-    <div id="dataView"><p style="color:var(--text2);text-align:center;padding:32px">데이터를 불러오려면 "시트에서 불러오기"를 클릭하세요</p></div>
-  </div>
 
   <!-- ==================== SETUP ==================== -->
   <div id="p-setup" class="panel">
@@ -349,6 +322,15 @@ NVDA,2,130.5000,1"></textarea>
         <button class="btn btn-p btn-sm" onclick="saveFmpKey()">저장</button>
       </div>
       <p style="font-size:11px;color:var(--text2);margin-top:6px">무료 플랜: 일 250회 요청. 로컬 브라우저에만 저장됩니다.</p>
+    </div>
+    <div class="card">
+      <div class="card-hdr"><span class="ico">📈</span> Fundamentals 대상 종목</div>
+      <p style="font-size:11px;color:var(--text2);margin-bottom:8px">Fund 버튼 클릭 시 이 종목들만 fetch/계산/저장합니다. 콤마로 구분. 레버리지 ETF는 자동으로 기초자산으로 변환됩니다 (NVDL→NVDA 등).</p>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="fundTickers" placeholder="NVDA, AVGO, TSLA, AMD, TSM, GOOGL, AAPL" style="flex:1"/>
+        <button class="btn btn-p btn-sm" onclick="saveFundTickers()">저장</button>
+      </div>
+      <p style="font-size:11px;color:var(--text2);margin-top:6px" id="fundTickerInfo">설정 없음</p>
     </div>
   </div>
 </div>
@@ -484,11 +466,28 @@ function loadConfig(){
     if(sid){SHEET_ID=sid;document.getElementById('sheetId').value=sid;updateSt('st-sid','ok',sid.slice(0,8)+'...')}
     const fk=localStorage.getItem('fmp_key');
     if(fk){FMP_KEY=fk;document.getElementById('fmpKey').value=fk}
+    loadFundTickers();
   }catch(e){}
 }
 function saveSA(){try{const r=document.getElementById('saKey').value.trim();SA_KEY=JSON.parse(r);localStorage.setItem('sa_key',r);updateSt('st-gs','ok','키 저장됨');toast('저장 완료','ok')}catch(e){toast('JSON 형식 오류','err')}}
 function saveSheetId(){SHEET_ID=document.getElementById('sheetId').value.trim();localStorage.setItem('sheet_id',SHEET_ID);updateSt('st-sid','ok',SHEET_ID.slice(0,8)+'...');toast('저장 완료','ok')}
 function saveFmpKey(){FMP_KEY=document.getElementById('fmpKey').value.trim();localStorage.setItem('fmp_key',FMP_KEY);toast('FMP API Key 저장 완료','ok')}
+let fundTickerList=[]; // configured tickers for fundamentals
+function saveFundTickers(){
+  const raw=document.getElementById('fundTickers').value.trim();
+  const tickers=raw.split(/[,\s]+/).map(s=>s.trim().toUpperCase()).filter(Boolean);
+  fundTickerList=tickers;
+  localStorage.setItem('fund_tickers',JSON.stringify(tickers));
+  document.getElementById('fundTickerInfo').textContent=`${tickers.length}종목: ${tickers.join(', ')}`;
+  toast(`Fund 대상 ${tickers.length}종목 저장`,'ok');
+}
+function loadFundTickers(){
+  try{
+    const s=localStorage.getItem('fund_tickers');
+    if(s){fundTickerList=JSON.parse(s);document.getElementById('fundTickers').value=fundTickerList.join(', ');
+      document.getElementById('fundTickerInfo').textContent=`${fundTickerList.length}종목: ${fundTickerList.join(', ')}`}
+  }catch(e){}
+}
 function updateSt(id,cls,txt){const el=document.getElementById(id);el.className='status '+cls;el.textContent=txt}
 async function saveInitCash(){
   const ss=parseFloat(document.getElementById('initCashSS').value);
@@ -1138,7 +1137,7 @@ async function rescaleEpsHistory(){
   toast('🔧 EPS 보정 중...','ok');
   try{
     const token=await getAccessToken();
-    const resp=await sheetsGet('fund_history!A:E');
+    const resp=await sheetsGet('fund_history!A:F');
     const allRows=resp&&resp.values?resp.values:[];
     if(allRows.length<=1){toast('데이터 없음','err');return}
     const header=allRows[0];
@@ -1222,9 +1221,9 @@ async function rescaleEpsHistory(){
     if(corrected===0){toast('보정 대상 없음','ok');return}
 
     // Write back to Sheet
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:E:clear`,{
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:F:clear`,{
       method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:E?valueInputOption=USER_ENTERED`,{
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:F?valueInputOption=USER_ENTERED`,{
       method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
       body:JSON.stringify({values:allRows})});
 
@@ -1240,7 +1239,7 @@ async function dedupFundHistory(){
   toast('🧹 중복 제거 중...','ok');
   try{
     const token=await getAccessToken();
-    const resp=await sheetsGet('fund_history!A:E');
+    const resp=await sheetsGet('fund_history!A:F');
     const allRows=resp&&resp.values?resp.values:[];
     if(allRows.length<=1){toast('데이터 없음','err');return}
     const header=allRows[0];
@@ -1256,9 +1255,9 @@ async function dedupFundHistory(){
     }
     if(dupes===0){toast('중복 없음 ✅','ok');return}
     // Clear and rewrite
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:E:clear`,{
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:F:clear`,{
       method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:E?valueInputOption=USER_ENTERED`,{
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:F?valueInputOption=USER_ENTERED`,{
       method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
       body:JSON.stringify({values:unique})});
     // Reload
@@ -1271,7 +1270,7 @@ async function dedupFundHistory(){
 async function loadFundHistory(){
   if(!SHEET_ID||!SA_KEY)return;
   try{
-    const resp=await sheetsGet('fund_history!A2:E5000');
+    const resp=await sheetsGet('fund_history!A2:F5000');
     const histRows=resp.values||resp;
     fundHistory={};
     if(Array.isArray(histRows)){
@@ -1284,7 +1283,8 @@ async function loadFundHistory(){
           date:dt,
           epsNorm:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
           revNorm:r[3]!=null&&r[3]!==''?parseFloat(r[3]):null,
-          targetPrice:r[4]!=null&&r[4]!==''?parseFloat(r[4]):null
+          targetPrice:r[4]!=null&&r[4]!==''?parseFloat(r[4]):null,
+          pe12m:r[5]!=null&&r[5]!==''?parseFloat(r[5]):null
         });
       }
       for(const tk of Object.keys(fundHistory)){
@@ -1304,8 +1304,9 @@ async function refreshFundamentals(){
     // Don't auto-hide
   }
   try{
-    const held=getHeldTickers();
-    const fundTickers=[...new Set(held.map(t=>getFundTicker(t)).filter(t=>t!==null))];
+    // Use configured fund tickers (from 설정), mapped through UNDERLYING_MAP
+    if(fundTickerList.length===0){toast('⚙️ 설정에서 Fundamentals 대상 종목을 설정하세요','err');return}
+    const fundTickers=[...new Set(fundTickerList.map(t=>getFundTicker(t)||t).filter(t=>t!==null))];
     console.log('Fund tickers to fetch:',fundTickers);
     showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*4} API calls)`);
     if(!fundTickers.length){toast('펀더멘탈 데이터 대상 종목 없음','err');return}
@@ -1344,6 +1345,26 @@ async function refreshFundamentals(){
     // Load fund_history for EPS change tracking (1w/1m)
     await loadFundHistory();
 
+    // Fetch TWD/USD exchange rate for TSM (reports in TWD)
+    let twdToUsd=null;
+    const TWD_TICKERS=['TSM','2330.TW']; // tickers that report in TWD
+    if(fundTickers.some(tk=>TWD_TICKERS.includes(tk))){
+      try{
+        showFetching('📊 Fetching TWD/USD exchange rate...');
+        const fxData=await fmpGet(`quote/USDTWD`);
+        const fxArr=Array.isArray(fxData)?fxData:(fxData?[fxData]:[]);
+        if(fxArr.length>0&&fxArr[0].price){
+          twdToUsd=1/fxArr[0].price; // USDTWD gives how many TWD per 1 USD, we need inverse
+          console.log(`TWD/USD exchange rate: ${twdToUsd} (USDTWD=${fxArr[0].price})`);
+        }
+      }catch(e){console.warn('Failed to fetch TWD/USD rate:',e)}
+      if(!twdToUsd){
+        // Fallback: approximate rate
+        twdToUsd=1/32.5;
+        console.log(`TWD/USD fallback rate: ${twdToUsd}`);
+      }
+    }
+
     let idx=0;
     for(const tk of fundTickers){
       idx++;
@@ -1370,9 +1391,11 @@ async function refreshFundamentals(){
       if(Array.isArray(quarterlyEarnings)){
         for(const q of quarterlyEarnings){
           if(!q.date)continue;
-          const eps=q.epsActual!=null?q.epsActual:q.epsEstimated;
-          const rev=q.revenueActual!=null?q.revenueActual:q.revenueEstimated;
+          let eps=q.epsActual!=null?q.epsActual:q.epsEstimated;
+          let rev=q.revenueActual!=null?q.revenueActual:q.revenueEstimated;
           if(eps==null)continue;
+          // Convert TWD→USD for TSM
+          if(TWD_TICKERS.includes(tk)&&twdToUsd){eps=eps*twdToUsd;rev=rev?rev*twdToUsd:0}
           qData.push({reportDate:q.date, eps, rev:rev||0, isActual:q.epsActual!=null});
         }
         qData.sort((a,b)=>a.reportDate.localeCompare(b.reportDate));
@@ -1476,8 +1499,13 @@ async function refreshFundamentals(){
           const frac=y+(dayOfYear/daysInYear);
           const dateKey=e.date.slice(0,7); // "2024-12" or "2025-01"
           const actual=tkActuals[dateKey];
-          const eps=(actual&&actual.eps!=null)?actual.eps:(e.epsAvg||0);
-          const rev=(actual&&actual.rev!=null)?actual.rev:(e.revenueAvg||0);
+          let eps=(actual&&actual.eps!=null)?actual.eps:(e.epsAvg||0);
+          let rev=(actual&&actual.rev!=null)?actual.rev:(e.revenueAvg||0);
+          // Convert TWD→USD for TSM (FMP reports in TWD)
+          if(TWD_TICKERS.includes(tk)&&twdToUsd){
+            eps=eps*twdToUsd;
+            rev=rev*twdToUsd;
+          }
           const src=actual?'actual':'est';
           console.log(`${tk} entry: ${e.date} frac=${frac.toFixed(3)} eps=${eps}(${src}) rev=${Math.round(rev)}(${src}) nEps=${e.numAnalystsEps||0}`);
           return{frac, eps, rev,
@@ -1581,13 +1609,20 @@ async function refreshFundamentals(){
       console.log(`${tk} RESULT:`,newFund[tk]);
     }
 
-    // Map to held tickers (including leveraged ETFs → underlying)
-    // Store under both the held ticker (e.g. NVDL) and the underlying (e.g. NVDA)
+    // Map to configured tickers and held tickers (leveraged ETFs → underlying)
+    for(const tk of fundTickerList){
+      const fundTk=getFundTicker(tk)||tk;
+      if(newFund[fundTk]){
+        cachedFundamentals[tk]=newFund[fundTk];
+        cachedFundamentals[fundTk]=newFund[fundTk];
+      }
+    }
+    // Also map for any held tickers that reference the same underlying
+    const held=getHeldTickers();
     for(const tk of held){
       const fundTk=getFundTicker(tk);
       if(fundTk&&newFund[fundTk]){
         cachedFundamentals[tk]=newFund[fundTk];
-        cachedFundamentals[fundTk]=newFund[fundTk];
       }
     }
 
@@ -1656,59 +1691,77 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
         body:JSON.stringify({values:rows})});
     }
 
-    // Append to fund_history tab (historical tracking for EPS change 1w/1m)
+    // Append/update fund_history tab (historical tracking for EPS change 1w/1m)
     try{
-      const histRows=[];
-      // Check existing dates to avoid duplicates
-      const existingDates=new Set();
-      for(const[tk,arr] of Object.entries(fundHistory)){
-        for(const h of arr){
-          existingDates.add(`${h.date}|${tk}`);
-        }
+      // Ensure fund_history tab exists
+      const meta=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties`,{
+        headers:{Authorization:`Bearer ${token}`}
+      }).then(r=>r.json());
+      const hasTab=meta.sheets?.some(s=>s.properties?.title==='fund_history');
+      if(!hasTab){
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`,{
+          method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+          body:JSON.stringify({requests:[{addSheet:{properties:{title:'fund_history'}}}]})
+        });
+        console.log('Created fund_history tab');
       }
+
+      // Read existing rows
+      let existingRows=[];
+      try{
+        const resp=await sheetsGet('fund_history!A:F');
+        existingRows=resp&&resp.values?resp.values:[];
+      }catch(e){}
+
+      // Build map of existing rows (date|ticker → row index)
+      const existingMap={}; // 'date|ticker' → index in existingRows
+      for(let i=1;i<existingRows.length;i++){
+        const r=existingRows[i];
+        if(r[0]&&r[1])existingMap[`${r[0]}|${r[1]}`]=i;
+      }
+
+      // Build new/updated rows
+      let changed=false;
       for(const[tk,d]of Object.entries(fundData)){
-        if(d.epsNorm!=null&&!existingDates.has(`${today}|${tk}`)){
-          histRows.push([today,tk,d.epsNorm.toFixed(4),d.revNorm?Math.round(d.revNorm):'',d.targetPrice||'']);
-          // Also update in-memory fundHistory
-          if(!fundHistory[tk])fundHistory[tk]=[];
-          fundHistory[tk].push({date:today,epsNorm:d.epsNorm,revNorm:d.revNorm,targetPrice:d.targetPrice});
-        }
-      }
-      if(histRows.length>0){
-        // Ensure fund_history tab exists
-        const meta=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties`,{
-          headers:{Authorization:`Bearer ${token}`}
-        }).then(r=>r.json());
-        const hasTab=meta.sheets?.some(s=>s.properties?.title==='fund_history');
-        if(!hasTab){
-          // Create the tab
-          await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`,{
-            method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-            body:JSON.stringify({requests:[{addSheet:{properties:{title:'fund_history'}}}]})
-          });
-          console.log('Created fund_history tab');
-        }
-        // Ensure header exists
-        try{
-          const hdrUrl3=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:E1?valueInputOption=USER_ENTERED`;
-          await fetch(hdrUrl3,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-            body:JSON.stringify({values:[['date','ticker','epsNorm','revNorm','targetPrice']]})});
-        }catch(e){}
-        // Append rows
-        const appendUrl=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:E:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
-        const resp=await fetch(appendUrl,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-          body:JSON.stringify({values:histRows})});
-        if(resp.ok){
-          console.log(`Appended ${histRows.length} rows to fund_history`);
+        if(d.epsNorm==null)continue;
+        const row=[today,tk,d.epsNorm.toFixed(4),d.revNorm?Math.round(d.revNorm):'',d.targetPrice||'',d.pe12m?d.pe12m.toFixed(2):''];
+        const key=`${today}|${tk}`;
+        if(existingMap[key]!=null){
+          // Replace existing row
+          existingRows[existingMap[key]]=row;
         }else{
-          console.warn('fund_history append failed:',resp.status,await resp.text());
+          // Append new row
+          existingRows.push(row);
         }
-        // Save updated fundHistory to localStorage
+        changed=true;
+        // Update in-memory fundHistory
+        if(!fundHistory[tk])fundHistory[tk]=[];
+        const memIdx=fundHistory[tk].findIndex(h=>h.date===today);
+        const memEntry={date:today,epsNorm:d.epsNorm,revNorm:d.revNorm,targetPrice:d.targetPrice,pe12m:d.pe12m};
+        if(memIdx>=0)fundHistory[tk][memIdx]=memEntry;
+        else fundHistory[tk].push(memEntry);
+      }
+
+      if(changed){
+        // Write header + all rows (clear and rewrite)
+        const header=['date','ticker','epsNorm','revNorm','targetPrice','pe12m'];
+        if(existingRows.length>0&&existingRows[0][0]==='date')existingRows[0]=header;
+        else existingRows.unshift(header);
+        // Pad short rows to 6 columns
+        for(let i=0;i<existingRows.length;i++){
+          while(existingRows[i].length<6)existingRows[i].push('');
+        }
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:F:clear`,{
+          method:'POST',headers:{Authorization:`Bearer ${token}`}});
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:F?valueInputOption=USER_ENTERED`,{
+          method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+          body:JSON.stringify({values:existingRows})});
+        console.log(`fund_history: wrote ${existingRows.length-1} rows (updated today's entries)`);
         localStorage.setItem('cache_fundHistory',JSON.stringify(fundHistory));
       }else{
-        console.log('fund_history: no new rows to append (all dates exist)');
+        console.log('fund_history: no changes');
       }
-    }catch(e){console.warn('Could not append to fund_history:',e)}
+    }catch(e){console.warn('Could not update fund_history:',e)}
 
     // Save eps_actuals to sheet (API-fetched actuals, preserving manual entries)
     if(epsActualsMap&&Object.keys(epsActualsMap).length>0){
