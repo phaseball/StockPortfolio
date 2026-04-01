@@ -4556,12 +4556,24 @@ async function doImport(){
       // Date exists → compare by seq, find missing rows
       const existingSeqs=new Set();
       for(let i=dateBlockStart;i<dateBlockEnd;i++){
-        const seq=String(existing[i][7]||'').trim();
+        const row=existing[i];
+        // seq is col H (index 7), but row might be shorter
+        const seq=row.length>7?String(row[7]||'').trim():'';
         if(seq)existingSeqs.add(seq);
+        // Also build a ticker+qty+price key as fallback dedup
+        const tkKey=`${String(row[1]||'').trim()}|${row[2]}|${row[3]}`;
+        existingSeqs.add('tk:'+tkKey);
       }
       const existingCount=dateBlockEnd-dateBlockStart;
+      console.log(`${g.broker} ${g.date}: existing block rows ${dateBlockStart}-${dateBlockEnd-1} (${existingCount} rows), seqs:`, [...existingSeqs]);
 
-      const newRows=g.rows.filter(r=>!existingSeqs.has(String(r.seq)));
+      const newRows=g.rows.filter(r=>{
+        if(existingSeqs.has(String(r.seq)))return false;
+        // Fallback: check ticker+qty+price
+        const tkKey='tk:'+`${r.ticker}|${r.qty}|${r.price}`;
+        if(existingSeqs.has(tkKey))return false;
+        return true;
+      });
       if(newRows.length===0){
         addLog(logEl,`⏭ ${g.broker} ${fmtDate(g.date)}: ${existingCount}건 모두 존재 → 건너뜀`,'');
         continue;
