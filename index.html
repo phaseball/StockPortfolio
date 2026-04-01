@@ -4553,32 +4553,35 @@ async function doImport(){
         addLog(logEl,`✅ ${g.broker} ${fmtDate(g.date)}: ${rows.length}건 새로 저장`,'ok');
       }catch(e){addLog(logEl,`❌ ${g.broker} 실패: ${e.message}`,'err')}
     }else{
-      // Date exists → compare by seq, find missing rows
-      const existingSeqs=new Set();
-      const existingKeys=new Set(); // ticker|qty|price (normalized)
+      // Date exists → find which import rows are missing from Sheet
+      // Use ticker|qty|price matching with occurrence counting
+      // (handles multiple buys of same ticker at same price)
+      const existingCounts={}; // 'TICKER|qty|price' → count
       for(let i=dateBlockStart;i<dateBlockEnd;i++){
         const row=existing[i];
-        // seq is col H (index 7), but row might be shorter
-        const seq=row.length>7?String(row[7]||'').trim():'';
-        if(seq)existingSeqs.add(seq);
-        // Normalize: ticker(uppercase) | qty(int) | price(4dp)
         const tk=String(row[1]||'').trim().toUpperCase();
         const qt=parseInt(row[2])||0;
-        const pr=parseFloat(row[3])||0;
-        existingKeys.add(`${tk}|${qt}|${pr.toFixed(4)}`);
-        console.log(`  existing row ${i}: seq=${seq} tk=${tk} qty=${qt} price=${pr.toFixed(4)} cols=${row.length}`);
+        const pr=(parseFloat(row[3])||0).toFixed(4);
+        const key=`${tk}|${qt}|${pr}`;
+        existingCounts[key]=(existingCounts[key]||0)+1;
+        console.log(`  existing row ${i}: tk=${tk} qty=${qt} price=${pr} cols=${row.length}`);
       }
       const existingCount=dateBlockEnd-dateBlockStart;
-      console.log(`${g.broker} ${g.date}: block rows ${dateBlockStart}-${dateBlockEnd-1} (${existingCount}), seqs:[${[...existingSeqs]}], keys:[${[...existingKeys]}]`);
+      console.log(`${g.broker} ${g.date}: block rows ${dateBlockStart}-${dateBlockEnd-1} (${existingCount}), keys:`,existingCounts);
 
-      const newRows=g.rows.filter(r=>{
-        const seqStr=String(r.seq);
-        if(existingSeqs.has(seqStr)){console.log(`  import seq ${seqStr} ${r.ticker}: matched by seq`);return false}
+      // Match import rows against existing, consuming counts
+      const importCounts={...existingCounts}; // copy to consume
+      const newRows=[];
+      for(const r of g.rows){
         const key=`${r.ticker}|${r.qty}|${r.price.toFixed(4)}`;
-        if(existingKeys.has(key)){console.log(`  import seq ${seqStr} ${r.ticker}: matched by key ${key}`);return false}
-        console.log(`  import seq ${seqStr} ${r.ticker}: NEW (key=${key})`);
-        return true;
-      });
+        if(importCounts[key]&&importCounts[key]>0){
+          importCounts[key]--;
+          console.log(`  import seq ${r.seq} ${r.ticker}: matched (${key})`);
+        }else{
+          console.log(`  import seq ${r.seq} ${r.ticker}: NEW (${key})`);
+          newRows.push(r);
+        }
+      }
       if(newRows.length===0){
         addLog(logEl,`⏭ ${g.broker} ${fmtDate(g.date)}: ${existingCount}건 모두 존재 → 건너뜀`,'');
         continue;
