@@ -4514,31 +4514,93 @@ async function doImport(){
   if(!SHEET_ID||!SA_KEY){toast('Sheets 설정 필요','err');return}
   const logEl=document.getElementById('impLog');logEl.innerHTML='';
 
-  // Load existing dates per broker for dedup
-  const existingDates={};
-  for(const broker of ['삼성','키움','메리츠']){
-    try{
-      const resp=await sheetsGet(`${broker}!A:A`);
-      const dates=new Set();
-      const rows=resp&&resp.values?resp.values:(Array.isArray(resp)?resp:[]);
-      for(const r of rows){if(r[0]!=null&&r[0]!=='')dates.add(String(r[0]))}
-      existingDates[broker]=dates;
-      console.log(`${broker} existing dates:`,dates.size,'entries, sample:',[...dates].slice(0,5));
-    }catch(e){existingDates[broker]=new Set();console.warn(`${broker} date load failed:`,e)}
-  }
-
   for(const g of groups){
-    // Check if this date already exists in the sheet
-    const dateNum=String(parseInt(g.date));
-    if(existingDates[g.broker]&&existingDates[g.broker].has(dateNum)){
-      addLog(logEl,`⏭ ${g.broker} ${fmtDate(g.date)}: 이미 존재 → 건너뜀`,'');
-      continue;
-    }
     const rate=TAX[g.broker];
-    const rows=g.rows.map((r,i)=>{const tax=rd(Math.abs(r.qty)*r.price*rate),total=rd(Math.abs(r.qty)*r.price+tax);
-      return[i===0?parseInt(g.date):'',r.ticker,r.qty,r.price,tax,total,'',r.seq]});
-    try{await sheetsInsertAtTop(g.broker,rows);addLog(logEl,`✅ ${g.broker} ${fmtDate(g.date)}: ${rows.length}건 저장`,'ok')}
-    catch(e){addLog(logEl,`❌ ${g.broker} 실패: ${e.message}`,'err')}
+    const dateNum=String(parseInt(g.date));
+
+    // Load ALL existing data for this broker
+    let existing=[];
+    try{
+      const resp=await sheetsGet(`${g.broker}!A:H`);
+      existing=resp&&resp.values?resp.values:[];
+    }catch(e){existing=[]}
+
+    // Find rows for this date in Sheet
+    // Sheet format: date in col A (only first row of group), subsequent rows have empty col A
+    // Find the block of rows for this date
+    let dateBlockStart=-1, dateBlockEnd=-1;
+    for(let i=1;i<existing.length;i++){
+      const cellA=String(existing[i][0]||'').trim();
+      if(cellA===dateNum){
+        dateBlockStart=i;
+        // Find end: next row with a non-empty col A, or end of sheet
+        dateBlockEnd=i+1;
+        while(dateBlockEnd<existing.length&&(!existing[dateBlockEnd][0]||String(existing[dateBlockEnd][0]).trim()==='')){
+          dateBlockEnd++;
+        }
+        break;
+      }
+    }
+
+    if(dateBlockStart<0){
+      // Date not found → insert all rows at top (new date)
+      const rows=g.rows.map((r,i)=>{
+        const tax=rd(Math.abs(r.qty)*r.price*rate),total=rd(Math.abs(r.qty)*r.price+tax);
+        return[i===0?parseInt(g.date):'',r.ticker,r.qty,r.price,tax,total,'',r.seq];
+      });
+      try{
+        await sheetsInsertAtTop(g.broker,rows);
+        addLog(logEl,`✅ ${g.broker} ${fmtDate(g.date)}: ${rows.length}건 새로 저장`,'ok');
+      }catch(e){addLog(logEl,`❌ ${g.broker} 실패: ${e.message}`,'err')}
+    }else{
+      // Date exists → compare by seq, find missing rows
+      const existingSeqs=new Set();
+      for(let i=dateBlockStart;i<dateBlockEnd;i++){
+        const seq=String(existing[i][7]||'').trim();
+        if(seq)existingSeqs.add(seq);
+      }
+      const existingCount=dateBlockEnd-dateBlockStart;
+
+      const newRows=g.rows.filter(r=>!existingSeqs.has(String(r.seq)));
+      if(newRows.length===0){
+        addLog(logEl,`⏭ ${g.broker} ${fmtDate(g.date)}: ${existingCount}건 모두 존재 → 건너뜀`,'');
+        continue;
+      }
+
+      // Build the merged block: existing rows + new rows, sorted by seq
+      const mergedBlock=[];
+      // Existing rows (preserve as-is)
+      for(let i=dateBlockStart;i<dateBlockEnd;i++){
+        mergedBlock.push([...existing[i]]);
+      }
+      // New rows
+      for(const r of newRows){
+        const tax=rd(Math.abs(r.qty)*r.price*rate),total=rd(Math.abs(r.qty)*r.price+tax);
+        mergedBlock.push(['',r.ticker,r.qty,r.price,tax,total,'',r.seq]);
+      }
+      // Sort by seq
+      mergedBlock.sort((a,b)=>(parseInt(a[7])||0)-(parseInt(b[7])||0));
+      // First row should have the date
+      for(const row of mergedBlock)row[0]='';
+      mergedBlock[0][0]=parseInt(g.date);
+
+      // Rebuild the entire sheet: header + rows before this date + merged block + rows after
+      const header=existing[0]||['','','','','tax','total','split','seq'];
+      const before=existing.slice(1,dateBlockStart);
+      const after=existing.slice(dateBlockEnd);
+      const newAll=[header,...before,...mergedBlock,...after];
+
+      try{
+        const token=await getAccessToken();
+        const range=`${g.broker}!A:H`;
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:clear`,{
+          method:'POST',headers:{Authorization:`Bearer ${token}`}});
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,{
+          method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+          body:JSON.stringify({range,majorDimension:'ROWS',values:newAll})});
+        addLog(logEl,`✅ ${g.broker} ${fmtDate(g.date)}: ${existingCount}건 존재 + ${newRows.length}건 추가 = ${mergedBlock.length}건`,'ok');
+      }catch(e){addLog(logEl,`❌ ${g.broker} ${fmtDate(g.date)} 병합 실패: ${e.message}`,'err')}
+    }
   }
   toast('가져오기 완료! Data를 새로고침하세요.','ok');
 }
