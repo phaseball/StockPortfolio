@@ -4555,23 +4555,28 @@ async function doImport(){
     }else{
       // Date exists → compare by seq, find missing rows
       const existingSeqs=new Set();
+      const existingKeys=new Set(); // ticker|qty|price (normalized)
       for(let i=dateBlockStart;i<dateBlockEnd;i++){
         const row=existing[i];
         // seq is col H (index 7), but row might be shorter
         const seq=row.length>7?String(row[7]||'').trim():'';
         if(seq)existingSeqs.add(seq);
-        // Also build a ticker+qty+price key as fallback dedup
-        const tkKey=`${String(row[1]||'').trim()}|${row[2]}|${row[3]}`;
-        existingSeqs.add('tk:'+tkKey);
+        // Normalize: ticker(uppercase) | qty(int) | price(4dp)
+        const tk=String(row[1]||'').trim().toUpperCase();
+        const qt=parseInt(row[2])||0;
+        const pr=parseFloat(row[3])||0;
+        existingKeys.add(`${tk}|${qt}|${pr.toFixed(4)}`);
+        console.log(`  existing row ${i}: seq=${seq} tk=${tk} qty=${qt} price=${pr.toFixed(4)} cols=${row.length}`);
       }
       const existingCount=dateBlockEnd-dateBlockStart;
-      console.log(`${g.broker} ${g.date}: existing block rows ${dateBlockStart}-${dateBlockEnd-1} (${existingCount} rows), seqs:`, [...existingSeqs]);
+      console.log(`${g.broker} ${g.date}: block rows ${dateBlockStart}-${dateBlockEnd-1} (${existingCount}), seqs:[${[...existingSeqs]}], keys:[${[...existingKeys]}]`);
 
       const newRows=g.rows.filter(r=>{
-        if(existingSeqs.has(String(r.seq)))return false;
-        // Fallback: check ticker+qty+price
-        const tkKey='tk:'+`${r.ticker}|${r.qty}|${r.price}`;
-        if(existingSeqs.has(tkKey))return false;
+        const seqStr=String(r.seq);
+        if(existingSeqs.has(seqStr)){console.log(`  import seq ${seqStr} ${r.ticker}: matched by seq`);return false}
+        const key=`${r.ticker}|${r.qty}|${r.price.toFixed(4)}`;
+        if(existingKeys.has(key)){console.log(`  import seq ${seqStr} ${r.ticker}: matched by key ${key}`);return false}
+        console.log(`  import seq ${seqStr} ${r.ticker}: NEW (key=${key})`);
         return true;
       });
       if(newRows.length===0){
