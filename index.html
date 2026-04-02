@@ -454,6 +454,7 @@ function switchTab(p){
   document.getElementById('p-'+p).classList.add('on');
   if(p==='history'){
     document.getElementById('navHistory').style.display='';
+    showHistory(null); // auto-refresh
   }
 }
 
@@ -650,17 +651,23 @@ function populateInitCashFields(){
 // Three separate refresh functions
 async function refreshData(){
   if(!SHEET_ID||!SA_KEY){toast('Google Sheets 설정을 완료하세요','err');return}
-  toast('📡 데이터 불러오는 중...','ok');
+  toastPersist('📡 데이터 불러오는 중...','ok');
   await loadAllTransactions();
   saveCache();
   saveDataTimestamp();
   populateInitCashFields();
+  // Load daily_value from Sheet
+  if(SHEET_ID&&SA_KEY){
+    try{
+      const fromSheet=await loadDailyValuesFromSheet();
+      if(Object.keys(fromSheet).length>0){dailyValueCache={...(dailyValueCache||{}),...fromSheet};saveDVCache()}
+    }catch(e){}
+  }
   computeOverview();
   renderOverview();
   // Trigger chart recompute if chart tab is active or has been viewed
   if(lastDailyValues){
     lastDailyValues=null;
-    dailyValueCache=null;
     historyPriceCache={};
     localStorage.removeItem('dv_tx_hash');
   }
@@ -670,7 +677,7 @@ async function refreshData(){
 async function refreshPrices(){
   const tickers=getHeldTickers();
   if(!tickers.length){toast('보유 종목 없음','err');return}
-  toast('💲 가격 불러오는 중...','ok');
+  toastPersist('💲 가격 불러오는 중...','ok');
 
   // Step 1: Fetch live prices from FMP (needed for today's daily_value row)
   if(FMP_KEY){
@@ -4687,6 +4694,8 @@ function fmtDate(d){d=String(d);return d.length===6?`20${d.slice(0,2)}-${d.slice
 function fmtUSD(n){return(n>=0?'':'-')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function addLog(el,msg,cls=''){const d=document.createElement('div');d.className=cls;d.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;el.appendChild(d);el.scrollTop=el.scrollHeight}
 function toast(msg,type='ok'){const el=document.getElementById('toast');el.textContent=msg;el.className=`toast ${type} show`;setTimeout(()=>el.classList.remove('show'),2800)}
+function toastPersist(msg,type='ok'){const el=document.getElementById('toast');el.textContent=msg;el.className=`toast ${type} show`}
+function toastHide(){document.getElementById('toast').classList.remove('show')}
 </script>
 </body>
 </html>
