@@ -384,7 +384,11 @@ const CACHE_KEY_DATA_TS='cache_dataTimestamp';
 
 // ================ INIT ================
 document.addEventListener('DOMContentLoaded',async()=>{
-  document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.p)));
+  document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{
+    const p=b.dataset.p;
+    switchTab(p);
+    if(p==='history')showHistory(null);
+  }));
   updateVerInfo();
   loadConfig();
   await restoreCache();
@@ -454,9 +458,11 @@ function switchTab(p){
   document.getElementById('p-'+p).classList.add('on');
   if(p==='history'){
     document.getElementById('navHistory').style.display='';
-    showHistory(null); // auto-refresh
   }
 }
+
+// Wire nav buttons: history gets auto-refresh on click
+// (handled in main DOMContentLoaded above)
 
 // ================ CONFIG ================
 function loadConfig(){
@@ -3968,19 +3974,24 @@ function showHistory(ticker){
     const el=document.getElementById('historyContent');
     const titleEl=document.getElementById('historyTitle');
 
+    // Render from cached data immediately if available
+    if(allTransactions.length>0){
+      _renderFullHistory(el,titleEl);
+    }else{
+      el.innerHTML='<p style="color:var(--text2);text-align:center;padding:16px">거래 내역이 없습니다. Data를 불러오세요.</p>';
+    }
+
+    // Refresh from Sheet in background
     if(SHEET_ID&&SA_KEY){
-      el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 불러오는 중...</p>';
       loadAllTransactions().then(()=>{
-        computeOverview(); // refresh overview data with latest transactions
-        _renderFullHistory(el,titleEl);
-      });
-      return;
+        computeOverview();
+        // Only re-render if still on history tab
+        const histPanel=document.getElementById('p-history');
+        if(histPanel&&histPanel.classList.contains('on')){
+          _renderFullHistory(el,titleEl);
+        }
+      }).catch(()=>{});
     }
-    if(allTransactions.length===0){
-      el.innerHTML='<p style="color:var(--text2);text-align:center;padding:16px">거래 내역이 없습니다</p>';
-      return;
-    }
-    _renderFullHistory(el,titleEl);
 
   }
 }
@@ -4052,7 +4063,6 @@ function _renderFullHistory(el,titleEl){
     }
     html+=`</table></div>`;
     el.innerHTML=html;
-    switchTab('history');
 }
 
 // historyPriceCache defined above (line ~886)
