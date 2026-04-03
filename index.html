@@ -2347,9 +2347,9 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   }
   const dash='<span style="color:var(--text3)">—</span>';
 
-  const fund=cachedFundamentals[ticker];
-  // Only show fund info if this ticker (or its underlying) is in the configured fund tickers list
   const fundTk=getFundTicker(ticker)||ticker;
+  const fund=cachedFundamentals[ticker]||cachedFundamentals[fundTk];
+  // Only show fund info if this ticker (or its underlying) is in the configured fund tickers list
   const isFundTarget=fundTickerList.length===0||fundTickerList.includes(ticker)||fundTickerList.includes(fundTk);
 
   // Fiscal label for top row
@@ -2611,8 +2611,8 @@ function renderWatchlist(){
 
   // Shared: compute PER/TP cells for a ticker (also used by Overview col4)
   function computeFundCells(tk){
-    const fund=cachedFundamentals[tk];
     const ftk=getFundTicker(tk)||tk;
+    const fund=cachedFundamentals[tk]||cachedFundamentals[ftk];
     const isFundTarget=fundTickerList.length===0||fundTickerList.includes(tk)||fundTickerList.includes(ftk);
     const hist=(fundHistory[ftk]||[]);
     let perCell='<span class="wl-muted">—</span>';
