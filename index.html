@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Sunghoon's Portfolio Manager</title>
+<title>Sunghoon's Portfolio Manager v4</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsrsasign/11.1.0/jsrsasign-all-min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -132,6 +132,22 @@ table.t tr:hover td{background:var(--accentBg)}
 .spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* Watchlist */
+.wl-section{margin-bottom:16px}
+.wl-section-hdr{font-size:13px;font-weight:700;color:var(--accent);padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;border-bottom:none}
+.wl-tbl{width:100%;border-collapse:collapse;font:12px 'JetBrains Mono',monospace;background:var(--surface);border:1px solid var(--border);border-radius:0 0 var(--radius) var(--radius);overflow:hidden}
+.wl-tbl th{padding:5px 8px;font-size:10px;color:var(--text3);font-weight:500;text-align:right;white-space:nowrap;background:var(--surface2);border-bottom:1px solid var(--border);position:sticky;top:0}
+.wl-tbl th:first-child{text-align:left}
+.wl-tbl td{padding:6px 8px;text-align:right;white-space:nowrap;border-bottom:1px solid rgba(45,58,92,.3)}
+.wl-tbl td:first-child{text-align:left;font-weight:600;color:var(--text)}
+.wl-tbl tr{cursor:pointer;transition:background .1s}
+.wl-tbl tr:hover{background:var(--surface2)}
+.wl-tbl tr.wl-noheld td:first-child{color:var(--text3)}
+.wl-arrow{font-size:9px;margin:0 1px}
+.wl-up{color:#fff;font-weight:600}
+.wl-dn{color:#ef5350;font-weight:600}
+.wl-muted{color:var(--text3)}
+
 @media(max-width:640px){
   .g2,.g3,.g4{grid-template-columns:1fr}
   .summary-grid{grid-template-columns:1fr}
@@ -139,6 +155,8 @@ table.t tr:hover td{background:var(--accentBg)}
   table.t th,table.t td{padding:5px 5px}
   nav button{padding:8px 10px;font-size:11px}
   .hold-grid,.hold-hdr{grid-template-columns:repeat(3,1fr)}
+  .wl-tbl{font-size:10px}
+  .wl-tbl th,.wl-tbl td{padding:4px 5px}
 }
 </style>
 </head>
@@ -152,6 +170,7 @@ table.t tr:hover td{background:var(--accentBg)}
 
   <nav id="nav">
     <button class="on" data-p="overview">📊 Overview</button>
+    <button data-p="watch">🔍 Watch</button>
     <button data-p="history" id="navHistory">📜 History</button>
     <button data-p="import">📥 +File</button>
     <button data-p="setup">⚙️ 설정</button>
@@ -214,6 +233,18 @@ table.t tr:hover td{background:var(--accentBg)}
       </div>
     </div>
     <div id="chartContent" style="padding-bottom:40px"><p style="color:var(--text2);text-align:center;padding:32px">로딩 중...</p></div>
+  </div>
+
+  <!-- ==================== WATCHLIST ==================== -->
+  <div id="p-watch" class="panel">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <span style="font-size:14px;font-weight:600">🔍 Watchlist</span>
+      <button class="btn btn-s btn-sm" onclick="renderWatchlist()" title="새로고침">🔄</button>
+    </div>
+    <div style="margin-bottom:12px">
+      <input id="watchInput" type="text" placeholder="BigTech: nvda, avgo,  Rising: mu, sndk,  Elec: gev, cat" style="width:100%;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font:13px 'JetBrains Mono',monospace;outline:none" spellcheck="false">
+    </div>
+    <div id="watchContent"></div>
   </div>
 
   <!-- ==================== FULL TRANSACTION HISTORY ==================== -->
@@ -387,6 +418,8 @@ document.addEventListener('DOMContentLoaded',async()=>{
   document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.p)));
   updateVerInfo();
   loadConfig();
+  loadWatchInput();
+  document.getElementById('watchInput').addEventListener('keydown',e=>{if(e.key==='Enter')renderWatchlist()});
   await restoreCache();
   updateDataInfo();
   updatePriceInfo();
@@ -454,6 +487,9 @@ function switchTab(p){
   document.getElementById('p-'+p).classList.add('on');
   if(p==='history'){
     document.getElementById('navHistory').style.display='';
+  }
+  if(p==='watch'&&cachedOverviewData){
+    renderWatchlist();
   }
 }
 
@@ -2482,6 +2518,175 @@ function sumCard(label,value,sub,cls=''){
 }
 function sumCard2(label,value,right,cls=''){
   return`<div class="sum-card"><div class="label">${label}</div><div style="display:flex;align-items:baseline;gap:6px"><div class="value ${cls}">${value}</div><div class="sub" style="margin-top:0">${right}</div></div></div>`;
+}
+
+// ================ WATCHLIST ================
+const WATCH_STORAGE_KEY='watch_input';
+
+function loadWatchInput(){
+  const saved=localStorage.getItem(WATCH_STORAGE_KEY);
+  if(saved){document.getElementById('watchInput').value=saved}
+}
+
+function parseWatchInput(text){
+  // "BigTech: nvda, avgo,  Rising: mu, sndk, cohr,  Elec: gev, cat"
+  // Split by "Word:" pattern — each section starts with a word followed by colon
+  const sections=[];
+  // Match "SectionName:" followed by comma-separated tickers until next "SectionName:" or end
+  const re=/([A-Za-z0-9_\-\/]+)\s*:\s*/g;
+  const splits=[];
+  let m;
+  while((m=re.exec(text))!==null)splits.push({name:m[1],idx:m.index+m[0].length});
+  if(splits.length===0)return sections;
+  for(let i=0;i<splits.length;i++){
+    const end=i+1<splits.length?splits[i+1].idx-splits[i+1].name.length-1:text.length;
+    const chunk=text.slice(splits[i].idx,end).trim().replace(/,\s*$/,'');
+    const tickers=chunk.split(/[\s,]+/).map(t=>t.trim().toUpperCase()).filter(t=>t);
+    sections.push({name:splits[i].name,tickers});
+  }
+  return sections;
+}
+
+function renderWatchlist(){
+  const input=document.getElementById('watchInput').value.trim();
+  localStorage.setItem(WATCH_STORAGE_KEY,input);
+  const el=document.getElementById('watchContent');
+  if(!input){el.innerHTML='<p style="color:var(--text2);text-align:center;padding:24px">섹션:종목 형식으로 입력하세요</p>';return}
+
+  const sections=parseWatchInput(input);
+  if(sections.length===0){el.innerHTML='<p style="color:var(--text2);text-align:center;padding:24px">파싱 실패 — "Section: tick1, tick2, Section2: tick3" 형식</p>';return}
+
+  // Build merged holdings lookup from cachedOverviewData (same as Overview "all" filter)
+  const merged={};
+  const holdMap=cachedOverviewData?cachedOverviewData.holdMap:{};
+  const allHoldings=cachedOverviewData?cachedOverviewData.allHoldings:[];
+  for(const h of allHoldings){
+    if(!merged[h.ticker])merged[h.ticker]={qty:0,purchasedAmt:0,marketValue:0,unrealizedPL:0,currentPrice:h.currentPrice};
+    const mg=merged[h.ticker];
+    mg.qty+=h.qty;mg.purchasedAmt+=h.purchasedAmt;mg.marketValue+=h.marketValue;mg.unrealizedPL+=h.unrealizedPL;
+    mg.currentPrice=h.currentPrice;
+  }
+  // Realized P/L lookup (merged across brokers)
+  const realLookup={};
+  for(const hv of Object.values(holdMap)){
+    if(!realLookup[hv.ticker])realLookup[hv.ticker]={realPL:0,realPLYtd:0};
+    realLookup[hv.ticker].realPL+=hv.realizedPL;
+    realLookup[hv.ticker].realPLYtd+=hv.realizedPLThisYear;
+  }
+
+  function arrow(){return'<span class="wl-arrow">›</span>'}
+  function valCls(now,prev){
+    if(prev==null)return 'wl-muted';
+    if(now>prev*1.001)return 'wl-up';
+    if(now<prev*0.999)return 'wl-dn';
+    return 'wl-muted';
+  }
+  function fmtPL(v){
+    const cls=v>=0?'c-up':'c-dn';
+    return`<span class="${cls}">${fmtUSD(v)}</span>`;
+  }
+
+  let html='';
+  for(const sec of sections){
+    html+=`<div class="wl-section">`;
+    html+=`<div class="wl-section-hdr">${sec.name} (${sec.tickers.length})</div>`;
+    html+=`<div class="tbl-wrap"><table class="wl-tbl"><thead><tr>
+      <th>Ticker</th><th>Price</th><th>Qty</th><th>Value</th><th>Cost</th><th>P/L</th>
+      <th>Real(YTD)</th><th>Real(Tot)</th>
+      <th>PER now${arrow()}1w${arrow()}1m</th>
+      <th>TP now${arrow()}1w${arrow()}1m</th>
+    </tr></thead><tbody>`;
+
+    for(const tk of sec.tickers){
+      const mg=merged[tk];
+      const rl=realLookup[tk]||{realPL:0,realPLYtd:0};
+      const price=cachedPrices[tk]?cachedPrices[tk].current:0;
+      const qty=mg?mg.qty:0;
+      const mktVal=mg?mg.marketValue:0;
+      const cost=mg?mg.purchasedAmt:0;
+      const upl=mg?mg.unrealizedPL:0;
+      const noHeld=qty===0;
+
+      // Fund data: PER and TP with 1w/1m history
+      const fund=cachedFundamentals[tk];
+      const ftk=getFundTicker(tk)||tk;
+      const isFundTarget=fundTickerList.length===0||fundTickerList.includes(tk)||fundTickerList.includes(ftk);
+      const hist=(fundHistory[ftk]||[]);
+
+      let perCell='<span class="wl-muted">—</span>';
+      let tpCell='<span class="wl-muted">—</span>';
+
+      if(fund&&isFundTarget&&hist.length>=1){
+        const etD1d=etDateStr(1);
+        const etD1w=etDateStr(7);
+        const etD8d=etDateStr(8);
+        const etD1m=etDateStr(30);
+        function findInRange(from,to){
+          for(const h of hist){if(h.date>=from&&h.date<=to)return h}
+          return null;
+        }
+        const e1w=findInRange(etD1w,etD1d);
+        const e1m=findInRange(etD1m,etD8d);
+
+        // PER (from pe12m = price-based normalized PER)
+        if(fund.pe12m!=null){
+          const nowPe=fund.pe12m;
+          // Reconstruct pe12m for historical entries: price_then / epsNorm
+          // But we don't have historical prices stored in fundHistory.
+          // Instead use epsNorm ratio: pe_then ≈ pe_now * (epsNorm_now / epsNorm_then)
+          // because pe12m = price / epsNorm, so pe_1w = price_1w / eps_1w
+          // We approximate: if EPS changed, PER changed inversely (price ~constant over 1w)
+          // Actually let's compute from epsNorm: pe ≈ currentPrice / epsNorm
+          const epsNow=fund.epsNorm;
+          const eps1w=e1w?.epsNorm;
+          const eps1m=e1m?.epsNorm;
+          const pe1w=(eps1w&&eps1w>0)?(price/eps1w):null;
+          const pe1m=(eps1m&&eps1m>0)?(price/eps1m):null;
+
+          // For "now" PER, just use fund.pe12m directly
+          const nowCls=valCls(epsNow,eps1w); // EPS up → PER down → good, but show PER direction
+          // Actually: PER lower is better. Highlight PER direction: if PER went down (EPS up), that's "up" (good)
+          // Let's just show raw PER values with color based on PER change direction (lower=green)
+          const perNowCls=pe1w!=null?(nowPe<pe1w*0.999?'wl-up':nowPe>pe1w*1.001?'wl-dn':'wl-muted'):'wl-muted';
+          let parts=[`<span class="${perNowCls}">${nowPe.toFixed(1)}</span>`];
+          parts.push(pe1w!=null?`<span class="wl-muted">${pe1w.toFixed(1)}</span>`:`<span class="wl-muted">—</span>`);
+          parts.push(pe1m!=null?`<span class="wl-muted">${pe1m.toFixed(1)}</span>`:`<span class="wl-muted">—</span>`);
+          perCell=parts.join(arrow());
+        }
+
+        // Target Price
+        if(fund.targetPrice!=null){
+          const nowTgt=fund.targetPrice;
+          const tgt1w=e1w?.targetPrice;
+          const tgt1m=e1m?.targetPrice;
+          const tgtCls=valCls(nowTgt,tgt1w);
+          // Gap% from current price
+          let gapStr='';
+          if(price>0){const gap=((nowTgt-price)/price*100);gapStr=` <span class="wl-muted" style="font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`}
+          let parts=[`<span class="${tgtCls}">$${nowTgt.toFixed(0)}</span>${gapStr}`];
+          parts.push(tgt1w!=null?`<span class="wl-muted">$${tgt1w.toFixed(0)}</span>`:`<span class="wl-muted">—</span>`);
+          parts.push(tgt1m!=null?`<span class="wl-muted">$${tgt1m.toFixed(0)}</span>`:`<span class="wl-muted">—</span>`);
+          tpCell=parts.join(arrow());
+        }
+      }
+
+      const rowCls=noHeld?'wl-noheld':'';
+      html+=`<tr class="${rowCls}" onclick="showHistory('${tk}')">
+        <td>${tk}</td>
+        <td>${price>0?'$'+price.toFixed(2):'—'}</td>
+        <td>${qty>0?qty:'<span class="wl-muted">—</span>'}</td>
+        <td>${qty>0?fmtUSD(mktVal):'<span class="wl-muted">—</span>'}</td>
+        <td>${qty>0?fmtUSD(cost):'<span class="wl-muted">—</span>'}</td>
+        <td>${qty>0?fmtPL(upl):'<span class="wl-muted">—</span>'}</td>
+        <td>${fmtPL(rl.realPLYtd)}</td>
+        <td>${fmtPL(rl.realPL)}</td>
+        <td>${perCell}</td>
+        <td>${tpCell}</td>
+      </tr>`;
+    }
+    html+=`</tbody></table></div></div>`;
+  }
+  el.innerHTML=html;
 }
 
 // ================ TOTAL VALUE CHART ================
