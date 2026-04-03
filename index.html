@@ -3936,7 +3936,14 @@ function showHistory(ticker){
     html+=`<div class="tbl-wrap"><table class="t"><tr><th>날짜</th><th>증권사</th><th>매매</th><th>수량</th><th>단가</th><th>금액</th><th>실현</th></tr>`;
     for(const date of dates){
       const dTxs=dateGroups[date];
-      html+=`<tr style="background:var(--surface2)"><td colspan="7" style="padding:8px;font-weight:600;color:var(--text)">${fmtDate(date)} <span style="font-weight:400;color:var(--text2);font-size:11px">(${dTxs.length}건)</span></td></tr>`;
+      const buys=dTxs.filter(t=>t.qty>0);
+      const sells=dTxs.filter(t=>t.qty<0);
+      const buyAmt=buys.reduce((s,t)=>s+t.qty*t.price,0);
+      const sellAmt=sells.reduce((s,t)=>s+Math.abs(t.qty)*t.price,0);
+      let daySummary=[];
+      if(buyAmt>0)daySummary.push(`<span class="c-buy">매수 ${fmtUSD(buyAmt)}</span>`);
+      if(sellAmt>0)daySummary.push(`<span class="c-sell">매도 ${fmtUSD(sellAmt)}</span>`);
+      html+=`<tr style="background:var(--surface2)"><td colspan="7" style="padding:8px;font-weight:600;color:var(--text)">${fmtDate(date)} <span style="font-weight:400;color:var(--text2);font-size:11px">(${dTxs.length}건)</span> <span style="font-weight:400;font-size:11px;margin-left:8px">${daySummary.join(' · ')}</span></td></tr>`;
       for(const tx of dTxs){
         const cls=tx.qty>0?'c-buy':'c-sell';
         const side=tx.qty>0?'매수':'매도';
