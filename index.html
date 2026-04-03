@@ -241,8 +241,9 @@ table.t tr:hover td{background:var(--accentBg)}
       <span style="font-size:14px;font-weight:600">🔍 Watchlist</span>
       <button class="btn btn-s btn-sm" onclick="renderWatchlist()" title="새로고침">🔄</button>
     </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:6px;line-height:1.5">Section title: Capital letter start. Tickers: all lowercase, comma-separated, end with '<b style="color:var(--text2)">.</b>' (period).</div>
     <div style="margin-bottom:12px">
-      <input id="watchInput" type="text" placeholder="BigTech: nvda, avgo,  Rising: mu, sndk,  Elec: gev, cat" style="width:100%;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font:13px 'JetBrains Mono',monospace;outline:none" spellcheck="false">
+      <input id="watchInput" type="text" placeholder="BigTech: nvda, avgo. Rising: mu, sndk, cohr. Elec: gev, cat." style="width:100%;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font:13px 'JetBrains Mono',monospace;outline:none" spellcheck="false">
     </div>
     <div id="watchContent"></div>
   </div>
@@ -2329,7 +2330,7 @@ function holdingsHeader(){
     <div><span>평균 / 현재가 (전일대비; 전주대비)</span><span>평가손익</span></div>
     <div><span>평가금액</span><span>매입금액</span></div>
     <div><span>P/E 12m (YOY%)</span><span>Rev 12m (YOY%)</span></div>
-    <div><span>EPS12m now&gt;1w&gt;1m</span></div>
+    <div><span>PER now&gt;1w&gt;1m</span><span>EPS now&gt;1w&gt;1m</span></div>
     <div><span>TP now&gt;1w&gt;1m</span><span>B/H/S</span></div>
     <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
   </div>`;
@@ -2355,7 +2356,8 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   let fiscalLabel='';
   // Col3: P/E row + Revenue row
   let peRow=dash, revRow=dash;
-  // Col4: EPS estimate now > 1w > 1m
+  // Col4: PER now > 1w > 1m (upper) + EPS estimate now > 1w > 1m (lower)
+  let perCol=dash;
   let epsCol=dash;
   // Col5: Target price now > 1w > 1m
   let targetCol=dash;
@@ -2417,6 +2419,28 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         epsCol=parts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
       }
 
+      // PER now > 1w > 1m (use underlying's price for leveraged tickers)
+      if(fund.pe12m!=null){
+        const nowPe=fund.pe12m;
+        const undPrice=fund.price||0;
+        const epsHist1w=e1w?.epsNorm;
+        const epsHist1m=e1m?.epsNorm;
+        const pe1w=(epsHist1w&&epsHist1w>0&&undPrice>0)?(undPrice/epsHist1w):null;
+        const pe1m=(epsHist1m&&epsHist1m>0&&undPrice>0)?(undPrice/epsHist1m):null;
+        // PER lower = better → green when decreased
+        function perStyle(now,prev){
+          if(prev==null)return 'color:var(--text3)';
+          if(now<prev*0.999)return 'color:#fff;font-weight:600'; // decreased → good
+          if(now>prev*1.001)return 'color:#ef5350;font-weight:600'; // increased → bad
+          return 'color:var(--text3)';
+        }
+        const nowStyle=perStyle(nowPe,pe1w);
+        let pParts=[`<span style="${nowStyle}">${nowPe.toFixed(1)}</span>`];
+        pParts.push(pe1w!=null?`<span style="color:var(--text3)">${pe1w.toFixed(1)}</span>`:`<span style="color:var(--text3)">—</span>`);
+        pParts.push(pe1m!=null?`<span style="color:var(--text3)">${pe1m.toFixed(1)}</span>`:`<span style="color:var(--text3)">—</span>`);
+        perCol=pParts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
+      }
+
       // Target price
       if(fund.targetPrice!=null){
         const nowTgt=fund.targetPrice;
@@ -2468,6 +2492,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         <div class="val">${revRow}</div>
       </div>
       <div>
+        <div class="val">${perCol}</div>
         <div class="val">${epsCol}</div>
       </div>
       <div>
@@ -2529,20 +2554,17 @@ function loadWatchInput(){
 }
 
 function parseWatchInput(text){
-  // "BigTech: nvda, avgo,  Rising: mu, sndk, cohr,  Elec: gev, cat"
-  // Split by "Word:" pattern — each section starts with a word followed by colon
+  // Rule: "SectionTitle: tick1, tick2. NextSection: tick3, tick4."
+  // Section title starts with capital letter, tickers are all lowercase.
+  // Each section's ticker list ends with '.'
   const sections=[];
-  // Match "SectionName:" followed by comma-separated tickers until next "SectionName:" or end
-  const re=/([A-Za-z0-9_\-\/]+)\s*:\s*/g;
-  const splits=[];
+  // Match "CapitalWord(s): tickers." pattern
+  const re=/([A-Z][A-Za-z0-9_\-\/]*(?:\s+[A-Za-z0-9_\-\/]+)*)\s*:\s*([^.]*)\./g;
   let m;
-  while((m=re.exec(text))!==null)splits.push({name:m[1],idx:m.index+m[0].length});
-  if(splits.length===0)return sections;
-  for(let i=0;i<splits.length;i++){
-    const end=i+1<splits.length?splits[i+1].idx-splits[i+1].name.length-1:text.length;
-    const chunk=text.slice(splits[i].idx,end).trim().replace(/,\s*$/,'');
-    const tickers=chunk.split(/[\s,]+/).map(t=>t.trim().toUpperCase()).filter(t=>t);
-    sections.push({name:splits[i].name,tickers});
+  while((m=re.exec(text))!==null){
+    const name=m[1].trim();
+    const tickers=m[2].split(/[\s,]+/).map(t=>t.trim().toUpperCase()).filter(t=>t&&/^[A-Z]/.test(t));
+    if(tickers.length>0)sections.push({name,tickers});
   }
   return sections;
 }
@@ -2554,7 +2576,7 @@ function renderWatchlist(){
   if(!input){el.innerHTML='<p style="color:var(--text2);text-align:center;padding:24px">섹션:종목 형식으로 입력하세요</p>';return}
 
   const sections=parseWatchInput(input);
-  if(sections.length===0){el.innerHTML='<p style="color:var(--text2);text-align:center;padding:24px">파싱 실패 — "Section: tick1, tick2, Section2: tick3" 형식</p>';return}
+  if(sections.length===0){el.innerHTML='<p style="color:var(--text2);text-align:center;padding:24px">파싱 실패 — 위 규칙을 확인하세요</p>';return}
 
   // Build merged holdings lookup from cachedOverviewData (same as Overview "all" filter)
   const merged={};
@@ -2574,7 +2596,7 @@ function renderWatchlist(){
     realLookup[hv.ticker].realPLYtd+=hv.realizedPLThisYear;
   }
 
-  function arrow(){return'<span class="wl-arrow">›</span>'}
+  const arw='<span class="wl-arrow">›</span>';
   function valCls(now,prev){
     if(prev==null)return 'wl-muted';
     if(now>prev*1.001)return 'wl-up';
@@ -2582,8 +2604,58 @@ function renderWatchlist(){
     return 'wl-muted';
   }
   function fmtPL(v){
+    if(v===0)return'<span class="wl-muted">$0</span>';
     const cls=v>=0?'c-up':'c-dn';
     return`<span class="${cls}">${fmtUSD(v)}</span>`;
+  }
+
+  // Shared: compute PER/TP cells for a ticker (also used by Overview col4)
+  function computeFundCells(tk){
+    const fund=cachedFundamentals[tk];
+    const ftk=getFundTicker(tk)||tk;
+    const isFundTarget=fundTickerList.length===0||fundTickerList.includes(tk)||fundTickerList.includes(ftk);
+    const hist=(fundHistory[ftk]||[]);
+    let perCell='<span class="wl-muted">—</span>';
+    let tpCell='<span class="wl-muted">—</span>';
+
+    if(fund&&isFundTarget&&hist.length>=1){
+      const etD1d=etDateStr(1),etD1w=etDateStr(7),etD8d=etDateStr(8),etD1m=etDateStr(30);
+      function findInRange(from,to){for(const h of hist){if(h.date>=from&&h.date<=to)return h}return null}
+      const e1w=findInRange(etD1w,etD1d);
+      const e1m=findInRange(etD1m,etD8d);
+
+      // PER: use underlying's price (fund.price) for consistency
+      // fund.pe12m = underlyingPrice / epsNorm (correct for leveraged too)
+      if(fund.pe12m!=null){
+        const nowPe=fund.pe12m;
+        const undPrice=fund.price||0; // underlying ticker's price
+        const eps1w=e1w?.epsNorm;
+        const eps1m=e1m?.epsNorm;
+        const pe1w=(eps1w&&eps1w>0&&undPrice>0)?(undPrice/eps1w):null;
+        const pe1m=(eps1m&&eps1m>0&&undPrice>0)?(undPrice/eps1m):null;
+        const perNowCls=pe1w!=null?(nowPe<pe1w*0.999?'wl-up':nowPe>pe1w*1.001?'wl-dn':'wl-muted'):'wl-muted';
+        let parts=[`<span class="${perNowCls}">${nowPe.toFixed(1)}</span>`];
+        parts.push(pe1w!=null?`<span class="wl-muted">${pe1w.toFixed(1)}</span>`:`<span class="wl-muted">—</span>`);
+        parts.push(pe1m!=null?`<span class="wl-muted">${pe1m.toFixed(1)}</span>`:`<span class="wl-muted">—</span>`);
+        perCell=parts.join(arw);
+      }
+
+      // Target Price
+      if(fund.targetPrice!=null){
+        const nowTgt=fund.targetPrice;
+        const tgt1w=e1w?.targetPrice;
+        const tgt1m=e1m?.targetPrice;
+        const tgtCls=valCls(nowTgt,tgt1w);
+        const refPrice=fund.price||0;
+        let gapStr='';
+        if(refPrice>0){const gap=((nowTgt-refPrice)/refPrice*100);gapStr=` <span class="wl-muted" style="font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`}
+        let parts=[`<span class="${tgtCls}">$${nowTgt.toFixed(0)}</span>${gapStr}`];
+        parts.push(tgt1w!=null?`<span class="wl-muted">$${tgt1w.toFixed(0)}</span>`:`<span class="wl-muted">—</span>`);
+        parts.push(tgt1m!=null?`<span class="wl-muted">$${tgt1m.toFixed(0)}</span>`:`<span class="wl-muted">—</span>`);
+        tpCell=parts.join(arw);
+      }
+    }
+    return{perCell,tpCell};
   }
 
   let html='';
@@ -2591,11 +2663,13 @@ function renderWatchlist(){
     html+=`<div class="wl-section">`;
     html+=`<div class="wl-section-hdr">${sec.name} (${sec.tickers.length})</div>`;
     html+=`<div class="tbl-wrap"><table class="wl-tbl"><thead><tr>
-      <th>Ticker</th><th>Price</th><th>Qty</th><th>Value</th><th>Cost</th><th>P/L</th>
-      <th>Real(YTD)</th><th>Real(Tot)</th>
-      <th>PER now${arrow()}1w${arrow()}1m</th>
-      <th>TP now${arrow()}1w${arrow()}1m</th>
+      <th>Ticker</th><th>Price</th><th>Qty</th><th>매수</th><th>평가</th><th>손익</th>
+      <th>PER now${arw}1w${arw}1m</th>
+      <th>TP now${arw}1w${arw}1m</th>
+      <th>실현(YTD/Tot)</th>
     </tr></thead><tbody>`;
+
+    let secCost=0,secVal=0,secRealYtd=0,secRealTot=0;
 
     for(const tk of sec.tickers){
       const mg=merged[tk];
@@ -2607,83 +2681,36 @@ function renderWatchlist(){
       const upl=mg?mg.unrealizedPL:0;
       const noHeld=qty===0;
 
-      // Fund data: PER and TP with 1w/1m history
-      const fund=cachedFundamentals[tk];
-      const ftk=getFundTicker(tk)||tk;
-      const isFundTarget=fundTickerList.length===0||fundTickerList.includes(tk)||fundTickerList.includes(ftk);
-      const hist=(fundHistory[ftk]||[]);
+      secCost+=cost;secVal+=mktVal;secRealYtd+=rl.realPLYtd;secRealTot+=rl.realPL;
 
-      let perCell='<span class="wl-muted">—</span>';
-      let tpCell='<span class="wl-muted">—</span>';
-
-      if(fund&&isFundTarget&&hist.length>=1){
-        const etD1d=etDateStr(1);
-        const etD1w=etDateStr(7);
-        const etD8d=etDateStr(8);
-        const etD1m=etDateStr(30);
-        function findInRange(from,to){
-          for(const h of hist){if(h.date>=from&&h.date<=to)return h}
-          return null;
-        }
-        const e1w=findInRange(etD1w,etD1d);
-        const e1m=findInRange(etD1m,etD8d);
-
-        // PER (from pe12m = price-based normalized PER)
-        if(fund.pe12m!=null){
-          const nowPe=fund.pe12m;
-          // Reconstruct pe12m for historical entries: price_then / epsNorm
-          // But we don't have historical prices stored in fundHistory.
-          // Instead use epsNorm ratio: pe_then ≈ pe_now * (epsNorm_now / epsNorm_then)
-          // because pe12m = price / epsNorm, so pe_1w = price_1w / eps_1w
-          // We approximate: if EPS changed, PER changed inversely (price ~constant over 1w)
-          // Actually let's compute from epsNorm: pe ≈ currentPrice / epsNorm
-          const epsNow=fund.epsNorm;
-          const eps1w=e1w?.epsNorm;
-          const eps1m=e1m?.epsNorm;
-          const pe1w=(eps1w&&eps1w>0)?(price/eps1w):null;
-          const pe1m=(eps1m&&eps1m>0)?(price/eps1m):null;
-
-          // For "now" PER, just use fund.pe12m directly
-          const nowCls=valCls(epsNow,eps1w); // EPS up → PER down → good, but show PER direction
-          // Actually: PER lower is better. Highlight PER direction: if PER went down (EPS up), that's "up" (good)
-          // Let's just show raw PER values with color based on PER change direction (lower=green)
-          const perNowCls=pe1w!=null?(nowPe<pe1w*0.999?'wl-up':nowPe>pe1w*1.001?'wl-dn':'wl-muted'):'wl-muted';
-          let parts=[`<span class="${perNowCls}">${nowPe.toFixed(1)}</span>`];
-          parts.push(pe1w!=null?`<span class="wl-muted">${pe1w.toFixed(1)}</span>`:`<span class="wl-muted">—</span>`);
-          parts.push(pe1m!=null?`<span class="wl-muted">${pe1m.toFixed(1)}</span>`:`<span class="wl-muted">—</span>`);
-          perCell=parts.join(arrow());
-        }
-
-        // Target Price
-        if(fund.targetPrice!=null){
-          const nowTgt=fund.targetPrice;
-          const tgt1w=e1w?.targetPrice;
-          const tgt1m=e1m?.targetPrice;
-          const tgtCls=valCls(nowTgt,tgt1w);
-          // Gap% from current price
-          let gapStr='';
-          if(price>0){const gap=((nowTgt-price)/price*100);gapStr=` <span class="wl-muted" style="font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`}
-          let parts=[`<span class="${tgtCls}">$${nowTgt.toFixed(0)}</span>${gapStr}`];
-          parts.push(tgt1w!=null?`<span class="wl-muted">$${tgt1w.toFixed(0)}</span>`:`<span class="wl-muted">—</span>`);
-          parts.push(tgt1m!=null?`<span class="wl-muted">$${tgt1m.toFixed(0)}</span>`:`<span class="wl-muted">—</span>`);
-          tpCell=parts.join(arrow());
-        }
-      }
+      const{perCell,tpCell}=computeFundCells(tk);
 
       const rowCls=noHeld?'wl-noheld':'';
       html+=`<tr class="${rowCls}" onclick="showHistory('${tk}')">
         <td>${tk}</td>
         <td>${price>0?'$'+price.toFixed(2):'—'}</td>
         <td>${qty>0?qty:'<span class="wl-muted">—</span>'}</td>
-        <td>${qty>0?fmtUSD(mktVal):'<span class="wl-muted">—</span>'}</td>
         <td>${qty>0?fmtUSD(cost):'<span class="wl-muted">—</span>'}</td>
+        <td>${qty>0?fmtUSD(mktVal):'<span class="wl-muted">—</span>'}</td>
         <td>${qty>0?fmtPL(upl):'<span class="wl-muted">—</span>'}</td>
-        <td>${fmtPL(rl.realPLYtd)}</td>
-        <td>${fmtPL(rl.realPL)}</td>
         <td>${perCell}</td>
         <td>${tpCell}</td>
+        <td>${fmtPL(rl.realPLYtd)} / ${fmtPL(rl.realPL)}</td>
       </tr>`;
     }
+
+    // Summary row
+    const secUpl=secVal-secCost;
+    html+=`<tr style="background:var(--surface2);font-weight:600;border-top:1px solid var(--border)">
+      <td style="color:var(--text2)">Total</td>
+      <td></td><td></td>
+      <td>${fmtUSD(secCost)}</td>
+      <td>${fmtUSD(secVal)}</td>
+      <td>${fmtPL(secUpl)}</td>
+      <td></td><td></td>
+      <td>${fmtPL(secRealYtd)} / ${fmtPL(secRealTot)}</td>
+    </tr>`;
+
     html+=`</tbody></table></div></div>`;
   }
   el.innerHTML=html;
