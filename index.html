@@ -3941,8 +3941,8 @@ function showHistory(ticker){
       const buyAmt=buys.reduce((s,t)=>s+t.qty*t.price,0);
       const sellAmt=sells.reduce((s,t)=>s+Math.abs(t.qty)*t.price,0);
       let daySummary=[];
-      if(buyAmt>0)daySummary.push(`<span class="c-buy">매수 ${fmtUSD(buyAmt)}</span>`);
-      if(sellAmt>0)daySummary.push(`<span class="c-sell">매도 ${fmtUSD(sellAmt)}</span>`);
+      if(buys.length>0){const buyQty=buys.reduce((s,t)=>s+t.qty,0);daySummary.push(`<span class="c-buy">매수 (+${buyQty}) ${fmtUSD(buyAmt)}</span>`)}
+      if(sells.length>0){const sellQty=sells.reduce((s,t)=>s+Math.abs(t.qty),0);daySummary.push(`<span class="c-sell">매도 (-${sellQty}) ${fmtUSD(sellAmt)}</span>`)}
       html+=`<tr style="background:var(--surface2)"><td colspan="7" style="padding:8px;font-weight:600;color:var(--text)">${fmtDate(date)} <span style="font-weight:400;color:var(--text2);font-size:11px">(${dTxs.length}건)</span> <span style="font-weight:400;font-size:11px;margin-left:8px">${daySummary.join(' · ')}</span></td></tr>`;
       for(const tx of dTxs){
         const cls=tx.qty>0?'c-buy':'c-sell';
