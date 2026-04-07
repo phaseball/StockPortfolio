@@ -19,7 +19,7 @@
 }
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Noto Sans KR',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-.app{max-width:960px;margin:0 auto;padding:12px}
+.app{max-width:1120px;margin:0 auto;padding:12px}
 .header{display:flex;align-items:center;gap:12px;padding:16px 4px 12px}
 .logo{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--samsung),var(--kiwoom));display:flex;align-items:center;justify-content:center;font-size:18px}
 .header h1{font-size:18px;font-weight:700;letter-spacing:-.3px}
@@ -100,18 +100,18 @@ table.t tr:hover td{background:var(--accentBg)}
 .fbtn:hover:not(.on){background:var(--surface2);color:var(--text)}
 
 /* Holdings header - sticky */
-.hold-hdr{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.2fr 1.2fr 0.8fr;gap:2px;font-size:10px;color:var(--text3);padding:6px 12px;background:var(--bg);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border);margin-bottom:4px}
+.hold-hdr{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.6fr 1.8fr 0.8fr;gap:2px;font-size:10px;color:var(--text3);padding:6px 12px;background:var(--bg);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border);margin-bottom:4px}
 .hold-hdr div{display:flex;flex-direction:column;gap:2px}
 .hold-hdr div:last-child{margin-left:16px}
 
 /* Holdings card v2 */
 .hold-row{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
 .hold-row:hover{border-color:var(--accent)}
-.hold-top{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.2fr 1.2fr 0.8fr;gap:2px;align-items:baseline;margin-bottom:6px}
+.hold-top{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.6fr 1.8fr 0.8fr;gap:2px;align-items:baseline;margin-bottom:6px}
 .hold-ticker{font-size:15px;font-weight:700;color:var(--text3);font-family:'JetBrains Mono',monospace}
 .hold-qty{font-size:12px;color:var(--text2);text-align:right;grid-column:4/7}
 .hold-fiscal{font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace}
-.hold-grid{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.2fr 1.2fr 0.8fr;gap:2px;font-size:11px}
+.hold-grid{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.6fr 1.8fr 0.8fr;gap:2px;font-size:11px}
 .hold-grid .lbl{color:var(--text3);font-size:10px}
 .hold-grid .val{font-family:'JetBrains Mono',monospace;font-size:12px}
 .hold-grid>div:last-child{margin-left:16px}
@@ -570,9 +570,10 @@ async function saveInitCash(){
   if((!ss&&!kw&&!mr)||!SHEET_ID||!SA_KEY){toast('금액과 Sheet 설정을 확인하세요','err');return}
   try{
     const token=await getAccessToken();
-    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A1:B3?valueInputOption=USER_ENTERED`;
+    const wl=document.getElementById('watchInput').value||'';
+    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A1:B4?valueInputOption=USER_ENTERED`;
     await fetch(url,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-      body:JSON.stringify({range:'config!A1:B3',values:[['initial_cash_삼성',ss||0],['initial_cash_키움',kw||0],['initial_cash_메리츠',mr||0]]})});
+      body:JSON.stringify({range:'config!A1:B4',values:[['initial_cash_삼성',ss||0],['initial_cash_키움',kw||0],['initial_cash_메리츠',mr||0],['watchlist',wl]]})});
     initialCashSS=ss||0;initialCashKW=kw||0;initialCashMR=mr||0;
     toast('Initial cash 저장 완료','ok');
   }catch(e){toast('저장 실패: '+e.message,'err')}
@@ -710,10 +711,23 @@ async function refreshData(){
   toast('✅ 데이터 갱신 완료','ok');
 }
 
+function getAllPriceTickers(){
+  const set=new Set();
+  // 1. Held tickers
+  for(const t of getHeldTickers())set.add(t);
+  // 2. Fund tickers list + their underlyings
+  for(const t of fundTickerList){
+    set.add(t);
+    const u=getFundTicker(t);
+    if(u)set.add(u);
+  }
+  return[...set];
+}
+
 async function refreshPrices(){
-  const tickers=getHeldTickers();
-  if(!tickers.length){toast('보유 종목 없음','err');return}
-  toastPersist('💲 가격 불러오는 중...','ok');
+  const tickers=getAllPriceTickers();
+  if(!tickers.length){toast('대상 종목 없음','err');return}
+  toastPersist(`💲 가격 불러오는 중... (${tickers.length}종목)`,'ok');
 
   // Step 1: Fetch live prices from FMP (needed for today's daily_value row)
   if(FMP_KEY){
@@ -1521,36 +1535,12 @@ async function refreshFundamentals(){
         console.log(`${tk} using eps_actuals from sheet:`,epsActualsMap[tk]);
       }
 
-      // Price: try cached price for this ticker, or find from Yahoo quote
+      // Price: use cached price (user clicks Price before Fund)
       let price=0;
       if(cachedPrices[tk]&&cachedPrices[tk].current){
         price=cachedPrices[tk].current;
-      }else{
-        // For underlying tickers (e.g. NVDA from NVDL), fetch price
-        // Try FMP quote first
-        try{
-          const q=await fmpGet(`profile?symbol=${tk}`);
-          if(Array.isArray(q)&&q[0]&&q[0].price)price=q[0].price;
-          else if(q&&q.price)price=q.price;
-        }catch(e){}
-        // Fallback to Yahoo
-        if(price===0){
-          try{
-            const yUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?interval=1d&range=1d`;
-            const proxies=[u=>`https://corsproxy.io/?${encodeURIComponent(u)}`];
-            for(const mkP of proxies){
-              try{
-                const r=await fetch(mkP(yUrl),{signal:AbortSignal.timeout(8000)});
-                if(!r.ok)continue;
-                const d=await r.json();
-                price=d.chart?.result?.[0]?.meta?.regularMarketPrice||0;
-                if(price>0)break;
-              }catch(e){continue}
-            }
-          }catch(e){}
-        }
-        console.log(`${tk} price fetched: ${price}`);
       }
+      console.log(`${tk} price from cache: ${price}`);
 
       // --- Normalize EPS & Revenue to Dec 2026 via linear interpolation ---
       let epsNorm=null,epsPrevNorm=null,revNorm=null,revPrevNorm=null;
@@ -1926,7 +1916,7 @@ async function loadAllTransactions(){
   }
   // Load initial cash per broker from config tab
   try{
-    const d=await sheetsGet('config!A1:B3');
+    const d=await sheetsGet('config!A1:B10');
     if(d.values){
       for(const row of d.values){
         if(row[0]==='initial_cash_삼성')initialCashSS=parseFloat(row[1])||0;
@@ -1934,6 +1924,11 @@ async function loadAllTransactions(){
         if(row[0]==='initial_cash_메리츠')initialCashMR=parseFloat(row[1])||0;
         // Legacy: single initial_cash
         if(row[0]==='initial_cash'){initialCashSS=parseFloat(row[1])||0;initialCashKW=0}
+        if(row[0]==='watchlist'){
+          const wl=row[1]||'';
+          document.getElementById('watchInput').value=wl;
+          localStorage.setItem('watch_input',wl);
+        }
       }
     }
   }catch(e){}
@@ -2548,6 +2543,16 @@ function sumCard2(label,value,right,cls=''){
 // ================ WATCHLIST ================
 const WATCH_STORAGE_KEY='watch_input';
 
+async function saveWatchlistToSheet(text){
+  if(!SHEET_ID||!SA_KEY)return;
+  try{
+    const token=await getAccessToken();
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A4:B4?valueInputOption=USER_ENTERED`,{
+      method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({range:'config!A4:B4',values:[['watchlist',text]]})});
+  }catch(e){console.warn('watchlist save failed:',e)}
+}
+
 function loadWatchInput(){
   const saved=localStorage.getItem(WATCH_STORAGE_KEY);
   if(saved){document.getElementById('watchInput').value=saved}
@@ -2572,6 +2577,7 @@ function parseWatchInput(text){
 function renderWatchlist(){
   const input=document.getElementById('watchInput').value.trim();
   localStorage.setItem(WATCH_STORAGE_KEY,input);
+  saveWatchlistToSheet(input);
   const el=document.getElementById('watchContent');
   if(!input){el.innerHTML='<p style="color:var(--text2);text-align:center;padding:24px">섹션:종목 형식으로 입력하세요</p>';return}
 
@@ -2616,6 +2622,7 @@ function renderWatchlist(){
     const isFundTarget=fundTickerList.length===0||fundTickerList.includes(tk)||fundTickerList.includes(ftk);
     const hist=(fundHistory[ftk]||[]);
     let perCell='<span class="wl-muted">—</span>';
+    let epsCell='<span class="wl-muted">—</span>';
     let tpCell='<span class="wl-muted">—</span>';
 
     if(fund&&isFundTarget&&hist.length>=1){
@@ -2623,6 +2630,18 @@ function renderWatchlist(){
       function findInRange(from,to){for(const h of hist){if(h.date>=from&&h.date<=to)return h}return null}
       const e1w=findInRange(etD1w,etD1d);
       const e1m=findInRange(etD1m,etD8d);
+
+      // EPS now > 1w > 1m
+      if(fund.epsNorm!=null){
+        const nowEps=fund.epsNorm;
+        const eps1w=e1w?.epsNorm;
+        const eps1m=e1m?.epsNorm;
+        const epsCls=valCls(nowEps,eps1w);
+        let parts=[`<span class="${epsCls}">${nowEps.toFixed(2)}</span>`];
+        parts.push(eps1w!=null?`<span class="wl-muted">${eps1w.toFixed(2)}</span>`:`<span class="wl-muted">—</span>`);
+        parts.push(eps1m!=null?`<span class="wl-muted">${eps1m.toFixed(2)}</span>`:`<span class="wl-muted">—</span>`);
+        epsCell=parts.join(arw);
+      }
 
       // PER: use underlying's price (fund.price) for consistency
       // fund.pe12m = underlyingPrice / epsNorm (correct for leveraged too)
@@ -2655,7 +2674,7 @@ function renderWatchlist(){
         tpCell=parts.join(arw);
       }
     }
-    return{perCell,tpCell};
+    return{perCell,epsCell,tpCell};
   }
 
   let html='';
@@ -2665,6 +2684,7 @@ function renderWatchlist(){
     html+=`<div class="tbl-wrap"><table class="wl-tbl"><thead><tr>
       <th>Ticker</th><th>Price</th><th>Qty</th><th>매수</th><th>평가</th><th>손익</th>
       <th>PER now${arw}1w${arw}1m</th>
+      <th>EPS now${arw}1w${arw}1m</th>
       <th>TP now${arw}1w${arw}1m</th>
       <th>실현(YTD/Tot)</th>
     </tr></thead><tbody>`;
@@ -2683,7 +2703,7 @@ function renderWatchlist(){
 
       secCost+=cost;secVal+=mktVal;secRealYtd+=rl.realPLYtd;secRealTot+=rl.realPL;
 
-      const{perCell,tpCell}=computeFundCells(tk);
+      const{perCell,epsCell,tpCell}=computeFundCells(tk);
 
       const rowCls=noHeld?'wl-noheld':'';
       html+=`<tr class="${rowCls}" onclick="showHistory('${tk}')">
@@ -2694,6 +2714,7 @@ function renderWatchlist(){
         <td>${qty>0?fmtUSD(mktVal):'<span class="wl-muted">—</span>'}</td>
         <td>${qty>0?fmtPL(upl):'<span class="wl-muted">—</span>'}</td>
         <td>${perCell}</td>
+        <td>${epsCell}</td>
         <td>${tpCell}</td>
         <td>${fmtPL(rl.realPLYtd)} / ${fmtPL(rl.realPL)}</td>
       </tr>`;
@@ -2707,7 +2728,7 @@ function renderWatchlist(){
       <td>${fmtUSD(secCost)}</td>
       <td>${fmtUSD(secVal)}</td>
       <td>${fmtPL(secUpl)}</td>
-      <td></td><td></td>
+      <td></td><td></td><td></td>
       <td>${fmtPL(secRealYtd)} / ${fmtPL(secRealTot)}</td>
     </tr>`;
 
