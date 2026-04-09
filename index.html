@@ -2677,16 +2677,19 @@ function renderWatchlist(){
     return{perCell,epsCell,tpCell};
   }
 
+  function fmtC(n){return(n>=0?'':'−')+'$'+Math.round(Math.abs(n))}
+
   let html='';
   for(const sec of sections){
     html+=`<div class="wl-section">`;
     html+=`<div class="wl-section-hdr">${sec.name} (${sec.tickers.length})</div>`;
     html+=`<div class="tbl-wrap"><table class="wl-tbl"><thead><tr>
-      <th>Ticker</th><th>Price</th><th>Qty</th><th>매수</th><th>평가</th><th>손익</th>
+      <th>Ticker</th><th>Qty</th><th>매수</th><th>평가</th><th>손익</th>
       <th>PER now${arw}1w${arw}1m</th>
       <th>EPS now${arw}1w${arw}1m</th>
       <th>TP now${arw}1w${arw}1m</th>
       <th>실현(YTD/Tot)</th>
+      <th>Price</th>
     </tr></thead><tbody>`;
 
     let secCost=0,secVal=0,secRealYtd=0,secRealTot=0;
@@ -2708,15 +2711,15 @@ function renderWatchlist(){
       const rowCls=noHeld?'wl-noheld':'';
       html+=`<tr class="${rowCls}" onclick="showHistory('${tk}')">
         <td>${tk}</td>
-        <td>${price>0?'$'+price.toFixed(2):'—'}</td>
         <td>${qty>0?qty:'<span class="wl-muted">—</span>'}</td>
-        <td>${qty>0?fmtUSD(cost):'<span class="wl-muted">—</span>'}</td>
-        <td>${qty>0?fmtUSD(mktVal):'<span class="wl-muted">—</span>'}</td>
+        <td>${qty>0?fmtC(cost):'<span class="wl-muted">—</span>'}</td>
+        <td>${qty>0?fmtC(mktVal):'<span class="wl-muted">—</span>'}</td>
         <td>${qty>0?fmtPL(upl):'<span class="wl-muted">—</span>'}</td>
         <td>${perCell}</td>
         <td>${epsCell}</td>
         <td>${tpCell}</td>
         <td>${fmtPL(rl.realPLYtd)} / ${fmtPL(rl.realPL)}</td>
+        <td>${price>0?'$'+price.toFixed(2):'—'}</td>
       </tr>`;
     }
 
@@ -2724,12 +2727,13 @@ function renderWatchlist(){
     const secUpl=secVal-secCost;
     html+=`<tr style="background:var(--surface2);font-weight:600;border-top:1px solid var(--border)">
       <td style="color:var(--text2)">Total</td>
-      <td></td><td></td>
-      <td>${fmtUSD(secCost)}</td>
-      <td>${fmtUSD(secVal)}</td>
+      <td></td>
+      <td>${fmtC(secCost)}</td>
+      <td>${fmtC(secVal)}</td>
       <td>${fmtPL(secUpl)}</td>
       <td></td><td></td><td></td>
       <td>${fmtPL(secRealYtd)} / ${fmtPL(secRealTot)}</td>
+      <td></td>
     </tr>`;
 
     html+=`</tbody></table></div></div>`;
