@@ -1550,6 +1550,30 @@ async function refreshFundamentals(){
       const quarterlyEarnings=await fmpGet(`earnings?symbol=${tk}`);
       const ptConsensus=await fmpGet(`price-target-consensus?symbol=${tk}`);
       const gradesData=await fmpGet(`grades-consensus?symbol=${tk}`);
+
+      // Try TipRanks for price target (3-month consensus, more accurate than FMP)
+      let tipranksTP=null;
+      try{
+        const trUrl=`https://www.tipranks.com/api/stocks/getData/?name=${tk.toLowerCase()}&benchmark=1&period=3`;
+        const proxies=[u=>`https://corsproxy.io/?${encodeURIComponent(u)}`];
+        for(const mkP of proxies){
+          try{
+            const r=await fetch(mkP(trUrl),{signal:AbortSignal.timeout(8000)});
+            if(!r.ok)continue;
+            const d=await r.json();
+            const ptc=d.ptConsensus;
+            if(Array.isArray(ptc)&&ptc.length>0){
+              // Find period=3, bench=1 entry (3-month, benchmark-filtered)
+              const best=ptc.find(p=>p.period===3&&p.bench===1)||ptc[0];
+              if(best&&best.priceTarget>0){
+                tipranksTP={price:best.priceTarget,high:best.high||null,low:best.low||null};
+                console.log(`${tk} TipRanks TP: $${best.priceTarget.toFixed(0)} (high=$${best.high}, low=$${best.low})`);
+              }
+            }
+            break;
+          }catch(e){continue}
+        }
+      }catch(e){console.warn(`${tk} TipRanks fetch failed:`,e.message)}
       if(!annual&&!quarterlyEarnings){
         console.warn(`${tk}: No data returned (rate limited?)`);
         continue;
@@ -1729,12 +1753,20 @@ async function refreshFundamentals(){
         console.log(`${tk} all entries:`,entries.map(e=>`${e.date}(frac=${e.frac.toFixed(3)},eps=${e.eps?.toFixed(3)},rev=${Math.round(e.rev||0)},nEps=${e.nEps})`).join(' | '));
       }
 
-      // --- Price target (FMP consensus) ---
-      const cArr=Array.isArray(ptConsensus)?ptConsensus:[];
-      const pt=cArr[0]||{};
-      const targetPrice=pt.targetConsensus||pt.targetMedian||null;
-      const targetHigh=pt.targetHigh||null;
-      const targetLow=pt.targetLow||null;
+      // --- Price target: TipRanks (3-month consensus) → FMP fallback ---
+      let targetPrice=null,targetHigh=null,targetLow=null;
+      if(tipranksTP){
+        targetPrice=tipranksTP.price;
+        targetHigh=tipranksTP.high;
+        targetLow=tipranksTP.low;
+      }else{
+        const cArr=Array.isArray(ptConsensus)?ptConsensus:[];
+        const pt=cArr[0]||{};
+        targetPrice=pt.targetConsensus||pt.targetMedian||null;
+        targetHigh=pt.targetHigh||null;
+        targetLow=pt.targetLow||null;
+        if(targetPrice)console.log(`${tk} TP: FMP fallback=$${targetPrice.toFixed(0)}`);
+      }
 
       // --- Grades ---
       const grArr=Array.isArray(gradesData)?gradesData:[];
