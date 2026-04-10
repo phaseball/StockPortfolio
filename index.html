@@ -1549,15 +1549,6 @@ async function refreshFundamentals(){
       const annual=await fmpGet(`analyst-estimates?symbol=${tk}&period=annual&limit=6`);
       const quarterlyEarnings=await fmpGet(`earnings?symbol=${tk}`);
       const ptConsensus=await fmpGet(`price-target-consensus?symbol=${tk}`);
-      // Individual analyst targets (try stable, then v4 path)
-      let ptIndividual=await fmpGet(`price-target?symbol=${tk}&limit=50`);
-      if(!ptIndividual||!Array.isArray(ptIndividual)||ptIndividual.length===0){
-        // Try v4 API path directly
-        try{
-          const r=await fetch(`https://financialmodelingprep.com/api/v4/price-target?symbol=${tk}&apikey=${FMP_KEY}`,{signal:AbortSignal.timeout(10000)});
-          if(r.ok)ptIndividual=await r.json();
-        }catch(e){}
-      }
       const gradesData=await fmpGet(`grades-consensus?symbol=${tk}`);
       if(!annual&&!quarterlyEarnings){
         console.warn(`${tk}: No data returned (rate limited?)`);
@@ -1565,7 +1556,7 @@ async function refreshFundamentals(){
       }
       console.log(`${tk} annual estimates:`,annual);
       console.log(`${tk} quarterly earnings: ${Array.isArray(quarterlyEarnings)?quarterlyEarnings.length:0} entries`);
-      console.log(`${tk} priceTarget: consensus=`,ptConsensus,`individual=${Array.isArray(ptIndividual)?ptIndividual.length+' analysts':'none'}`);
+      console.log(`${tk} priceTarget:`,ptConsensus);
       console.log(`${tk} grades:`,gradesData);
 
       // Build quarterly EPS/Rev from /stable/earnings
@@ -1738,42 +1729,12 @@ async function refreshFundamentals(){
         console.log(`${tk} all entries:`,entries.map(e=>`${e.date}(frac=${e.frac.toFixed(3)},eps=${e.eps?.toFixed(3)},rev=${Math.round(e.rev||0)},nEps=${e.nEps})`).join(' | '));
       }
 
-      // --- Price target: prefer 3-month average of individual analyst targets, fallback to consensus ---
-      let targetPrice=null,targetHigh=null,targetLow=null;
-      const ptArr=Array.isArray(ptIndividual)?ptIndividual:[];
-      if(ptArr.length>0){
-        const now=new Date();
-        const cutoff=new Date(now.getTime()-90*86400000);
-        const cutStr=cutoff.toISOString().slice(0,10);
-        const recent=ptArr.filter(p=>{
-          const d=p.publishedDate||p.date||'';
-          return d>=cutStr&&(p.priceTarget||p.adjPriceTarget)>0;
-        });
-        if(recent.length>0){
-          const tps=recent.map(p=>p.priceTarget||p.adjPriceTarget);
-          targetPrice=tps.reduce((s,v)=>s+v,0)/tps.length;
-          targetHigh=Math.max(...tps);
-          targetLow=Math.min(...tps);
-          console.log(`${tk} TP: ${recent.length} analysts in 3m, avg=$${targetPrice.toFixed(0)}, range=$${targetLow.toFixed(0)}-$${targetHigh.toFixed(0)}`);
-        }else{
-          const tps=ptArr.filter(p=>(p.priceTarget||p.adjPriceTarget)>0).map(p=>p.priceTarget||p.adjPriceTarget);
-          if(tps.length>0){
-            targetPrice=tps.reduce((s,v)=>s+v,0)/tps.length;
-            targetHigh=Math.max(...tps);
-            targetLow=Math.min(...tps);
-            console.log(`${tk} TP: no recent 3m, using all ${tps.length} analysts, avg=$${targetPrice.toFixed(0)}`);
-          }
-        }
-      }
-      // Fallback to consensus if individual targets unavailable
-      if(targetPrice==null){
-        const cArr=Array.isArray(ptConsensus)?ptConsensus:[];
-        const c=cArr[0]||{};
-        targetPrice=c.targetConsensus||c.targetMedian||null;
-        targetHigh=c.targetHigh||null;
-        targetLow=c.targetLow||null;
-        if(targetPrice)console.log(`${tk} TP: consensus fallback=$${targetPrice.toFixed(0)}`);
-      }
+      // --- Price target (FMP consensus) ---
+      const cArr=Array.isArray(ptConsensus)?ptConsensus:[];
+      const pt=cArr[0]||{};
+      const targetPrice=pt.targetConsensus||pt.targetMedian||null;
+      const targetHigh=pt.targetHigh||null;
+      const targetLow=pt.targetLow||null;
 
       // --- Grades ---
       const grArr=Array.isArray(gradesData)?gradesData:[];
