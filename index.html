@@ -4532,9 +4532,35 @@ async function drawHistoryChart(ticker,period,btn){
   }
   if(data.length<1){container.innerHTML='';return}
 
+  // Build PER12m lookup from fund_history for this ticker (or underlying)
+  const perTk=getFundTicker(ticker)||ticker;
+  const perHist=fundHistory[perTk]||[];
+  const perLookup={}; // YYMMDD → pe12m
+  for(const h of perHist){
+    if(h.pe12m!=null&&h.date){
+      // Convert YYYY-MM-DD → YYMMDD
+      const parts=h.date.split('-');
+      if(parts.length===3){
+        const yymmdd=parts[0].slice(2)+parts[1]+parts[2];
+        perLookup[yymmdd]=h.pe12m;
+      }
+    }
+  }
+  // Attach PER to each data point (nearest prior fund_history entry)
+  const perDates=Object.keys(perLookup).sort();
+  for(const d of data){
+    d.pe12m=perLookup[d.date]||null;
+    if(!d.pe12m&&perDates.length>0){
+      // Find nearest prior
+      for(let j=perDates.length-1;j>=0;j--){
+        if(perDates[j]<=d.date){d.pe12m=perLookup[perDates[j]];break}
+      }
+    }
+  }
+
   const W=Math.min(container.clientWidth||600,800);
-  const H1=130, H2=100, H3=100, H4=200, gap=16;
-  const totalH=H1+gap+H2+gap+H3+gap+H4;
+  const H1=130, H2=100, H3=100, H4=200, H5=120, gap=16;
+  const totalH=H1+gap+H2+gap+H3+gap+H4+gap+H5;
   const pad={t:20,r:45,b:14,l:50};
   const cW=W-pad.l-pad.r;
 
@@ -4770,6 +4796,66 @@ async function drawHistoryChart(ticker,period,btn){
   ctx.fillStyle='#555';ctx.font='8px JetBrains Mono, monospace';ctx.textAlign='right';
   ctx.fillText('log scale',W-pad.r,y4Top+12);
 
+  // ===== CHART 5: PER12m from fund_history =====
+  const y5Top=H1+gap+H2+gap+H3+gap+H4+gap;
+  const cH5=H5-pad.t-pad.b;
+  const perPoints=data.filter(d=>d.pe12m!=null&&d.pe12m>0);
+  if(perPoints.length>0){
+    let y5Max=0,y5Min=Infinity;
+    for(const d of perPoints){
+      if(d.pe12m>y5Max)y5Max=d.pe12m;
+      if(d.pe12m<y5Min)y5Min=d.pe12m;
+    }
+    const y5Range=y5Max-y5Min||10;
+    y5Max+=y5Range*0.15;y5Min=Math.max(0,y5Min-y5Range*0.1);
+    function yPos5(v){return y5Top+pad.t+(1-(v-y5Min)/(y5Max-y5Min))*cH5}
+
+    // Grid lines
+    ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
+    for(let i=0;i<=3;i++){
+      const v=y5Min+(y5Max-y5Min)*i/3;const y=yPos5(v);
+      ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+      ctx.fillStyle='#666';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='right';
+      ctx.fillText(v.toFixed(1),pad.l-4,y+3);
+    }
+
+    // PER line (magenta/pink)
+    ctx.strokeStyle='#ce93d8';ctx.lineWidth=1.5;ctx.beginPath();
+    let perStarted=false;
+    for(let i=0;i<data.length;i++){
+      if(data[i].pe12m!=null&&data[i].pe12m>0){
+        if(!perStarted){ctx.moveTo(xPos(i),yPos5(data[i].pe12m));perStarted=true}
+        else ctx.lineTo(xPos(i),yPos5(data[i].pe12m));
+      }
+    }
+    ctx.stroke();
+
+    // PER data points (dots at actual fund_history dates)
+    ctx.fillStyle='#ce93d8';
+    for(let i=0;i<data.length;i++){
+      if(perLookup[data[i].date]!=null){
+        ctx.beginPath();ctx.arc(xPos(i),yPos5(data[i].pe12m),2.5,0,Math.PI*2);ctx.fill();
+      }
+    }
+
+    // End label
+    const lastPer=data[data.length-1].pe12m;
+    if(lastPer!=null&&lastPer>0){
+      ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle='#ce93d8';
+      ctx.fillText(lastPer.toFixed(1),W-pad.r+4,yPos5(lastPer)+3);
+    }
+
+    // Legend
+    ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
+    ctx.fillStyle='#ce93d8';ctx.fillText('── PER 12m',pad.l,y5Top+12);
+    ctx.fillStyle='#555';ctx.font='8px JetBrains Mono, monospace';ctx.textAlign='right';
+    ctx.fillText(perTk,W-pad.r,y5Top+12);
+  }else{
+    // No PER data — show placeholder
+    ctx.fillStyle='#444';ctx.font='11px JetBrains Mono, monospace';ctx.textAlign='center';
+    ctx.fillText('PER 12m: no fund_history data',W/2,y5Top+cH5/2+pad.t);
+  }
+
   // X labels (shared for all charts)
   ctx.fillStyle='#888';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='center';
   const xStep=Math.max(1,Math.floor(data.length/6));
@@ -4813,6 +4899,7 @@ async function drawHistoryChart(ticker,period,btn){
     const totalPL=pl+d.realized;
     html+=`<div style="color:#e0e0e0;border-top:1px solid #333;padding-top:2px;margin-top:2px">총손익: ${(totalPL>=0?'+':'')}${fmtK(totalPL)}</div>`;
     if(d.price>0)html+=`<div style="color:#26c6da">주가: $${d.price.toFixed(2)}</div>`;
+    if(d.pe12m!=null&&d.pe12m>0)html+=`<div style="color:#ce93d8">PER: ${d.pe12m.toFixed(1)}</div>`;
     tip.innerHTML=html;
     tip.style.display='block';
     const xPx=xPos(idx);
