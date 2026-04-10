@@ -190,6 +190,7 @@ table.t tr:hover td{background:var(--accentBg)}
         <button class="btn btn-s btn-sm" onclick="refreshFundamentals()" title="P/E, EPS 업데이트">🔄 Fund.</button>
         <button class="btn btn-s btn-sm" onclick="debugFundData()" title="EPS/Fund 디버그" style="font-size:9px">🔍 EPS</button>
         <button class="btn btn-s btn-sm" onclick="dedupFundHistory()" title="fund_history 중복 제거" style="font-size:9px">🧹 Dedup</button>
+        <button class="btn btn-s btn-sm" onclick="repairFundHistoryPER()" title="fund_history pe12m 재계산 (FMP 과거가격)" style="font-size:9px">🔧 PER</button>
       </div>
     </div>
     <div style="text-align:right;font-size:10px;color:var(--text3);margin-bottom:8px;margin-top:-8px">
@@ -1361,6 +1362,88 @@ async function dedupFundHistory(){
   }catch(e){toast('오류: '+e.message,'err');console.error(e)}
 }
 
+// Repair fund_history pe12m: fetch historical prices from FMP and recompute pe12m = price/epsNorm
+async function repairFundHistoryPER(){
+  if(!SHEET_ID||!SA_KEY||!FMP_KEY){toast('Sheet/FMP 설정 필요','err');return}
+  if(!confirm('fund_history의 모든 pe12m 값을 FMP 과거 가격으로 재계산합니다.\n\n1회성 보정입니다. 계속?'))return;
+  toastPersist('🔧 pe12m 보정 중...','ok');
+  try{
+    const token=await getAccessToken();
+    const resp=await sheetsGet('fund_history!A:F');
+    const allRows=resp&&resp.values?resp.values:[];
+    if(allRows.length<=1){toast('데이터 없음','err');return}
+
+    // Group entries by ticker → collect dates
+    const byTicker={}; // ticker → [{rowIdx, date(YYYY-MM-DD), epsNorm}]
+    for(let i=1;i<allRows.length;i++){
+      const r=allRows[i];
+      const dt=(r[0]||'').trim();
+      const tk=(r[1]||'').trim().toUpperCase();
+      const eps=r[2]!=null&&r[2]!==''?parseFloat(r[2]):null;
+      if(!dt||!tk||!eps)continue;
+      if(!byTicker[tk])byTicker[tk]=[];
+      byTicker[tk].push({rowIdx:i,date:dt,epsNorm:eps});
+    }
+
+    const tickers=Object.keys(byTicker);
+    let repaired=0;
+
+    for(let t=0;t<tickers.length;t++){
+      const tk=tickers[t];
+      const entries=byTicker[tk];
+      // Find date range
+      const dates=entries.map(e=>e.date).sort();
+      const fromYMD=dates[0];
+      const toYMD=dates[dates.length-1];
+
+      toast(`🔧 ${tk} (${t+1}/${tickers.length}) 가격 조회 중...`,'ok');
+
+      // Fetch FMP historical prices for this ticker
+      const fmpData=await fetchFmpHistoryRange(tk,fromYMD,toYMD);
+      // Build YYYY-MM-DD → price map
+      // fmpData returns {date:'YYMMDD', close:xxx}
+      const priceMap={};
+      for(const d of fmpData){
+        // Convert YYMMDD → YYYY-MM-DD
+        const ymd=`20${d.date.slice(0,2)}-${d.date.slice(2,4)}-${d.date.slice(4,6)}`;
+        priceMap[ymd]=d.close;
+      }
+
+      // For each entry, find closest price (same day or nearest prior trading day)
+      for(const e of entries){
+        let price=priceMap[e.date];
+        if(!price){
+          // Find nearest prior date within 5 days
+          const dt=new Date(e.date);
+          for(let d=1;d<=5;d++){
+            dt.setDate(dt.getDate()-1);
+            const key=dt.toISOString().slice(0,10);
+            if(priceMap[key]){price=priceMap[key];break}
+          }
+        }
+        if(price&&e.epsNorm>0){
+          const newPe=(price/e.epsNorm).toFixed(2);
+          allRows[e.rowIdx][5]=newPe;
+          repaired++;
+        }
+      }
+    }
+
+    if(repaired===0){toast('보정할 항목 없음','ok');return}
+
+    // Write back
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:F:clear`,{
+      method:'POST',headers:{Authorization:`Bearer ${token}`}});
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:F?valueInputOption=USER_ENTERED`,{
+      method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({values:allRows})});
+
+    await loadFundHistory();
+    computeOverview();renderOverview();
+    toast(`✅ ${repaired}개 pe12m 보정 완료 (${tickers.length} tickers, FMP 가격 기준)`,'ok');
+  }catch(e){toast('보정 오류: '+e.message,'err');console.error(e)}
+}
+
 async function loadFundHistory(){
   if(!SHEET_ID||!SA_KEY)return;
   try{
@@ -2417,11 +2500,8 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
       // PER now > 1w > 1m (use underlying's price for leveraged tickers)
       if(fund.pe12m!=null){
         const nowPe=fund.pe12m;
-        const undPrice=fund.price||0;
-        const epsHist1w=e1w?.epsNorm;
-        const epsHist1m=e1m?.epsNorm;
-        const pe1w=(epsHist1w&&epsHist1w>0&&undPrice>0)?(undPrice/epsHist1w):null;
-        const pe1m=(epsHist1m&&epsHist1m>0&&undPrice>0)?(undPrice/epsHist1m):null;
+        const pe1w=e1w?.pe12m??null;
+        const pe1m=e1m?.pe12m??null;
         // PER lower = better → green when decreased
         function perStyle(now,prev){
           if(prev==null)return 'color:var(--text3)';
@@ -2647,11 +2727,8 @@ function renderWatchlist(){
       // fund.pe12m = underlyingPrice / epsNorm (correct for leveraged too)
       if(fund.pe12m!=null){
         const nowPe=fund.pe12m;
-        const undPrice=fund.price||0; // underlying ticker's price
-        const eps1w=e1w?.epsNorm;
-        const eps1m=e1m?.epsNorm;
-        const pe1w=(eps1w&&eps1w>0&&undPrice>0)?(undPrice/eps1w):null;
-        const pe1m=(eps1m&&eps1m>0&&undPrice>0)?(undPrice/eps1m):null;
+        const pe1w=e1w?.pe12m??null;
+        const pe1m=e1m?.pe12m??null;
         const perNowCls=pe1w!=null?(nowPe<pe1w*0.999?'wl-up':nowPe>pe1w*1.001?'wl-dn':'wl-muted'):'wl-muted';
         let parts=[`<span class="${perNowCls}">${nowPe.toFixed(1)}</span>`];
         parts.push(pe1w!=null?`<span class="wl-muted">${pe1w.toFixed(1)}</span>`:`<span class="wl-muted">—</span>`);
