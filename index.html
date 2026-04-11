@@ -2813,8 +2813,11 @@ function renderWatchlist(){
   const totalCost=Object.values(merged).reduce((s,m)=>s+m.purchasedAmt,0);
   html+=`<div style="display:flex;gap:16px;margin-bottom:10px;font:12px 'JetBrains Mono',monospace;color:var(--text2)">`;
   html+=`<span>계획: <b style="color:var(--text)">${totalPlanned>0?fmtC(totalPlanned):'—'}</b></span>`;
-  html+=`<span>매수/총자산: <b style="color:var(--text)">${fmtC(totalCost)}</b> / <b style="color:var(--text)">${fmtC(totalVal)}</b></span>`;
-  if(totalPlanned>0)html+=`<span>투자율: <b style="color:var(--text)">${((totalCost/totalPlanned)*100).toFixed(0)}%</b></span>`;
+  // Compute total asset (stocks + cash)
+  const cbr=cachedOverviewData?.cashByBroker||{};
+  const totalCash=(initialCashSS+initialCashKW+initialCashMR)+(cbr['삼성']||0)+(cbr['키움']||0)+(cbr['메리츠']||0);
+  const totalAssetW=totalVal+totalCash;
+  html+=`<span>총자산: <b style="color:var(--text)">${fmtC(totalAssetW)}</b></span>`;
   html+=`</div>`;
 
   for(const sec of sections){
