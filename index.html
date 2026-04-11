@@ -2806,6 +2806,17 @@ function renderWatchlist(){
   }
 
   let html='';
+
+  // Total summary above sections
+  const totalPlanned=Object.values(watchPlans).reduce((s,v)=>s+v,0);
+  const totalVal=Object.values(merged).reduce((s,m)=>s+m.marketValue,0);
+  const totalCost=Object.values(merged).reduce((s,m)=>s+m.purchasedAmt,0);
+  html+=`<div style="display:flex;gap:16px;margin-bottom:10px;font:12px 'JetBrains Mono',monospace;color:var(--text2)">`;
+  html+=`<span>계획: <b style="color:var(--text)">${totalPlanned>0?fmtC(totalPlanned):'—'}</b></span>`;
+  html+=`<span>포트폴리오: <b style="color:var(--text)">${fmtC(totalVal)}</b> <span style="font-size:10px;color:${totalVal-totalCost>=0?'var(--c-up)':'var(--c-dn)'}">(${totalVal-totalCost>=0?'+':''}${Math.round(totalVal-totalCost)})</span></span>`;
+  if(totalPlanned>0)html+=`<span>투자율: <b style="color:var(--text)">${((totalCost/totalPlanned)*100).toFixed(0)}%</b></span>`;
+  html+=`</div>`;
+
   for(const sec of sections){
     html+=`<div class="wl-section">`;
     html+=`<div class="wl-section-hdr">${sec.name} (${sec.tickers.length})</div>`;
@@ -2855,7 +2866,7 @@ function renderWatchlist(){
     const pctUsed=planned>0?((secCost/planned)*100).toFixed(0):'';
     const secId=sec.name.replace(/[^A-Za-z0-9]/g,'_');
     html+=`<tr style="background:var(--surface2);font-weight:600;border-top:1px solid var(--border)">
-      <td style="padding:2px 4px"><input type="number" id="wlPlan_${secId}" value="${planned||''}" placeholder="계획금액"
+      <td style="padding:2px 4px"><input type="text" inputmode="numeric" id="wlPlan_${secId}" value="${planned||''}" placeholder="계획금액"
         style="width:70px;padding:3px 5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font:11px 'JetBrains Mono',monospace;text-align:right"
         onclick="event.stopPropagation()" onchange="saveWatchPlan('${sec.name}',this.value);renderWatchlist()"></td>
       <td style="color:var(--text2);font-size:10px">${pctUsed?pctUsed+'%':''}</td>
