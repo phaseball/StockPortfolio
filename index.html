@@ -569,9 +569,10 @@ async function saveInitCash(){
   try{
     const token=await getAccessToken();
     const wl=document.getElementById('watchInput').value||'';
-    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A1:B4?valueInputOption=USER_ENTERED`;
+    const plansJson=JSON.stringify(watchPlans);
+    const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A1:B5?valueInputOption=USER_ENTERED`;
     await fetch(url,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-      body:JSON.stringify({range:'config!A1:B4',values:[['initial_cash_삼성',ss||0],['initial_cash_키움',kw||0],['initial_cash_메리츠',mr||0],['watchlist',wl]]})});
+      body:JSON.stringify({range:'config!A1:B5',values:[['initial_cash_삼성',ss||0],['initial_cash_키움',kw||0],['initial_cash_메리츠',mr||0],['watchlist',wl],['watch_plans',plansJson]]})});
     initialCashSS=ss||0;initialCashKW=kw||0;initialCashMR=mr||0;
     toast('Initial cash 저장 완료','ok');
   }catch(e){toast('저장 실패: '+e.message,'err')}
@@ -2041,6 +2042,9 @@ async function loadAllTransactions(){
           document.getElementById('watchInput').value=wl;
           localStorage.setItem('watch_input',wl);
         }
+        if(row[0]==='watch_plans'){
+          try{watchPlans=JSON.parse(row[1]||'{}');localStorage.setItem('watch_plans',JSON.stringify(watchPlans))}catch(e){}
+        }
       }
     }
   }catch(e){}
@@ -2651,20 +2655,31 @@ function sumCard2(label,value,right,cls=''){
 
 // ================ WATCHLIST ================
 const WATCH_STORAGE_KEY='watch_input';
+let watchPlans={}; // {sectionName: plannedAmount}
 
 async function saveWatchlistToSheet(text){
   if(!SHEET_ID||!SA_KEY)return;
   try{
     const token=await getAccessToken();
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A4:B4?valueInputOption=USER_ENTERED`,{
+    const plansJson=JSON.stringify(watchPlans);
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/config!A4:B5?valueInputOption=USER_ENTERED`,{
       method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-      body:JSON.stringify({range:'config!A4:B4',values:[['watchlist',text]]})});
+      body:JSON.stringify({range:'config!A4:B5',values:[['watchlist',text],['watch_plans',plansJson]]})});
   }catch(e){console.warn('watchlist save failed:',e)}
+}
+
+function saveWatchPlan(secName,val){
+  const amt=parseFloat(val)||0;
+  if(amt>0)watchPlans[secName]=amt;
+  else delete watchPlans[secName];
+  localStorage.setItem('watch_plans',JSON.stringify(watchPlans));
+  saveWatchlistToSheet(document.getElementById('watchInput').value||'');
 }
 
 function loadWatchInput(){
   const saved=localStorage.getItem(WATCH_STORAGE_KEY);
   if(saved){document.getElementById('watchInput').value=saved}
+  try{const wp=localStorage.getItem('watch_plans');if(wp)watchPlans=JSON.parse(wp)}catch(e){}
 }
 
 function parseWatchInput(text){
@@ -2784,18 +2799,23 @@ function renderWatchlist(){
   }
 
   function fmtC(n){return(n>=0?'':'−')+'$'+Math.round(Math.abs(n))}
+  function fmtValPL(val,pl){
+    const plSign=pl>=0?'+':'';
+    const plCls=pl>=0?'c-up':'c-dn';
+    return`${fmtC(val)} <span class="${plCls}" style="font-size:10px">(${plSign}${Math.round(pl)})</span>`;
+  }
 
   let html='';
   for(const sec of sections){
     html+=`<div class="wl-section">`;
     html+=`<div class="wl-section-hdr">${sec.name} (${sec.tickers.length})</div>`;
     html+=`<div class="tbl-wrap"><table class="wl-tbl"><thead><tr>
-      <th>Ticker</th><th>Qty</th><th>매수</th><th>평가</th><th>손익</th>
+      <th>Ticker</th><th>Qty</th><th>매수</th><th>평가(손익)</th>
       <th>PER now${arw}1w${arw}1m</th>
       <th>EPS now${arw}1w${arw}1m</th>
+      <th>Price</th>
       <th>TP now${arw}1w${arw}1m</th>
       <th>실현(YTD/Tot)</th>
-      <th>Price</th>
     </tr></thead><tbody>`;
 
     let secCost=0,secVal=0,secRealYtd=0,secRealTot=0;
@@ -2815,31 +2835,34 @@ function renderWatchlist(){
       const{perCell,epsCell,tpCell}=computeFundCells(tk);
 
       const rowCls=noHeld?'wl-noheld':'';
+      const valCell=qty>0?fmtValPL(mktVal,upl):`<span class="wl-muted">—</span>`;
       html+=`<tr class="${rowCls}" onclick="showHistory('${tk}')">
         <td>${tk}</td>
         <td>${qty>0?qty:'<span class="wl-muted">—</span>'}</td>
         <td>${qty>0?fmtC(cost):'<span class="wl-muted">—</span>'}</td>
-        <td>${qty>0?fmtC(mktVal):'<span class="wl-muted">—</span>'}</td>
-        <td>${qty>0?fmtPL(upl):'<span class="wl-muted">—</span>'}</td>
+        <td>${valCell}</td>
         <td>${perCell}</td>
         <td>${epsCell}</td>
+        <td>${price>0?'$'+price.toFixed(2):'—'}</td>
         <td>${tpCell}</td>
         <td>${fmtPL(rl.realPLYtd)} / ${fmtPL(rl.realPL)}</td>
-        <td>${price>0?'$'+price.toFixed(2):'—'}</td>
       </tr>`;
     }
 
-    // Summary row
+    // Summary row with planned amount input
     const secUpl=secVal-secCost;
+    const planned=watchPlans[sec.name]||0;
+    const pctUsed=planned>0?((secCost/planned)*100).toFixed(0):'';
+    const secId=sec.name.replace(/[^A-Za-z0-9]/g,'_');
     html+=`<tr style="background:var(--surface2);font-weight:600;border-top:1px solid var(--border)">
-      <td style="color:var(--text2)">Total</td>
-      <td></td>
+      <td style="padding:2px 4px"><input type="number" id="wlPlan_${secId}" value="${planned||''}" placeholder="계획금액"
+        style="width:70px;padding:3px 5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font:11px 'JetBrains Mono',monospace;text-align:right"
+        onclick="event.stopPropagation()" onchange="saveWatchPlan('${sec.name}',this.value);renderWatchlist()"></td>
+      <td style="color:var(--text2);font-size:10px">${pctUsed?pctUsed+'%':''}</td>
       <td>${fmtC(secCost)}</td>
-      <td>${fmtC(secVal)}</td>
-      <td>${fmtPL(secUpl)}</td>
-      <td></td><td></td><td></td>
+      <td>${fmtValPL(secVal,secUpl)}</td>
+      <td></td><td></td><td></td><td></td>
       <td>${fmtPL(secRealYtd)} / ${fmtPL(secRealTot)}</td>
-      <td></td>
     </tr>`;
 
     html+=`</tbody></table></div></div>`;
