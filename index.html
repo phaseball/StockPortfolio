@@ -2813,7 +2813,7 @@ function renderWatchlist(){
   const totalCost=Object.values(merged).reduce((s,m)=>s+m.purchasedAmt,0);
   html+=`<div style="display:flex;gap:16px;margin-bottom:10px;font:12px 'JetBrains Mono',monospace;color:var(--text2)">`;
   html+=`<span>계획: <b style="color:var(--text)">${totalPlanned>0?fmtC(totalPlanned):'—'}</b></span>`;
-  html+=`<span>포트폴리오: <b style="color:var(--text)">${fmtC(totalVal)}</b> <span style="font-size:10px;color:${totalVal-totalCost>=0?'var(--c-up)':'var(--c-dn)'}">(${totalVal-totalCost>=0?'+':''}${Math.round(totalVal-totalCost)})</span></span>`;
+  html+=`<span>매수/총자산: <b style="color:var(--text)">${fmtC(totalCost)}</b> / <b style="color:var(--text)">${fmtC(totalVal)}</b></span>`;
   if(totalPlanned>0)html+=`<span>투자율: <b style="color:var(--text)">${((totalCost/totalPlanned)*100).toFixed(0)}%</b></span>`;
   html+=`</div>`;
 
