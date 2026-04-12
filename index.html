@@ -237,7 +237,7 @@ table.t tr:hover td{background:var(--accentBg)}
   <div id="p-watch" class="panel">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <span style="font-size:14px;font-weight:600">🔍 Watchlist</span>
-      <button class="btn btn-s btn-sm" onclick="renderWatchlist()" title="캐시된 데이터로 다시 그리기 (Price/Fund 갱신은 Overview에서)">🔄</button>
+      <button class="btn btn-s btn-sm" onclick="loadWatchFromSheet().then(()=>renderWatchlist())" title="Sheet에서 watchlist/계획금액 다시 불러오기">🔄</button>
     </div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:6px;line-height:1.5">Section title: Capital letter start. Tickers: all lowercase, comma-separated, end with '<b style="color:var(--text2)">.</b>' (period).</div>
     <div style="margin-bottom:12px">
@@ -487,8 +487,8 @@ function switchTab(p){
   if(p==='history'){
     document.getElementById('navHistory').style.display='';
   }
-  if(p==='watch'&&cachedOverviewData){
-    renderWatchlist();
+  if(p==='watch'){
+    loadWatchFromSheet().then(()=>{if(cachedOverviewData)renderWatchlist()});
   }
 }
 
@@ -2680,6 +2680,25 @@ function loadWatchInput(){
   const saved=localStorage.getItem(WATCH_STORAGE_KEY);
   if(saved){document.getElementById('watchInput').value=saved}
   try{const wp=localStorage.getItem('watch_plans');if(wp)watchPlans=JSON.parse(wp)}catch(e){}
+}
+
+async function loadWatchFromSheet(){
+  if(!SHEET_ID||!SA_KEY)return;
+  try{
+    const d=await sheetsGet('config!A4:B5');
+    if(d.values){
+      for(const row of d.values){
+        if(row[0]==='watchlist'){
+          const wl=row[1]||'';
+          document.getElementById('watchInput').value=wl;
+          localStorage.setItem('watch_input',wl);
+        }
+        if(row[0]==='watch_plans'){
+          try{watchPlans=JSON.parse(row[1]||'{}');localStorage.setItem('watch_plans',JSON.stringify(watchPlans))}catch(e){}
+        }
+      }
+    }
+  }catch(e){console.warn('loadWatchFromSheet failed:',e)}
 }
 
 function parseWatchInput(text){
