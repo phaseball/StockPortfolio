@@ -1446,7 +1446,7 @@ async function repairFundHistoryPER(){
 // Divides GDXD price and holding value by 200, recomputes totalValue
 async function repairDVSplits(){
   if(!SHEET_ID||!SA_KEY){toast('Sheet 설정 필요','err');return}
-  if(!confirm('daily_value에서 SQQQ 가격을 ~251119 기간 동안 ÷5 보정합니다.\n\n계속?'))return;
+  if(!confirm('daily_value에서 SOXS 가격을 ~260304 기간 동안 ÷20 보정합니다.\n\n계속?'))return;
   try{
     const token=await getAccessToken();
     const resp=await sheetsGet('daily_value!A:E');
@@ -1455,7 +1455,7 @@ async function repairDVSplits(){
 
     // Repair rules: {ticker, from, to, divisor}
     const rules=[
-      {ticker:'SQQQ', from:'000000', to:'251119', divisor:5},
+      {ticker:'SOXS', from:'000000', to:'260304', divisor:20},
     ];
 
     let fixed=0;
