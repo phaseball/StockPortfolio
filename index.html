@@ -1442,6 +1442,72 @@ async function repairFundHistoryPER(){
   }catch(e){toast('보정 오류: '+e.message,'err');console.error(e)}
 }
 
+// One-time fix: GDXD prices in daily_value are 200x too large for 250423~250602
+// Divides GDXD price and holding value by 200, recomputes totalValue
+async function repairGDXD(){
+  if(!SHEET_ID||!SA_KEY){toast('Sheet 설정 필요','err');return}
+  if(!confirm('daily_value에서 GDXD 가격을 250423~250602 기간 동안 1/200로 보정합니다.\n\n계속?'))return;
+  try{
+    const token=await getAccessToken();
+    const resp=await sheetsGet('daily_value!A:E');
+    const rows=resp?.values||[];
+    if(rows.length===0){toast('daily_value 비어있음','err');return}
+
+    const FROM='250423',TO='250602';
+    let fixed=0;
+    for(let i=0;i<rows.length;i++){
+      const r=rows[i];
+      const date=String(r[0]||'');
+      if(date==='date'||date<FROM||date>TO)continue;
+
+      let holdings={},prices={};
+      try{holdings=JSON.parse(r[3]||'{}')}catch(e){}
+      try{prices=JSON.parse(r[4]||'{}')}catch(e){}
+
+      if(prices['GDXD']==null&&holdings['GDXD']==null)continue;
+
+      // Fix price
+      if(prices['GDXD']!=null) prices['GDXD']=Math.round(prices['GDXD']/200*10000)/10000;
+      // Fix holding value
+      if(holdings['GDXD']!=null) holdings['GDXD']=Math.round(holdings['GDXD']/200*100)/100;
+
+      // Recompute totalValue = cash + sum(holdings)
+      let cashVal=0;
+      try{
+        const parsed=JSON.parse(r[2]||'0');
+        cashVal=typeof parsed==='object'?(parsed['삼성']||0)+(parsed['키움']||0)+(parsed['메리츠']||0):parseFloat(parsed)||0;
+      }catch(e){cashVal=parseFloat(r[2])||0}
+      let holdTotal=0;
+      for(const v of Object.values(holdings)) holdTotal+=v;
+      const newTotal=Math.round((cashVal+holdTotal)*100)/100;
+
+      rows[i]=[date, newTotal, r[2], JSON.stringify(holdings), JSON.stringify(prices)];
+      fixed++;
+    }
+
+    if(fixed===0){toast('보정 대상 없음','ok');return}
+
+    // Write back entire daily_value
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/daily_value!A:E:clear`,{
+      method:'POST',headers:{Authorization:`Bearer ${token}`}});
+    for(let i=0;i<rows.length;i+=1000){
+      const chunk=rows.slice(i,i+1000);
+      const startRow=i+1;
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/daily_value!A${startRow}:E${startRow+chunk.length-1}?valueInputOption=USER_ENTERED`,{
+        method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+        body:JSON.stringify({values:chunk})});
+    }
+
+    // Update local cache
+    dailyValueCache={};
+    try{localStorage.removeItem(CACHE_KEY_DV)}catch(e){}
+    historyPriceCache={};
+
+    toast(`✅ GDXD 보정 완료: ${fixed}일 수정됨 (${FROM}~${TO})`,'ok');
+    console.log(`repairGDXD: fixed ${fixed} daily_value rows`);
+  }catch(e){toast('오류: '+e.message,'err');console.error(e)}
+}
+
 async function loadFundHistory(){
   if(!SHEET_ID||!SA_KEY)return;
   try{
