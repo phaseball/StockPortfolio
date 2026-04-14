@@ -1444,32 +1444,41 @@ async function repairFundHistoryPER(){
 
 // One-time fix: GDXD prices in daily_value are 200x too large for 250423~250602
 // Divides GDXD price and holding value by 200, recomputes totalValue
-async function repairGDXD(){
+async function repairDVSplits(){
   if(!SHEET_ID||!SA_KEY){toast('Sheet 설정 필요','err');return}
-  if(!confirm('daily_value에서 GDXD 가격을 250423~250602 기간 동안 1/200로 보정합니다.\n\n계속?'))return;
+  if(!confirm('daily_value에서 다음을 보정합니다:\n• GDXD 250423~250602: 가격 ÷200\n• SQQQ ~251119: 가격 ÷5\n\n계속?'))return;
   try{
     const token=await getAccessToken();
     const resp=await sheetsGet('daily_value!A:E');
     const rows=resp?.values||[];
     if(rows.length===0){toast('daily_value 비어있음','err');return}
 
-    const FROM='250423',TO='250602';
+    // Repair rules: {ticker, from, to, divisor}
+    const rules=[
+      {ticker:'GDXD', from:'250423', to:'250602', divisor:200},
+      {ticker:'SQQQ', from:'000000', to:'251119', divisor:5},
+    ];
+
     let fixed=0;
     for(let i=0;i<rows.length;i++){
       const r=rows[i];
       const date=String(r[0]||'');
-      if(date==='date'||date<FROM||date>TO)continue;
+      if(date==='date')continue;
 
       let holdings={},prices={};
       try{holdings=JSON.parse(r[3]||'{}')}catch(e){}
       try{prices=JSON.parse(r[4]||'{}')}catch(e){}
 
-      if(prices['GDXD']==null&&holdings['GDXD']==null)continue;
-
-      // Fix price
-      if(prices['GDXD']!=null) prices['GDXD']=Math.round(prices['GDXD']/200*10000)/10000;
-      // Fix holding value
-      if(holdings['GDXD']!=null) holdings['GDXD']=Math.round(holdings['GDXD']/200*100)/100;
+      let changed=false;
+      for(const rule of rules){
+        if(date<rule.from||date>rule.to)continue;
+        const tk=rule.ticker;
+        if(prices[tk]==null&&holdings[tk]==null)continue;
+        if(prices[tk]!=null) prices[tk]=Math.round(prices[tk]/rule.divisor*10000)/10000;
+        if(holdings[tk]!=null) holdings[tk]=Math.round(holdings[tk]/rule.divisor*100)/100;
+        changed=true;
+      }
+      if(!changed)continue;
 
       // Recompute totalValue = cash + sum(holdings)
       let cashVal=0;
@@ -1503,8 +1512,8 @@ async function repairGDXD(){
     try{localStorage.removeItem(CACHE_KEY_DV)}catch(e){}
     historyPriceCache={};
 
-    toast(`✅ GDXD 보정 완료: ${fixed}일 수정됨 (${FROM}~${TO})`,'ok');
-    console.log(`repairGDXD: fixed ${fixed} daily_value rows`);
+    toast(`✅ 보정 완료: ${fixed}일 수정됨`,'ok');
+    console.log(`repairDVSplits: fixed ${fixed} daily_value rows`);
   }catch(e){toast('오류: '+e.message,'err');console.error(e)}
 }
 
