@@ -1004,8 +1004,6 @@ async function updateDailyValuesIncremental(){
   let txDateIdx=0;
 
   function applyTx(tx){
-    const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
-    const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
     if(!pos[tx.ticker])pos[tx.ticker]=0;
     pos[tx.ticker]+=tx.qty;
     if(Math.abs(pos[tx.ticker])<0.0001)pos[tx.ticker]=0;
@@ -1013,8 +1011,9 @@ async function updateDailyValuesIncremental(){
     if(!posBk[bk])posBk[bk]=0;
     posBk[bk]+=tx.qty;
     if(Math.abs(posBk[bk])<0.0001)posBk[bk]=0;
-    if(oq>0){if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);else if(tx.broker==='키움')cashKW-=(Math.abs(oq)*op+tx.tax);else cashMR-=(Math.abs(oq)*op+tx.tax)}
-    else if(oq<0){if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);else if(tx.broker==='키움')cashKW+=(Math.abs(oq)*op-tx.tax);else cashMR+=(Math.abs(oq)*op-tx.tax)}
+    // Use tx.total (unaffected by split) for cash flow
+    if(tx.origQty>0){if(tx.broker==='삼성')cashSS-=tx.total;else if(tx.broker==='키움')cashKW-=tx.total;else cashMR-=tx.total}
+    else if(tx.origQty<0){if(tx.broker==='삼성')cashSS+=(tx.total-2*tx.tax);else if(tx.broker==='키움')cashKW+=(tx.total-2*tx.tax);else cashMR+=(tx.total-2*tx.tax)}
   }
 
   // For incremental: replay up to the day before our computation window
@@ -1530,6 +1529,62 @@ async function repairDVSplitsAuto(){
     const fixed=await _repairDVSplitsCore();
     if(fixed>0)console.log(`repairDVSplitsAuto: fixed ${fixed} daily_value rows`);
   }catch(e){console.warn('repairDVSplitsAuto failed:',e)}
+}
+
+// One-time: write split markers in column G of broker tabs
+// Format: "N/1" for reverse N:1 split → factor=1/N, qty*=1/N, price*=N
+const SPLIT_MARKERS=[
+  {ticker:'TSLQ', before:'251021', split:'3'},
+  {ticker:'NVDQ', before:'251029', split:'20'},
+  {ticker:'SQQQ', before:'251120', split:'5'},
+  {ticker:'GDXD', before:'250603', split:'200'},
+  {ticker:'SOXS', before:'260305', split:'20'},
+];
+
+async function addSplitMarkers(){
+  if(!SHEET_ID||!SA_KEY){toast('Sheet 설정 필요','err');return}
+  const desc=SPLIT_MARKERS.map(r=>`• ${r.ticker} <${r.before}: ${r.split}`).join('\n');
+  if(!confirm(`브로커 탭 column G에 split 마커 추가:\n${desc}\n\n기존 split 값이 있는 행은 건너뜁니다.\n계속?`))return;
+  try{
+    const token=await getAccessToken();
+    let totalFixed=0;
+    for(const broker of['삼성','키움','메리츠']){
+      const resp=await sheetsGet(`${broker}!A:H`);
+      const rows=resp?.values||[];
+      if(rows.length<=1)continue;
+
+      let changed=false;
+      let curDate='';
+      for(let i=1;i<rows.length;i++){
+        const r=rows[i];
+        if(r[0]&&r[0]!=='')curDate=String(r[0]);
+        const ticker=String(r[1]||'').toUpperCase();
+        const existingSplit=r[6]||'';
+        if(existingSplit)continue; // don't overwrite
+
+        for(const rule of SPLIT_MARKERS){
+          if(ticker===rule.ticker&&curDate<rule.before){
+            // Ensure row has enough columns
+            while(rows[i].length<8)rows[i].push('');
+            rows[i][6]=rule.split;
+            changed=true;
+            totalFixed++;
+            break;
+          }
+        }
+      }
+
+      if(changed){
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(broker+'!A:H')}?valueInputOption=USER_ENTERED`,{
+          method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+          body:JSON.stringify({values:rows})});
+        console.log(`${broker}: split markers updated`);
+      }
+    }
+    if(totalFixed===0){toast('추가할 마커 없음','ok');return}
+    toast(`✅ ${totalFixed}개 행에 split 마커 추가됨`,'ok');
+    console.log(`addSplitMarkers: ${totalFixed} rows updated`);
+  }catch(e){toast('오류: '+e.message,'err');console.error(e)}
 }
 
 async function loadFundHistory(){
@@ -2140,21 +2195,25 @@ async function loadAllTransactions(){
   }catch(e){}
 
   // Normalize splits: only adjust rows that have a split marker
-  // split=1/2 on a row means THAT row's qty and price are pre-split
-  // -> qty *= 2, price /= 2 to convert to post-split terms
+  // split=1/2 means price *= 1/2, qty *= 2 (forward split)
+  // split=3 means price *= 3, qty /= 3 (reverse split)
+  // split=N/M means price *= N/M, qty *= M/N
   for(const tx of allTransactions){
-    // Store original qty/price for cash calculation before split adjustment
     tx.origQty=tx.qty;
     tx.origPrice=tx.price;
     if(tx.split&&tx.split!==''){
+      let multiplier=null; // price multiplier
       const parts=tx.split.split('/');
       if(parts.length===2){
         const num=parseFloat(parts[0]),den=parseFloat(parts[1]);
-        if(num&&den){
-          const factor=den/num; // 1/2 -> 2
-          tx.qty*=factor;
-          tx.price/=factor;
-        }
+        if(num&&den) multiplier=num/den; // "1/2" → 0.5, "3/1" → 3
+      }else{
+        const val=parseFloat(tx.split);
+        if(val&&val!==0) multiplier=val; // "3" → 3
+      }
+      if(multiplier){
+        tx.price*=multiplier;
+        tx.qty/=multiplier;
       }
     }
   }
@@ -2282,10 +2341,8 @@ function computeOverview(){
 
   const cashByBroker={삼성:0,키움:0,메리츠:0};
   for(const tx of allTransactions){
-    const q=tx.origQty!==undefined?tx.origQty:tx.qty;
-    const p=tx.origPrice!==undefined?tx.origPrice:tx.price;
-    if(q>0)cashByBroker[tx.broker]-=(Math.abs(q)*p+tx.tax);  // buy: cash out
-    else if(q<0)cashByBroker[tx.broker]+=(Math.abs(q)*p-tx.tax); // sell: cash in
+    if(tx.origQty>0)cashByBroker[tx.broker]-=tx.total;  // buy: cash out
+    else if(tx.origQty<0)cashByBroker[tx.broker]+=(tx.total-2*tx.tax); // sell: cash in
   }
 
   cachedOverviewData={holdMap,allHoldings,cashByBroker};
@@ -3514,20 +3571,18 @@ async function computeDailyValues(el){
     while(txDateIdx<txDateList.length&&txDateList[txDateIdx]<=date){
       const dayTxs=txByDate[txDateList[txDateIdx]];
       for(const tx of dayTxs){
-        const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
-        const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
         if(!positions[tx.ticker])positions[tx.ticker]=0;
-        positions[tx.ticker]+=tx.qty; // split-mark-corrected qty
+        positions[tx.ticker]+=tx.qty; // split-adjusted qty
         if(Math.abs(positions[tx.ticker])<0.0001)positions[tx.ticker]=0;
-        // Cash = actual money flow (original values)
-        if(oq>0){
-          if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
-          else if(tx.broker==='키움')cashKW-=(Math.abs(oq)*op+tx.tax);
-          else cashMR-=(Math.abs(oq)*op+tx.tax);
-        }else if(oq<0){
-          if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);
-          else if(tx.broker==='키움')cashKW+=(Math.abs(oq)*op-tx.tax);
-          else cashMR+=(Math.abs(oq)*op-tx.tax);
+        // Cash = actual money flow (use tx.total, unaffected by split)
+        if(tx.origQty>0){
+          if(tx.broker==='삼성')cashSS-=tx.total;
+          else if(tx.broker==='키움')cashKW-=tx.total;
+          else cashMR-=tx.total;
+        }else if(tx.origQty<0){
+          if(tx.broker==='삼성')cashSS+=(tx.total-2*tx.tax);
+          else if(tx.broker==='키움')cashKW+=(tx.total-2*tx.tax);
+          else cashMR+=(tx.total-2*tx.tax);
         }
       }
       txDateIdx++;
@@ -3616,7 +3671,6 @@ async function recalcDailyValues(){
   toast('daily_value 초기화 완료. FMP에서 전체 구축 중...','ok');
   // Full build via FMP (updateDailyValuesIncremental handles empty state)
   await updateDailyValuesIncremental();
-  await repairDVSplitsAuto();
   toast('✅ Recalc 완료','ok');
   showTotalValueChart();
 }
@@ -3654,22 +3708,20 @@ async function showTotalValueChart(){
     if(!posMap[tk])posMap[tk]={qty:0,avgCost:0};
     const pos=posMap[tk];
     txPrices[tk]=tx.price;
-    const oq=tx.origQty!==undefined?tx.origQty:tx.qty;
-    const op=tx.origPrice!==undefined?tx.origPrice:tx.price;
     if(tx.qty>0){
       const newCost=pos.avgCost*pos.qty+tx.qty*tx.price;
       pos.qty+=tx.qty;
       pos.avgCost=pos.qty>0?newCost/pos.qty:0;
-      if(tx.broker==='삼성')cashSS-=(Math.abs(oq)*op+tx.tax);
-      else if(tx.broker==='키움')cashKW-=(Math.abs(oq)*op+tx.tax);
-      else cashMR-=(Math.abs(oq)*op+tx.tax);
+      if(tx.broker==='삼성')cashSS-=tx.total;
+      else if(tx.broker==='키움')cashKW-=tx.total;
+      else cashMR-=tx.total;
     }else if(tx.qty<0){
       const sq=Math.abs(tx.qty);
       pos.qty-=sq;
       if(pos.qty<=0){pos.qty=0;pos.avgCost=0}
-      if(tx.broker==='삼성')cashSS+=(Math.abs(oq)*op-tx.tax);
-      else if(tx.broker==='키움')cashKW+=(Math.abs(oq)*op-tx.tax);
-      else cashMR+=(Math.abs(oq)*op-tx.tax);
+      if(tx.broker==='삼성')cashSS+=(tx.total-2*tx.tax);
+      else if(tx.broker==='키움')cashKW+=(tx.total-2*tx.tax);
+      else cashMR+=(tx.total-2*tx.tax);
     }
     if(tx.date!==lastDate){
       if(lastDate)captureState(lastDate,txPrices);
