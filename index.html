@@ -3668,7 +3668,9 @@ async function recalcDailyValues(){
       }
     }catch(e){}
   }
-  toast('daily_value 초기화 완료. FMP에서 전체 구축 중...','ok');
+  toast('daily_value 초기화 완료. 거래내역 다시 로딩 중...','ok');
+  // Reload transactions from Sheet (picks up split markers)
+  await loadAllTransactions();
   // Full build via FMP (updateDailyValuesIncremental handles empty state)
   await updateDailyValuesIncremental();
   toast('✅ Recalc 완료','ok');
