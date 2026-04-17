@@ -1444,76 +1444,90 @@ async function repairFundHistoryPER(){
 
 // One-time fix: GDXD prices in daily_value are 200x too large for 250423~250602
 // Divides GDXD price and holding value by 200, recomputes totalValue
+const DV_SPLIT_RULES=[
+  {ticker:'GDXD', from:'250423', to:'250602', divisor:200},
+  {ticker:'SQQQ', from:'000000', to:'251119', divisor:5},
+  {ticker:'SOXS', from:'000000', to:'260304', divisor:20},
+];
+
+async function _repairDVSplitsCore(){
+  const token=await getAccessToken();
+  const resp=await sheetsGet('daily_value!A:E');
+  const rows=resp?.values||[];
+  if(rows.length===0)return 0;
+
+  let fixed=0;
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i];
+    const date=String(r[0]||'');
+    if(date==='date')continue;
+
+    let holdings={},prices={};
+    try{holdings=JSON.parse(r[3]||'{}')}catch(e){}
+    try{prices=JSON.parse(r[4]||'{}')}catch(e){}
+
+    let changed=false;
+    for(const rule of DV_SPLIT_RULES){
+      if(date<rule.from||date>rule.to)continue;
+      const tk=rule.ticker;
+      if(prices[tk]==null&&holdings[tk]==null)continue;
+      if(prices[tk]!=null) prices[tk]=Math.round(prices[tk]/rule.divisor*10000)/10000;
+      if(holdings[tk]!=null) holdings[tk]=Math.round(holdings[tk]/rule.divisor*100)/100;
+      changed=true;
+    }
+    if(!changed)continue;
+
+    let cashVal=0;
+    try{
+      const parsed=JSON.parse(r[2]||'0');
+      cashVal=typeof parsed==='object'?(parsed['삼성']||0)+(parsed['키움']||0)+(parsed['메리츠']||0):parseFloat(parsed)||0;
+    }catch(e){cashVal=parseFloat(r[2])||0}
+    let holdTotal=0;
+    for(const v of Object.values(holdings)) holdTotal+=v;
+    const newTotal=Math.round((cashVal+holdTotal)*100)/100;
+
+    rows[i]=[date, newTotal, r[2], JSON.stringify(holdings), JSON.stringify(prices)];
+    fixed++;
+  }
+
+  if(fixed===0)return 0;
+
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/daily_value!A:E:clear`,{
+    method:'POST',headers:{Authorization:`Bearer ${token}`}});
+  for(let i=0;i<rows.length;i+=1000){
+    const chunk=rows.slice(i,i+1000);
+    const startRow=i+1;
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/daily_value!A${startRow}:E${startRow+chunk.length-1}?valueInputOption=USER_ENTERED`,{
+      method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({values:chunk})});
+  }
+
+  dailyValueCache={};
+  try{localStorage.removeItem(CACHE_KEY_DV)}catch(e){}
+  historyPriceCache={};
+  return fixed;
+}
+
+// Manual (console): with confirmation dialog
 async function repairDVSplits(){
   if(!SHEET_ID||!SA_KEY){toast('Sheet 설정 필요','err');return}
-  if(!confirm('daily_value에서 SOXS 가격을 ~260304 기간 동안 ÷20 보정합니다.\n\n계속?'))return;
+  const desc=DV_SPLIT_RULES.map(r=>`• ${r.ticker} ${r.from}~${r.to}: ÷${r.divisor}`).join('\n');
+  if(!confirm(`daily_value 보정:\n${desc}\n\n계속?`))return;
   try{
-    const token=await getAccessToken();
-    const resp=await sheetsGet('daily_value!A:E');
-    const rows=resp?.values||[];
-    if(rows.length===0){toast('daily_value 비어있음','err');return}
-
-    // Repair rules: {ticker, from, to, divisor}
-    const rules=[
-      {ticker:'SOXS', from:'000000', to:'260304', divisor:20},
-    ];
-
-    let fixed=0;
-    for(let i=0;i<rows.length;i++){
-      const r=rows[i];
-      const date=String(r[0]||'');
-      if(date==='date')continue;
-
-      let holdings={},prices={};
-      try{holdings=JSON.parse(r[3]||'{}')}catch(e){}
-      try{prices=JSON.parse(r[4]||'{}')}catch(e){}
-
-      let changed=false;
-      for(const rule of rules){
-        if(date<rule.from||date>rule.to)continue;
-        const tk=rule.ticker;
-        if(prices[tk]==null&&holdings[tk]==null)continue;
-        if(prices[tk]!=null) prices[tk]=Math.round(prices[tk]/rule.divisor*10000)/10000;
-        if(holdings[tk]!=null) holdings[tk]=Math.round(holdings[tk]/rule.divisor*100)/100;
-        changed=true;
-      }
-      if(!changed)continue;
-
-      // Recompute totalValue = cash + sum(holdings)
-      let cashVal=0;
-      try{
-        const parsed=JSON.parse(r[2]||'0');
-        cashVal=typeof parsed==='object'?(parsed['삼성']||0)+(parsed['키움']||0)+(parsed['메리츠']||0):parseFloat(parsed)||0;
-      }catch(e){cashVal=parseFloat(r[2])||0}
-      let holdTotal=0;
-      for(const v of Object.values(holdings)) holdTotal+=v;
-      const newTotal=Math.round((cashVal+holdTotal)*100)/100;
-
-      rows[i]=[date, newTotal, r[2], JSON.stringify(holdings), JSON.stringify(prices)];
-      fixed++;
-    }
-
+    const fixed=await _repairDVSplitsCore();
     if(fixed===0){toast('보정 대상 없음','ok');return}
-
-    // Write back entire daily_value
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/daily_value!A:E:clear`,{
-      method:'POST',headers:{Authorization:`Bearer ${token}`}});
-    for(let i=0;i<rows.length;i+=1000){
-      const chunk=rows.slice(i,i+1000);
-      const startRow=i+1;
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/daily_value!A${startRow}:E${startRow+chunk.length-1}?valueInputOption=USER_ENTERED`,{
-        method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-        body:JSON.stringify({values:chunk})});
-    }
-
-    // Update local cache
-    dailyValueCache={};
-    try{localStorage.removeItem(CACHE_KEY_DV)}catch(e){}
-    historyPriceCache={};
-
     toast(`✅ 보정 완료: ${fixed}일 수정됨`,'ok');
     console.log(`repairDVSplits: fixed ${fixed} daily_value rows`);
   }catch(e){toast('오류: '+e.message,'err');console.error(e)}
+}
+
+// Auto: called after Recalc, no confirmation
+async function repairDVSplitsAuto(){
+  if(!SHEET_ID||!SA_KEY)return;
+  try{
+    const fixed=await _repairDVSplitsCore();
+    if(fixed>0)console.log(`repairDVSplitsAuto: fixed ${fixed} daily_value rows`);
+  }catch(e){console.warn('repairDVSplitsAuto failed:',e)}
 }
 
 async function loadFundHistory(){
@@ -3600,6 +3614,7 @@ async function recalcDailyValues(){
   toast('daily_value 초기화 완료. FMP에서 전체 구축 중...','ok');
   // Full build via FMP (updateDailyValuesIncremental handles empty state)
   await updateDailyValuesIncremental();
+  await repairDVSplitsAuto();
   toast('✅ Recalc 완료','ok');
   showTotalValueChart();
 }
