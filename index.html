@@ -1011,9 +1011,10 @@ async function updateDailyValuesIncremental(){
     if(!posBk[bk])posBk[bk]=0;
     posBk[bk]+=tx.qty;
     if(Math.abs(posBk[bk])<0.0001)posBk[bk]=0;
-    // Cash flow: total = |qty|*price+tax
-    if(tx.origQty>0){if(tx.broker==='삼성')cashSS-=tx.total;else if(tx.broker==='키움')cashKW-=tx.total;else cashMR-=tx.total}
-    else if(tx.origQty<0){if(tx.broker==='삼성')cashSS+=(tx.total-2*tx.tax);else if(tx.broker==='키움')cashKW+=(tx.total-2*tx.tax);else cashMR+=(tx.total-2*tx.tax)}
+    // Cash: compute from origQty*origPrice (raw Sheet values, split-immune)
+    const cashAmt=Math.abs(tx.origQty)*tx.origPrice;
+    if(tx.origQty>0){if(tx.broker==='삼성')cashSS-=(cashAmt+tx.tax);else if(tx.broker==='키움')cashKW-=(cashAmt+tx.tax);else cashMR-=(cashAmt+tx.tax)}
+    else if(tx.origQty<0){if(tx.broker==='삼성')cashSS+=(cashAmt-tx.tax);else if(tx.broker==='키움')cashKW+=(cashAmt-tx.tax);else cashMR+=(cashAmt-tx.tax)}
   }
 
   // For incremental: replay up to the day before our computation window
@@ -2379,8 +2380,9 @@ function computeOverview(){
 
   const cashByBroker={삼성:0,키움:0,메리츠:0};
   for(const tx of allTransactions){
-    if(tx.origQty>0)cashByBroker[tx.broker]-=tx.total;
-    else if(tx.origQty<0)cashByBroker[tx.broker]+=(tx.total-2*tx.tax);
+    const cashAmt=Math.abs(tx.origQty)*tx.origPrice;
+    if(tx.origQty>0)cashByBroker[tx.broker]-=(cashAmt+tx.tax);
+    else if(tx.origQty<0)cashByBroker[tx.broker]+=(cashAmt-tx.tax);
   }
 
   cachedOverviewData={holdMap,allHoldings,cashByBroker};
@@ -3612,15 +3614,16 @@ async function computeDailyValues(el){
         if(!positions[tx.ticker])positions[tx.ticker]=0;
         positions[tx.ticker]+=tx.qty; // split-adjusted qty
         if(Math.abs(positions[tx.ticker])<0.0001)positions[tx.ticker]=0;
-        // Cash: total = |qty|*price+tax
+        // Cash: origQty*origPrice (raw Sheet values, split-immune)
+        const cashAmt=Math.abs(tx.origQty)*tx.origPrice;
         if(tx.origQty>0){
-          if(tx.broker==='삼성')cashSS-=tx.total;
-          else if(tx.broker==='키움')cashKW-=tx.total;
-          else cashMR-=tx.total;
+          if(tx.broker==='삼성')cashSS-=(cashAmt+tx.tax);
+          else if(tx.broker==='키움')cashKW-=(cashAmt+tx.tax);
+          else cashMR-=(cashAmt+tx.tax);
         }else if(tx.origQty<0){
-          if(tx.broker==='삼성')cashSS+=(tx.total-2*tx.tax);
-          else if(tx.broker==='키움')cashKW+=(tx.total-2*tx.tax);
-          else cashMR+=(tx.total-2*tx.tax);
+          if(tx.broker==='삼성')cashSS+=(cashAmt-tx.tax);
+          else if(tx.broker==='키움')cashKW+=(cashAmt-tx.tax);
+          else cashMR+=(cashAmt-tx.tax);
         }
       }
       txDateIdx++;
@@ -3752,16 +3755,18 @@ async function showTotalValueChart(){
       const newCost=pos.avgCost*pos.qty+tx.qty*tx.price;
       pos.qty+=tx.qty;
       pos.avgCost=pos.qty>0?newCost/pos.qty:0;
-      if(tx.broker==='삼성')cashSS-=tx.total;
-      else if(tx.broker==='키움')cashKW-=tx.total;
-      else cashMR-=tx.total;
+      const cashAmt2=Math.abs(tx.origQty)*tx.origPrice;
+      if(tx.broker==='삼성')cashSS-=(cashAmt2+tx.tax);
+      else if(tx.broker==='키움')cashKW-=(cashAmt2+tx.tax);
+      else cashMR-=(cashAmt2+tx.tax);
     }else if(tx.qty<0){
       const sq=Math.abs(tx.qty);
       pos.qty-=sq;
       if(pos.qty<=0){pos.qty=0;pos.avgCost=0}
-      if(tx.broker==='삼성')cashSS+=(tx.total-2*tx.tax);
-      else if(tx.broker==='키움')cashKW+=(tx.total-2*tx.tax);
-      else cashMR+=(tx.total-2*tx.tax);
+      const cashAmt2=Math.abs(tx.origQty)*tx.origPrice;
+      if(tx.broker==='삼성')cashSS+=(cashAmt2-tx.tax);
+      else if(tx.broker==='키움')cashKW+=(cashAmt2-tx.tax);
+      else cashMR+=(cashAmt2-tx.tax);
     }
     if(tx.date!==lastDate){
       if(lastDate)captureState(lastDate,txPrices);
