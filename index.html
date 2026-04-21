@@ -1230,7 +1230,7 @@ async function rescaleEpsHistory(){
   toast('🔧 EPS 보정 중...','ok');
   try{
     const token=await getAccessToken();
-    const resp=await sheetsGet('fund_history!A:F');
+    const resp=await sheetsGet('fund_history!A:H');
     const allRows=resp&&resp.values?resp.values:[];
     if(allRows.length<=1){toast('데이터 없음','err');return}
     const header=allRows[0];
@@ -1314,9 +1314,9 @@ async function rescaleEpsHistory(){
     if(corrected===0){toast('보정 대상 없음','ok');return}
 
     // Write back to Sheet
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:F:clear`,{
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:H:clear`,{
       method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:F?valueInputOption=USER_ENTERED`,{
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:H?valueInputOption=USER_ENTERED`,{
       method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
       body:JSON.stringify({values:allRows})});
 
@@ -1332,7 +1332,7 @@ async function dedupFundHistory(){
   toast('🧹 중복 제거 중...','ok');
   try{
     const token=await getAccessToken();
-    const resp=await sheetsGet('fund_history!A:F');
+    const resp=await sheetsGet('fund_history!A:H');
     const allRows=resp&&resp.values?resp.values:[];
     if(allRows.length<=1){toast('데이터 없음','err');return}
     const header=allRows[0];
@@ -1348,9 +1348,9 @@ async function dedupFundHistory(){
     }
     if(dupes===0){toast('중복 없음 ✅','ok');return}
     // Clear and rewrite
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:F:clear`,{
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:H:clear`,{
       method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:F?valueInputOption=USER_ENTERED`,{
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:H?valueInputOption=USER_ENTERED`,{
       method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
       body:JSON.stringify({values:unique})});
     // Reload
@@ -1367,7 +1367,7 @@ async function repairFundHistoryPER(){
   toastPersist('🔧 pe12m 보정 중...','ok');
   try{
     const token=await getAccessToken();
-    const resp=await sheetsGet('fund_history!A:F');
+    const resp=await sheetsGet('fund_history!A:H');
     const allRows=resp&&resp.values?resp.values:[];
     if(allRows.length<=1){toast('데이터 없음','err');return}
 
@@ -1430,9 +1430,9 @@ async function repairFundHistoryPER(){
     if(repaired===0){toast('보정할 항목 없음','ok');return}
 
     // Write back
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:F:clear`,{
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:H:clear`,{
       method:'POST',headers:{Authorization:`Bearer ${token}`}});
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:F?valueInputOption=USER_ENTERED`,{
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:H?valueInputOption=USER_ENTERED`,{
       method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
       body:JSON.stringify({values:allRows})});
 
@@ -1629,7 +1629,7 @@ async function addSplitMarkers(){  if(!SHEET_ID||!SA_KEY){toast('Sheet 설정 �
 async function loadFundHistory(){
   if(!SHEET_ID||!SA_KEY)return;
   try{
-    const resp=await sheetsGet('fund_history!A2:F5000');
+    const resp=await sheetsGet('fund_history!A2:H5000');
     const histRows=resp.values||resp;
     fundHistory={};
     if(Array.isArray(histRows)){
@@ -1643,7 +1643,9 @@ async function loadFundHistory(){
           epsNorm:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
           revNorm:r[3]!=null&&r[3]!==''?parseFloat(r[3]):null,
           targetPrice:r[4]!=null&&r[4]!==''?parseFloat(r[4]):null,
-          pe12m:r[5]!=null&&r[5]!==''?parseFloat(r[5]):null
+          pe12m:r[5]!=null&&r[5]!==''?parseFloat(r[5]):null,
+          epsFwd:r[6]!=null&&r[6]!==''?parseFloat(r[6]):null,
+          peFwd:r[7]!=null&&r[7]!==''?parseFloat(r[7]):null
         });
       }
       for(const tk of Object.keys(fundHistory)){
@@ -1835,6 +1837,7 @@ async function refreshFundamentals(){
       let epsNorm=null,epsPrevNorm=null,revNorm=null,revPrevNorm=null;
       let numAnalystsEps=null,numAnalystsRev=null;
       let pe12m=null,epsYoy12m=null,revYoy12m=null;
+      let epsFwd=null,peFwd=null;
       // Target normalization: Dec 31 of current year (e.g. Dec 31 2026)
       const targetYear=new Date().getFullYear();
       // Dec 31 = day 365 (or 366 in leap year)
@@ -1934,6 +1937,34 @@ async function refreshFundamentals(){
         // P/E = price / normalized EPS
         pe12m=(epsNorm&&epsNorm>0&&price)?price/epsNorm:null;
 
+        // --- Forward 12m EPS: interpolate to today + 1 year ---
+        const nowDt=new Date();
+        const jan1Now=new Date(nowDt.getFullYear(),0,1);
+        const dayOfYearNow=Math.round((nowDt-jan1Now)/86400000);
+        const daysInYearNow=((nowDt.getFullYear()%4===0&&nowDt.getFullYear()%100!==0)||nowDt.getFullYear()%400===0)?366:365;
+        const fwdFrac=nowDt.getFullYear()+(dayOfYearNow/daysInYearNow)+1.0;
+
+        let loFwd=null,hiFwd=null;
+        for(let i=0;i<entries.length-1;i++){
+          if(entries[i].frac<=fwdFrac&&entries[i+1].frac>=fwdFrac){
+            loFwd=entries[i];hiFwd=entries[i+1];break;
+          }
+        }
+        if(!loFwd&&!hiFwd&&entries.length>=1){
+          if(entries[0].frac>fwdFrac){
+            loFwd=entries[0];hiFwd=entries.length>=2?entries[1]:entries[0];
+          }else if(entries[entries.length-1].frac<fwdFrac){
+            loFwd=entries.length>=2?entries[entries.length-2]:entries[entries.length-1];
+            hiFwd=entries[entries.length-1];
+          }
+        }
+        epsFwd=null;peFwd=null;
+        if(loFwd&&hiFwd){
+          epsFwd=lerp(loFwd,hiFwd,fwdFrac,'eps');
+          peFwd=(epsFwd&&epsFwd>0&&price)?price/epsFwd:null;
+          console.log(`${tk} forward 12m: fwdFrac=${fwdFrac.toFixed(3)}, lo=${loFwd.date}(${loFwd.eps?.toFixed(3)}), hi=${hiFwd.date}(${hiFwd.eps?.toFixed(3)}), epsFwd=${epsFwd?.toFixed(3)}, peFwd=${peFwd?.toFixed(1)}`);
+        }
+
         console.log(`${tk} interpolation: targetFrac=${targetFrac}, lo=${lo?.date}(frac=${lo?.frac},eps=${lo?.eps?.toFixed(3)},rev=${Math.round(lo?.rev||0)}), hi=${hi?.date}(frac=${hi?.frac},eps=${hi?.eps?.toFixed(3)},rev=${Math.round(hi?.rev||0)}), epsNorm=${epsNorm?.toFixed(3)}, epsYoy=${epsYoy12m?.toFixed(1)}%`);
         console.log(`${tk} all entries:`,entries.map(e=>`${e.date}(frac=${e.frac.toFixed(3)},eps=${e.eps?.toFixed(3)},rev=${Math.round(e.rev||0)},nEps=${e.nEps})`).join(' | '));
       }
@@ -1967,6 +1998,7 @@ async function refreshFundamentals(){
         price, targetYear:`${targetYear}`,
         epsNorm, epsPrevNorm, revNorm, revPrevNorm,
         pe12m, epsYoy12m, revYoy12m,
+        epsFwd, peFwd,
         numAnalystsEps, numAnalystsRev,
         targetPrice, targetHigh, targetLow,
         strongBuy, buy, hold, sell, strongSell, consensus,
@@ -2076,7 +2108,7 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
       // Read existing rows
       let existingRows=[];
       try{
-        const resp=await sheetsGet('fund_history!A:F');
+        const resp=await sheetsGet('fund_history!A:H');
         existingRows=resp&&resp.values?resp.values:[];
       }catch(e){}
 
@@ -2091,7 +2123,7 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
       let changed=false;
       for(const[tk,d]of Object.entries(fundData)){
         if(d.epsNorm==null)continue;
-        const row=[today,tk,d.epsNorm.toFixed(4),d.revNorm?Math.round(d.revNorm):'',d.targetPrice||'',d.pe12m?d.pe12m.toFixed(2):''];
+        const row=[today,tk,d.epsNorm.toFixed(4),d.revNorm?Math.round(d.revNorm):'',d.targetPrice||'',d.pe12m?d.pe12m.toFixed(2):'',d.epsFwd?d.epsFwd.toFixed(4):'',d.peFwd?d.peFwd.toFixed(2):''];
         const key=`${today}|${tk}`;
         if(existingMap[key]!=null){
           // Replace existing row
@@ -2104,23 +2136,23 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
         // Update in-memory fundHistory
         if(!fundHistory[tk])fundHistory[tk]=[];
         const memIdx=fundHistory[tk].findIndex(h=>h.date===today);
-        const memEntry={date:today,epsNorm:d.epsNorm,revNorm:d.revNorm,targetPrice:d.targetPrice,pe12m:d.pe12m};
+        const memEntry={date:today,epsNorm:d.epsNorm,revNorm:d.revNorm,targetPrice:d.targetPrice,pe12m:d.pe12m,epsFwd:d.epsFwd,peFwd:d.peFwd};
         if(memIdx>=0)fundHistory[tk][memIdx]=memEntry;
         else fundHistory[tk].push(memEntry);
       }
 
       if(changed){
         // Write header + all rows (clear and rewrite)
-        const header=['date','ticker','epsNorm','revNorm','targetPrice','pe12m'];
+        const header=['date','ticker','epsNorm','revNorm','targetPrice','pe12m','epsFwd','peFwd'];
         if(existingRows.length>0&&existingRows[0][0]==='date')existingRows[0]=header;
         else existingRows.unshift(header);
         // Pad short rows to 6 columns
         for(let i=0;i<existingRows.length;i++){
-          while(existingRows[i].length<6)existingRows[i].push('');
+          while(existingRows[i].length<8)existingRows[i].push('');
         }
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:F:clear`,{
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:H:clear`,{
           method:'POST',headers:{Authorization:`Bearer ${token}`}});
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:F?valueInputOption=USER_ENTERED`,{
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:H?valueInputOption=USER_ENTERED`,{
           method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
           body:JSON.stringify({values:existingRows})});
         console.log(`fund_history: wrote ${existingRows.length-1} rows (updated today's entries)`);
