@@ -1442,10 +1442,10 @@ async function repairFundHistoryPER(){
   }catch(e){toast('보정 오류: '+e.message,'err');console.error(e)}
 }
 
-// One-time fix: GDXD prices in daily_value are 200x too large for 250423~250602
+// One-time fix: split-affected prices in daily_value
 // Divides GDXD price and holding value by 200, recomputes totalValue
 const DV_SPLIT_RULES=[
-  {ticker:'GDXD', from:'250423', to:'250602', divisor:200},
+  {ticker:'GDXD', from:'250423', to:'250603', divisor:200},
   {ticker:'SQQQ', from:'000000', to:'251119', divisor:5},
   {ticker:'SOXS', from:'000000', to:'260304', divisor:20},
   {ticker:'TSLQ', from:'000000', to:'251020', divisor:1/3},
@@ -1538,7 +1538,7 @@ const SPLIT_MARKERS=[
   {ticker:'TSLQ', before:'251021', split:'3'},
   {ticker:'NVDQ', before:'251029', split:'20'},
   {ticker:'SQQQ', before:'251120', split:'5'},
-  {ticker:'GDXD', before:'250603', split:'200'},
+  {ticker:'GDXD', before:'250604', split:'200'},
   {ticker:'SOXS', before:'260305', split:'20'},
 ];
 
@@ -2157,8 +2157,6 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
           method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
           body:JSON.stringify({values:existingRows})});
         if(!fhResp.ok)console.error('fund_history write failed:',fhResp.status,await fhResp.text());
-        const sampleRow=existingRows.find(r=>r[6]&&r[6]!=='');
-        console.log('fund_history sample row with eps12m:',sampleRow);
         console.log(`fund_history: wrote ${existingRows.length-1} rows (updated today's entries)`);
         localStorage.setItem('cache_fundHistory',JSON.stringify(fundHistory));
       }else{
@@ -2420,40 +2418,6 @@ function computeOverview(){
   }
 
   cachedOverviewData={holdMap,allHoldings,cashByBroker};
-}
-
-// Debug: print per-ticker realized PL breakdown
-function debugRealizedPL(){
-  if(!cachedOverviewData)return;
-  const{holdMap}=cachedOverviewData;
-  const byTicker={};
-  for(const[key,h] of Object.entries(holdMap)){
-    if(!byTicker[h.ticker])byTicker[h.ticker]={realPL:0,realPLYtd:0,qty:0};
-    byTicker[h.ticker].realPL+=h.realizedPL;
-    byTicker[h.ticker].realPLYtd+=h.realizedPLThisYear;
-    byTicker[h.ticker].qty+=h.totalQty;
-  }
-  let total=0,totalYtd=0;
-  console.log('=== Realized PL by Ticker ===');
-  for(const[tk,v] of Object.entries(byTicker).sort((a,b)=>Math.abs(b[1].realPL)-Math.abs(a[1].realPL))){
-    if(v.realPL===0&&v.realPLYtd===0)continue;
-    console.log(`${tk}: total=$${v.realPL.toFixed(2)}, ytd=$${v.realPLYtd.toFixed(2)}, heldQty=${v.qty}`);
-    total+=v.realPL;totalYtd+=v.realPLYtd;
-  }
-  console.log(`TOTAL: $${total.toFixed(2)}, YTD: $${totalYtd.toFixed(2)}`);
-  // Also show split-affected tickers
-  const splitTickers=['TSLQ','NVDQ','SQQQ','GDXD','SOXS','TQQQ'];
-  console.log('=== Split-affected ticker txs ===');
-  for(const tk of splitTickers){
-    const txs=allTransactions.filter(t=>t.ticker===tk).sort((a,b)=>a.date.localeCompare(b.date));
-    if(txs.length===0)continue;
-    const marked=txs.filter(t=>t.split);
-    const unmarked=txs.filter(t=>!t.split);
-    console.log(`${tk}: ${txs.length} txs (${marked.length} split-marked, ${unmarked.length} unmarked)`);
-    for(const tx of txs){
-      console.log(`  ${tx.date} ${tx.origQty>0?'BUY':'SELL'} origQty=${tx.origQty} origPrice=${tx.origPrice?.toFixed(4)} → adjQty=${tx.qty.toFixed(4)} adjPrice=${tx.price.toFixed(4)} split=${tx.split||'none'} total=${tx.total.toFixed(2)}`);
-    }
-  }
 }
 
 async function loadOverview(){
