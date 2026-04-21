@@ -2708,7 +2708,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     }else if(fund.peDec!=null){
       // Fallback to PEdec if PE12m not available
       const yoy=fund.epsYoy12m!=null?` <span style="color:var(--text3);font-size:9px">EPS</span>${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%`:'';
-      peRow=`<span style="color:var(--text3)">${fund.peDec.toFixed(1)}${yoy}</span>`;
+      peRow=`<span style="color:var(--text3)">${fmtF(fund.peDec)}${yoy}</span>`;
     }
     if(fund.revNorm!=null){
       const revB=(fund.revNorm/1e9).toFixed(1);
@@ -2749,10 +2749,10 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         const eps1w=e1w?.epsDec;
         const eps1m=e1m?.epsDec;
         const nowStyle=valStyle(nowEps,eps1w);
-        let parts=[`<span style="${nowStyle}">${nowEps.toFixed(2)}</span>`];
-        if(eps1w!=null)parts.push(`<span style="color:var(--text3)">${eps1w.toFixed(2)}</span>`);
+        let parts=[`<span style="${nowStyle}">${fmtF(nowEps)}</span>`];
+        if(eps1w!=null)parts.push(`<span style="color:var(--text3)">${fmtF(eps1w)}</span>`);
         else parts.push(`<span style="color:var(--text3)">—</span>`);
-        if(eps1m!=null)parts.push(`<span style="color:var(--text3)">${eps1m.toFixed(2)}</span>`);
+        if(eps1m!=null)parts.push(`<span style="color:var(--text3)">${fmtF(eps1m)}</span>`);
         else parts.push(`<span style="color:var(--text3)">—</span>`);
         epsCol=parts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
       }
@@ -2770,9 +2770,9 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
           return 'color:var(--text3)';
         }
         const nowStyle=perStyle(nowPe,pe1w);
-        let pParts=[`<span style="${nowStyle}">${nowPe.toFixed(1)}</span>`];
-        pParts.push(pe1w!=null?`<span style="color:var(--text3)">${pe1w.toFixed(1)}</span>`:`<span style="color:var(--text3)">—</span>`);
-        pParts.push(pe1m!=null?`<span style="color:var(--text3)">${pe1m.toFixed(1)}</span>`:`<span style="color:var(--text3)">—</span>`);
+        let pParts=[`<span style="${nowStyle}">${fmtF(nowPe)}</span>`];
+        pParts.push(pe1w!=null?`<span style="color:var(--text3)">${fmtF(pe1w)}</span>`:`<span style="color:var(--text3)">—</span>`);
+        pParts.push(pe1m!=null?`<span style="color:var(--text3)">${fmtF(pe1m)}</span>`:`<span style="color:var(--text3)">—</span>`);
         perCol=pParts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
       }
 
@@ -3008,9 +3008,9 @@ function renderWatchlist(){
         const eps1w=e1w?.epsDec;
         const eps1m=e1m?.epsDec;
         const epsCls=valCls(nowEps,eps1w);
-        let parts=[`<span class="${epsCls}">${nowEps.toFixed(2)}</span>`];
-        parts.push(eps1w!=null?`<span class="wl-muted">${eps1w.toFixed(2)}</span>`:`<span class="wl-muted">—</span>`);
-        parts.push(eps1m!=null?`<span class="wl-muted">${eps1m.toFixed(2)}</span>`:`<span class="wl-muted">—</span>`);
+        let parts=[`<span class="${epsCls}">${fmtF(nowEps)}</span>`];
+        parts.push(eps1w!=null?`<span class="wl-muted">${fmtF(eps1w)}</span>`:`<span class="wl-muted">—</span>`);
+        parts.push(eps1m!=null?`<span class="wl-muted">${fmtF(eps1m)}</span>`:`<span class="wl-muted">—</span>`);
         epsCell=parts.join(arw);
       }
 
@@ -3021,9 +3021,9 @@ function renderWatchlist(){
         const pe1w=e1w?.peDec??null;
         const pe1m=e1m?.peDec??null;
         const perNowCls=pe1w!=null?(nowPe<pe1w*0.999?'wl-up':nowPe>pe1w*1.001?'wl-dn':'wl-muted'):'wl-muted';
-        let parts=[`<span class="${perNowCls}">${nowPe.toFixed(1)}</span>`];
-        parts.push(pe1w!=null?`<span class="wl-muted">${pe1w.toFixed(1)}</span>`:`<span class="wl-muted">—</span>`);
-        parts.push(pe1m!=null?`<span class="wl-muted">${pe1m.toFixed(1)}</span>`:`<span class="wl-muted">—</span>`);
+        let parts=[`<span class="${perNowCls}">${fmtF(nowPe)}</span>`];
+        parts.push(pe1w!=null?`<span class="wl-muted">${fmtF(pe1w)}</span>`:`<span class="wl-muted">—</span>`);
+        parts.push(pe1m!=null?`<span class="wl-muted">${fmtF(pe1m)}</span>`:`<span class="wl-muted">—</span>`);
         perCell=parts.join(arw);
       }
 
@@ -3123,7 +3123,7 @@ function renderWatchlist(){
     const secId=sec.name.replace(/[^A-Za-z0-9]/g,'_');
     html+=`<tr style="background:var(--surface2);font-weight:600;border-top:1px solid var(--border)">
       <td style="padding:2px 4px"><input type="text" inputmode="numeric" id="wlPlan_${secId}" value="${planned||''}" placeholder="계획금액"
-        style="width:70px;padding:3px 5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font:11px 'JetBrains Mono',monospace;text-align:right"
+        style="width:50px;padding:3px 4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font:11px 'JetBrains Mono',monospace;text-align:right"
         onclick="event.stopPropagation()" onchange="saveWatchPlan('${sec.name}',this.value);renderWatchlist()"><span style="font-size:10px;color:var(--text2);margin-left:4px">${pctUsed?pctUsed+'%':''}</span></td>
       <td>${fmtC(secCost)}</td>
       <td>${fmtValPL(secVal,secUpl)}</td>
@@ -5190,7 +5190,7 @@ async function drawHistoryChart(ticker,period,btn){
       const lastPer=data[data.length-1].peDec;
       if(lastPer!=null&&lastPer>0){
         ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='right';ctx.fillStyle='#ce93d8';
-        ctx.fillText('PEdec '+lastPer.toFixed(1),pad.l-4,yPos5(lastPer)-6);
+        ctx.fillText('PEdec '+fmtF(lastPer),pad.l-4,yPos5(lastPer)-6);
       }
     }
 
@@ -5218,7 +5218,7 @@ async function drawHistoryChart(ticker,period,btn){
       const lastEps=data[data.length-1].epsDec;
       if(lastEps!=null&&lastEps>0){
         ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle='#4fc3f7';
-        ctx.fillText('EPSdec '+lastEps.toFixed(2),W-pad.r+4,yPosE(lastEps)-6);
+        ctx.fillText('EPSdec '+fmtF(lastEps),W-pad.r+4,yPosE(lastEps)-6);
       }
     }
 
@@ -5277,8 +5277,8 @@ async function drawHistoryChart(ticker,period,btn){
     const totalPL=pl+d.realized;
     html+=`<div style="color:#e0e0e0;border-top:1px solid #333;padding-top:2px;margin-top:2px">총손익: ${(totalPL>=0?'+':'')}${fmtK(totalPL)}</div>`;
     if(d.price>0)html+=`<div style="color:#26c6da">주가: $${d.price.toFixed(2)}</div>`;
-    if(d.peDec!=null&&d.peDec>0)html+=`<div style="color:#ce93d8">PEdec: ${d.peDec.toFixed(1)}</div>`;
-    if(d.epsDec!=null&&d.epsDec>0)html+=`<div style="color:#4fc3f7">EPSdec: ${d.epsDec.toFixed(2)}</div>`;
+    if(d.peDec!=null&&d.peDec>0)html+=`<div style="color:#ce93d8">PEdec: ${fmtF(d.peDec)}</div>`;
+    if(d.epsDec!=null&&d.epsDec>0)html+=`<div style="color:#4fc3f7">EPSdec: ${fmtF(d.epsDec)}</div>`;
     tip.innerHTML=html;
     tip.style.display='block';
     const xPx=xPos(idx);
@@ -5498,6 +5498,7 @@ function dvCashTotal(c){
   return 0;
 }
 function rd(n){return Math.round(n*100)/100}
+function fmtF(v){const p=parseFloat(v.toPrecision(3));const s=p.toFixed(1);return s.endsWith('.0')?s.slice(0,-2):s}
 function fmtDate(d){d=String(d);return d.length===6?`20${d.slice(0,2)}-${d.slice(2,4)}-${d.slice(4,6)}`:d}
 function fmtUSD(n){return(n>=0?'':'-')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function addLog(el,msg,cls=''){const d=document.createElement('div');d.className=cls;d.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;el.appendChild(d);el.scrollTop=el.scrollHeight}
