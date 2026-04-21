@@ -2376,11 +2376,16 @@ function computeOverview(){
 
   const holdMap={};
 
+  // Also compute realized PL using origQty/origPrice for comparison
+  const holdMapOrig={};
+
   for(const tx of chronoTx){
     if(!tx.ticker)continue;
     const key=`${tx.broker}|${tx.ticker}`;
     if(!holdMap[key])holdMap[key]={broker:tx.broker,ticker:tx.ticker,totalQty:0,avgCost:0,realizedPL:0,realizedPLThisYear:0};
+    if(!holdMapOrig[key])holdMapOrig[key]={totalQty:0,avgCost:0,realizedPL:0};
     const h=holdMap[key];
+    const ho=holdMapOrig[key];
 
     if(tx.qty>0){
       // Buy: update moving average cost (no tax)
@@ -2396,7 +2401,36 @@ function computeOverview(){
       h.totalQty-=sellQty;
       if(h.totalQty<=0){h.avgCost=0;h.totalQty=0}
     }
+
+    // Same with original (pre-split) values
+    const oq=tx.origQty, op=tx.origPrice;
+    if(oq>0){
+      const nc=ho.avgCost*ho.totalQty+oq*op;
+      ho.totalQty+=oq;
+      ho.avgCost=ho.totalQty>0?nc/ho.totalQty:0;
+    }else if(oq<0){
+      const sq=Math.abs(oq);
+      ho.realizedPL+=sq*(op-ho.avgCost)-tx.tax;
+      ho.totalQty-=sq;
+      if(ho.totalQty<=0){ho.avgCost=0;ho.totalQty=0}
+    }
   }
+
+  // Compare realized PL
+  console.log('=== Realized PL: split-adjusted vs original ===');
+  let totalAdj=0,totalOrig=0;
+  const tickers=new Set(Object.keys(holdMap).map(k=>k.split('|')[1]));
+  for(const tk of [...tickers].sort()){
+    let adjPL=0,origPL=0;
+    for(const key of Object.keys(holdMap)){
+      if(key.endsWith('|'+tk)){adjPL+=holdMap[key].realizedPL;origPL+=holdMapOrig[key].realizedPL}
+    }
+    if(Math.abs(adjPL-origPL)>0.01){
+      console.warn(`${tk}: adjusted=$${adjPL.toFixed(2)}, original=$${origPL.toFixed(2)}, DIFF=$${(adjPL-origPL).toFixed(2)}`);
+    }
+    totalAdj+=adjPL;totalOrig+=origPL;
+  }
+  console.log(`TOTAL realized: adjusted=$${totalAdj.toFixed(2)}, original=$${totalOrig.toFixed(2)}, DIFF=$${(totalAdj-totalOrig).toFixed(2)}`);
 
   const allHoldings=Object.values(holdMap).filter(h=>h.totalQty>0).map(h=>({
     broker:h.broker,ticker:h.ticker,qty:h.totalQty,
@@ -2422,6 +2456,38 @@ function computeOverview(){
   }
 
   cachedOverviewData={holdMap,allHoldings,cashByBroker};
+}
+
+// Debug: print per-ticker realized PL breakdown
+function debugRealizedPL(){
+  if(!cachedOverviewData)return;
+  const{holdMap}=cachedOverviewData;
+  const byTicker={};
+  for(const[key,h] of Object.entries(holdMap)){
+    if(!byTicker[h.ticker])byTicker[h.ticker]={realPL:0,realPLYtd:0,qty:0};
+    byTicker[h.ticker].realPL+=h.realizedPL;
+    byTicker[h.ticker].realPLYtd+=h.realizedPLThisYear;
+    byTicker[h.ticker].qty+=h.totalQty;
+  }
+  let total=0,totalYtd=0;
+  console.log('=== Realized PL by Ticker ===');
+  for(const[tk,v] of Object.entries(byTicker).sort((a,b)=>Math.abs(b[1].realPL)-Math.abs(a[1].realPL))){
+    if(v.realPL===0&&v.realPLYtd===0)continue;
+    console.log(`${tk}: total=$${v.realPL.toFixed(2)}, ytd=$${v.realPLYtd.toFixed(2)}, heldQty=${v.qty}`);
+    total+=v.realPL;totalYtd+=v.realPLYtd;
+  }
+  console.log(`TOTAL: $${total.toFixed(2)}, YTD: $${totalYtd.toFixed(2)}`);
+  // Also show split-affected tickers
+  const splitTickers=['TSLQ','NVDQ','SQQQ','GDXD','SOXS','TQQQ'];
+  console.log('=== Split-affected ticker txs ===');
+  for(const tk of splitTickers){
+    const txs=allTransactions.filter(t=>t.ticker===tk);
+    if(txs.length===0)continue;
+    console.log(`${tk}: ${txs.length} txs, splits: ${txs.filter(t=>t.split).length} marked`);
+    for(const tx of txs.slice(0,3)){
+      console.log(`  ${tx.date} ${tx.qty>0?'BUY':'SELL'} origQty=${tx.origQty} origPrice=${tx.origPrice?.toFixed(4)} → adjQty=${tx.qty.toFixed(2)} adjPrice=${tx.price.toFixed(4)} split=${tx.split||'none'}`);
+    }
+  }
 }
 
 async function loadOverview(){
