@@ -5536,7 +5536,7 @@ function dvCashTotal(c){
   return 0;
 }
 function rd(n){return Math.round(n*100)/100}
-function fmtF(v){return parseFloat(v.toPrecision(3)).toFixed(1)}
+function fmtF(v){const p=parseFloat(v.toPrecision(3));return Math.abs(p)>=100?Math.round(p).toString():p.toFixed(1)}
 function fmtDate(d){d=String(d);return d.length===6?`20${d.slice(0,2)}-${d.slice(2,4)}-${d.slice(4,6)}`:d}
 function fmtUSD(n){return(n>=0?'':'-')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function addLog(el,msg,cls=''){const d=document.createElement('div');d.className=cls;d.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;el.appendChild(d);el.scrollTop=el.scrollHeight}
