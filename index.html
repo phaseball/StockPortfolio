@@ -180,10 +180,10 @@ table.t tr:hover td{background:var(--accentBg)}
   <div id="p-overview" class="panel on">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <div class="filter-btns">
-        <button class="fbtn on" onclick="setFilter('삼성',this)">🔵 삼성</button>
+        <button class="fbtn" onclick="setFilter('삼성',this)">🔵 삼성</button>
         <button class="fbtn" onclick="setFilter('키움',this)">🔴 키움</button>
         <button class="fbtn" onclick="setFilter('메리츠',this)">🟢 메리츠</button>
-        <button class="fbtn" onclick="setFilter('all',this)">Total</button>
+        <button class="fbtn on" onclick="setFilter('all',this)">Total</button>
       </div>
       <div style="display:flex;gap:4px;align-items:center">
         <button class="btn btn-s btn-sm" onclick="refreshPrices()" title="현재가 업데이트">🔄 Price</button>
@@ -1445,7 +1445,7 @@ async function repairFundHistoryPER(){
 // One-time fix: split-affected prices in daily_value
 // Divides GDXD price and holding value by 200, recomputes totalValue
 const DV_SPLIT_RULES=[
-  {ticker:'GDXD', from:'250423', to:'250603', divisor:200},
+  {ticker:'GDXD', from:'250423', to:'260208', divisor:200},
   {ticker:'SQQQ', from:'000000', to:'251119', divisor:5},
   {ticker:'SOXS', from:'000000', to:'260304', divisor:20},
   {ticker:'TSLQ', from:'000000', to:'251020', divisor:1/3},
@@ -1538,7 +1538,7 @@ const SPLIT_MARKERS=[
   {ticker:'TSLQ', before:'251021', split:'3'},
   {ticker:'NVDQ', before:'251029', split:'20'},
   {ticker:'SQQQ', before:'251120', split:'5'},
-  {ticker:'GDXD', before:'250604', split:'200'},
+  {ticker:'GDXD', before:'260209', split:'200'},
   {ticker:'SOXS', before:'260305', split:'20'},
 ];
 
@@ -2355,7 +2355,7 @@ async function fetchPrices(tickers){
 
 // ================ OVERVIEW ================
 let cachedOverviewData=null; // {holdMap, allHoldings, cashByBroker}
-let currentFilter='삼성';
+let currentFilter='all';
 
 function setFilter(f,btn){
   currentFilter=f;
@@ -3995,13 +3995,18 @@ function redrawChart(dailyValues){
     // Bottom chart: cost basis per group (qty * avgCost) — stable between txs
     const entry={date:dateLabel,cash:state.cash};
     let totalCostBasis=0;
+    const groupedTickers=new Set();
     for(const g of HOLD_GROUPS){
       let sum=0;
       for(const tk of g.tickers){
-        if(state.positions[tk])sum+=state.positions[tk].qty*state.positions[tk].avgCost;
+        if(state.positions[tk]){sum+=state.positions[tk].qty*state.positions[tk].avgCost;groupedTickers.add(tk)}
       }
       entry['g_'+g.label]=sum;
       totalCostBasis+=sum;
+    }
+    // Include ungrouped tickers in total
+    for(const[tk,pos] of Object.entries(state.positions)){
+      if(!groupedTickers.has(tk))totalCostBasis+=pos.qty*pos.avgCost;
     }
     entry.purchasedAmt=totalCostBasis;
 
