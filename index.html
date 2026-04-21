@@ -377,7 +377,7 @@ let initialCashSS=0,initialCashKW=0,initialCashMR=0;
 const BROKER_ICON={삼성:'🔵',키움:'🔴',메리츠:'🟢'};
 let cachedPrices={};
 let cachedFundamentals={};
-let fundHistory={}; // {ticker: [{date, epsNorm, revNorm, targetPrice}]}
+let fundHistory={}; // {ticker: [{date, epsDec, revNorm, targetPrice}]}
 const CACHE_KEY_TX='cache_transactions';
 
 // US Eastern Time date utilities
@@ -1172,9 +1172,9 @@ function debugFundData(){
     const hist=fundHistory[ftk0]||[];
     html+=`<h4>fundHistory[${ftk0}] (${hist.length} entries)</h4>`;
     if(hist.length>0){
-      html+='<table style="border-collapse:collapse"><tr><th style="border:1px solid #555;padding:2px 6px">date</th><th style="border:1px solid #555;padding:2px 6px">epsNorm</th><th style="border:1px solid #555;padding:2px 6px">revNorm</th><th style="border:1px solid #555;padding:2px 6px">targetPrice</th></tr>';
+      html+='<table style="border-collapse:collapse"><tr><th style="border:1px solid #555;padding:2px 6px">date</th><th style="border:1px solid #555;padding:2px 6px">epsDec</th><th style="border:1px solid #555;padding:2px 6px">revNorm</th><th style="border:1px solid #555;padding:2px 6px">targetPrice</th></tr>';
       for(const h of hist.slice(-20)){
-        html+=`<tr><td style="border:1px solid #555;padding:2px 6px">${h.date}</td><td style="border:1px solid #555;padding:2px 6px">${h.epsNorm?.toFixed(4)??'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.revNorm?Math.round(h.revNorm):'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.targetPrice?.toFixed(2)??'—'}</td></tr>`;
+        html+=`<tr><td style="border:1px solid #555;padding:2px 6px">${h.date}</td><td style="border:1px solid #555;padding:2px 6px">${h.epsDec?.toFixed(4)??'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.revNorm?Math.round(h.revNorm):'—'}</td><td style="border:1px solid #555;padding:2px 6px">${h.targetPrice?.toFixed(2)??'—'}</td></tr>`;
       }
       html+='</table>';
     }else{
@@ -1189,9 +1189,9 @@ function debugFundData(){
     }
     html+=`<h4>Lookup results (ET dates)</h4>`;
     html+=`<p>today(ET): ${etNow().dateStr}, d1d: ${_etD1d}, d1w: ${_etD1w}</p>`;
-    html+=`<p>~1w: ${e1w?`${e1w.date} eps=${e1w.epsNorm?.toFixed(4)} tp=${e1w.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
-    html+=`<p>~1m: ${e1m?`${e1m.date} eps=${e1m.epsNorm?.toFixed(4)} tp=${e1m.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
-    html+=`<p>Current epsNorm: ${fund?.epsNorm?.toFixed(4)??'—'}, targetPrice: ${fund?.targetPrice?.toFixed(2)??'—'}</p>`;
+    html+=`<p>~1w: ${e1w?`${e1w.date} eps=${e1w.epsDec?.toFixed(4)} tp=${e1w.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+    html+=`<p>~1m: ${e1m?`${e1m.date} eps=${e1m.epsDec?.toFixed(4)} tp=${e1m.targetPrice?.toFixed(2)}`:'NOT FOUND'}</p>`;
+    html+=`<p>Current epsDec: ${fund?.epsDec?.toFixed(4)??'—'}, targetPrice: ${fund?.targetPrice?.toFixed(2)??'—'}</p>`;
 
     html+='<br><button class="btn btn-s" onclick="computeOverview();renderOverview()">← Back to Overview</button></div>';
     el.innerHTML=html;
@@ -1221,12 +1221,12 @@ async function debugEarnings(ticker){
 }
 
 // Fetch quarterly earnings actuals for a ticker using 15-day windows
-// One-time migration: rescale all historical epsNorm values in fund_history
+// One-time migration: rescale all historical epsDec values in fund_history
 // to use day-of-year fractions instead of the old m/12 formula.
 // For each ticker: fetch fiscal end date from FMP, compute delta_t, estimate slope, correct.
 async function rescaleEpsHistory(){
   if(!SHEET_ID||!SA_KEY||!FMP_KEY){toast('Sheet + FMP 설정 필요','err');return}
-  if(!confirm('fund_history의 모든 epsNorm 값을 날짜분율(day-of-year) 기준으로 보정합니다.\n\n1회성 마이그레이션입니다. 계속?'))return;
+  if(!confirm('fund_history의 모든 epsDec 값을 날짜분율(day-of-year) 기준으로 보정합니다.\n\n1회성 마이그레이션입니다. 계속?'))return;
   toast('🔧 EPS 보정 중...','ok');
   try{
     const token=await getAccessToken();
@@ -1242,7 +1242,7 @@ async function rescaleEpsHistory(){
       const tk=(r[1]||'').trim().toUpperCase();
       if(!tk)continue;
       if(!byTicker[tk])byTicker[tk]=[];
-      byTicker[tk].push({idx:i, date:r[0], epsNorm:parseFloat(r[2]), revNorm:r[3], targetPrice:r[4]});
+      byTicker[tk].push({idx:i, date:r[0], epsDec:parseFloat(r[2]), revNorm:r[3], targetPrice:r[4]});
     }
 
     // For each ticker, fetch fiscal end month/day from FMP
@@ -1250,7 +1250,7 @@ async function rescaleEpsHistory(){
     let corrected=0;
     for(const tk of tickers){
       const entries=byTicker[tk];
-      const hasEps=entries.some(e=>!isNaN(e.epsNorm)&&e.epsNorm!==0);
+      const hasEps=entries.some(e=>!isNaN(e.epsDec)&&e.epsDec!==0);
       if(!hasEps)continue;
 
       // Fetch FMP annual estimates to get fiscal year end date
@@ -1287,7 +1287,7 @@ async function rescaleEpsHistory(){
       }
 
       // Estimate epsSlope from entries ~1 year apart
-      const sorted=[...entries].filter(e=>!isNaN(e.epsNorm)&&e.epsNorm!==0).sort((a,b)=>a.date.localeCompare(b.date));
+      const sorted=[...entries].filter(e=>!isNaN(e.epsDec)&&e.epsDec!==0).sort((a,b)=>a.date.localeCompare(b.date));
       let epsSlope=0;
       if(sorted.length>=2){
         // Use first and last entries to estimate annual slope
@@ -1295,17 +1295,17 @@ async function rescaleEpsHistory(){
         const d1=new Date(first.date), d2=new Date(last.date);
         const yearSpan=(d2-d1)/(365.25*86400000);
         if(yearSpan>0.1){
-          epsSlope=(last.epsNorm-first.epsNorm)/yearSpan;
+          epsSlope=(last.epsDec-first.epsDec)/yearSpan;
         }
       }
 
       console.log(`${tk}: fiscal ${fyMonth}/${fyDay}, deltaT=${deltaT.toFixed(4)}, epsSlope=${epsSlope.toFixed(4)}, entries=${entries.length}`);
 
-      // Apply correction: epsNorm_new = epsNorm_old + deltaT * epsSlope
+      // Apply correction: epsDec_new = epsDec_old + deltaT * epsSlope
       for(const e of entries){
-        if(isNaN(e.epsNorm)||e.epsNorm===0)continue;
+        if(isNaN(e.epsDec)||e.epsDec===0)continue;
         const correction=deltaT*epsSlope;
-        const newEps=e.epsNorm+correction;
+        const newEps=e.epsDec+correction;
         allRows[e.idx][2]=newEps.toFixed(4);
         corrected++;
       }
@@ -1322,7 +1322,7 @@ async function rescaleEpsHistory(){
 
     await loadFundHistory();
     computeOverview();renderOverview();
-    toast(`✅ ${corrected}개 epsNorm 보정 완료 (${tickers.length} tickers)`,'ok');
+    toast(`✅ ${corrected}개 epsDec 보정 완료 (${tickers.length} tickers)`,'ok');
   }catch(e){toast('보정 오류: '+e.message,'err');console.error(e)}
 }
 
@@ -1360,11 +1360,11 @@ async function dedupFundHistory(){
   }catch(e){toast('오류: '+e.message,'err');console.error(e)}
 }
 
-// Repair fund_history pe12m: fetch historical prices from FMP and recompute pe12m = price/epsNorm
+// Repair fund_history peDec: fetch historical prices from FMP and recompute peDec = price/epsDec
 async function repairFundHistoryPER(){
   if(!SHEET_ID||!SA_KEY||!FMP_KEY){toast('Sheet/FMP 설정 필요','err');return}
-  if(!confirm('fund_history의 모든 pe12m 값을 FMP 과거 가격으로 재계산합니다.\n\n1회성 보정입니다. 계속?'))return;
-  toastPersist('🔧 pe12m 보정 중...','ok');
+  if(!confirm('fund_history의 모든 peDec 값을 FMP 과거 가격으로 재계산합니다.\n\n1회성 보정입니다. 계속?'))return;
+  toastPersist('🔧 peDec 보정 중...','ok');
   try{
     const token=await getAccessToken();
     const resp=await sheetsGet('fund_history!A:H');
@@ -1372,7 +1372,7 @@ async function repairFundHistoryPER(){
     if(allRows.length<=1){toast('데이터 없음','err');return}
 
     // Group entries by ticker → collect dates
-    const byTicker={}; // ticker → [{rowIdx, date(YYYY-MM-DD), epsNorm}]
+    const byTicker={}; // ticker → [{rowIdx, date(YYYY-MM-DD), epsDec}]
     for(let i=1;i<allRows.length;i++){
       const r=allRows[i];
       const dt=(r[0]||'').trim();
@@ -1380,7 +1380,7 @@ async function repairFundHistoryPER(){
       const eps=r[2]!=null&&r[2]!==''?parseFloat(r[2]):null;
       if(!dt||!tk||!eps)continue;
       if(!byTicker[tk])byTicker[tk]=[];
-      byTicker[tk].push({rowIdx:i,date:dt,epsNorm:eps});
+      byTicker[tk].push({rowIdx:i,date:dt,epsDec:eps});
     }
 
     const tickers=Object.keys(byTicker);
@@ -1419,8 +1419,8 @@ async function repairFundHistoryPER(){
             if(priceMap[key]){price=priceMap[key];break}
           }
         }
-        if(price&&e.epsNorm>0){
-          const newPe=(price/e.epsNorm).toFixed(2);
+        if(price&&e.epsDec>0){
+          const newPe=(price/e.epsDec).toFixed(2);
           allRows[e.rowIdx][5]=newPe;
           repaired++;
         }
@@ -1438,7 +1438,7 @@ async function repairFundHistoryPER(){
 
     await loadFundHistory();
     computeOverview();renderOverview();
-    toast(`✅ ${repaired}개 pe12m 보정 완료 (${tickers.length} tickers, FMP 가격 기준)`,'ok');
+    toast(`✅ ${repaired}개 peDec 보정 완료 (${tickers.length} tickers, FMP 가격 기준)`,'ok');
   }catch(e){toast('보정 오류: '+e.message,'err');console.error(e)}
 }
 
@@ -1640,12 +1640,12 @@ async function loadFundHistory(){
         if(!fundHistory[tk])fundHistory[tk]=[];
         fundHistory[tk].push({
           date:dt,
-          epsNorm:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
+          epsDec:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
           revNorm:r[3]!=null&&r[3]!==''?parseFloat(r[3]):null,
           targetPrice:r[4]!=null&&r[4]!==''?parseFloat(r[4]):null,
-          pe12m:r[5]!=null&&r[5]!==''?parseFloat(r[5]):null,
-          epsFwd:r[6]!=null&&r[6]!==''?parseFloat(r[6]):null,
-          peFwd:r[7]!=null&&r[7]!==''?parseFloat(r[7]):null
+          peDec:r[5]!=null&&r[5]!==''?parseFloat(r[5]):null,
+          eps12m:r[6]!=null&&r[6]!==''?parseFloat(r[6]):null,
+          pe12m:r[7]!=null&&r[7]!==''?parseFloat(r[7]):null
         });
       }
       for(const tk of Object.keys(fundHistory)){
@@ -1834,10 +1834,10 @@ async function refreshFundamentals(){
       console.log(`${tk} price from cache: ${price}`);
 
       // --- Normalize EPS & Revenue to Dec 2026 via linear interpolation ---
-      let epsNorm=null,epsPrevNorm=null,revNorm=null,revPrevNorm=null;
+      let epsDec=null,epsPrevDec=null,revNorm=null,revPrevNorm=null;
       let numAnalystsEps=null,numAnalystsRev=null;
-      let pe12m=null,epsYoy12m=null,revYoy12m=null;
-      let epsFwd=null,peFwd=null;
+      let peDec=null,epsYoy12m=null,revYoy12m=null;
+      let eps12m=null,pe12m=null;
       // Target normalization: Dec 31 of current year (e.g. Dec 31 2026)
       const targetYear=new Date().getFullYear();
       // Dec 31 = day 365 (or 366 in leap year)
@@ -1916,7 +1916,7 @@ async function refreshFundamentals(){
         }
 
         if(lo&&hi){
-          epsNorm=lerp(lo,hi,targetFrac,'eps');
+          epsDec=lerp(lo,hi,targetFrac,'eps');
           revNorm=lerp(lo,hi,targetFrac,'rev');
           // Use analyst count from the nearer entry
           const closer=Math.abs(targetFrac-lo.frac)<Math.abs(targetFrac-hi.frac)?lo:hi;
@@ -1930,12 +1930,12 @@ async function refreshFundamentals(){
           revYoy12m=(lo.rev&&hi.rev&&lo.rev!==0)?((hi.rev-lo.rev)/Math.abs(lo.rev)*100):null;
         }
         if(loP&&hiP){
-          epsPrevNorm=lerp(loP,hiP,prevTargetFrac,'eps');
+          epsPrevDec=lerp(loP,hiP,prevTargetFrac,'eps');
           revPrevNorm=lerp(loP,hiP,prevTargetFrac,'rev');
         }
 
         // P/E = price / normalized EPS
-        pe12m=(epsNorm&&epsNorm>0&&price)?price/epsNorm:null;
+        peDec=(epsDec&&epsDec>0&&price)?price/epsDec:null;
 
         // --- Forward 12m EPS: interpolate to today + 1 year ---
         const nowDt=new Date();
@@ -1958,14 +1958,14 @@ async function refreshFundamentals(){
             hiFwd=entries[entries.length-1];
           }
         }
-        epsFwd=null;peFwd=null;
+        eps12m=null;pe12m=null;
         if(loFwd&&hiFwd){
-          epsFwd=lerp(loFwd,hiFwd,fwdFrac,'eps');
-          peFwd=(epsFwd&&epsFwd>0&&price)?price/epsFwd:null;
-          console.log(`${tk} forward 12m: fwdFrac=${fwdFrac.toFixed(3)}, lo=${loFwd.date}(${loFwd.eps?.toFixed(3)}), hi=${hiFwd.date}(${hiFwd.eps?.toFixed(3)}), epsFwd=${epsFwd?.toFixed(3)}, peFwd=${peFwd?.toFixed(1)}`);
+          eps12m=lerp(loFwd,hiFwd,fwdFrac,'eps');
+          pe12m=(eps12m&&eps12m>0&&price)?price/eps12m:null;
+          console.log(`${tk} forward 12m: fwdFrac=${fwdFrac.toFixed(3)}, lo=${loFwd.date}(${loFwd.eps?.toFixed(3)}), hi=${hiFwd.date}(${hiFwd.eps?.toFixed(3)}), eps12m=${eps12m?.toFixed(3)}, pe12m=${pe12m?.toFixed(1)}`);
         }
 
-        console.log(`${tk} interpolation: targetFrac=${targetFrac}, lo=${lo?.date}(frac=${lo?.frac},eps=${lo?.eps?.toFixed(3)},rev=${Math.round(lo?.rev||0)}), hi=${hi?.date}(frac=${hi?.frac},eps=${hi?.eps?.toFixed(3)},rev=${Math.round(hi?.rev||0)}), epsNorm=${epsNorm?.toFixed(3)}, epsYoy=${epsYoy12m?.toFixed(1)}%`);
+        console.log(`${tk} interpolation: targetFrac=${targetFrac}, lo=${lo?.date}(frac=${lo?.frac},eps=${lo?.eps?.toFixed(3)},rev=${Math.round(lo?.rev||0)}), hi=${hi?.date}(frac=${hi?.frac},eps=${hi?.eps?.toFixed(3)},rev=${Math.round(hi?.rev||0)}), epsDec=${epsDec?.toFixed(3)}, epsYoy=${epsYoy12m?.toFixed(1)}%`);
         console.log(`${tk} all entries:`,entries.map(e=>`${e.date}(frac=${e.frac.toFixed(3)},eps=${e.eps?.toFixed(3)},rev=${Math.round(e.rev||0)},nEps=${e.nEps})`).join(' | '));
       }
 
@@ -1996,9 +1996,9 @@ async function refreshFundamentals(){
 
       newFund[tk]={
         price, targetYear:`${targetYear}`,
-        epsNorm, epsPrevNorm, revNorm, revPrevNorm,
-        pe12m, epsYoy12m, revYoy12m,
-        epsFwd, peFwd,
+        epsDec, epsPrevDec, revNorm, revPrevNorm,
+        peDec, epsYoy12m, revYoy12m,
+        eps12m, pe12m,
         numAnalystsEps, numAnalystsRev,
         targetPrice, targetHigh, targetLow,
         strongBuy, buy, hold, sell, strongSell, consensus,
@@ -2060,7 +2060,7 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
     try{
       const hdrUrl=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fundamentals!A1:L1?valueInputOption=USER_ENTERED`;
       await fetch(hdrUrl,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-        body:JSON.stringify({values:[['date','ticker','targetYear','epsNorm','numAnalysts','P/E 12m','EPS YoY%','revNorm','Rev YoY%','targetPrice','grades(SB/B/H/S/SS)','consensus']]})});
+        body:JSON.stringify({values:[['date','ticker','targetYear','EPSdec','numAnalysts','PEdec','EPS YoY%','revNorm','Rev YoY%','targetPrice','grades(SB/B/H/S/SS)','consensus']]})});
     }catch(e){console.warn('Could not write header:',e)}
 
     // Clear existing data below header
@@ -2073,9 +2073,9 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
     for(const[tk,d]of Object.entries(fundData)){
       rows.push([today,tk,
         d.targetYear||'',
-        d.epsNorm?d.epsNorm.toFixed(3):'',
+        d.epsDec?d.epsDec.toFixed(3):'',
         d.numAnalystsEps||'',
-        d.pe12m?d.pe12m.toFixed(2):'',
+        d.peDec?d.peDec.toFixed(2):'',
         d.epsYoy12m?d.epsYoy12m.toFixed(2)+'%':'',
         d.revNorm?Math.round(d.revNorm):'',
         d.revYoy12m?d.revYoy12m.toFixed(2)+'%':'',
@@ -2122,8 +2122,8 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
       // Build new/updated rows
       let changed=false;
       for(const[tk,d]of Object.entries(fundData)){
-        if(d.epsNorm==null)continue;
-        const row=[today,tk,d.epsNorm.toFixed(4),d.revNorm?Math.round(d.revNorm):'',d.targetPrice||'',d.pe12m?d.pe12m.toFixed(2):'',d.epsFwd?d.epsFwd.toFixed(4):'',d.peFwd?d.peFwd.toFixed(2):''];
+        if(d.epsDec==null)continue;
+        const row=[today,tk,d.epsDec.toFixed(4),d.revNorm?Math.round(d.revNorm):'',d.targetPrice||'',d.peDec?d.peDec.toFixed(2):'',d.eps12m?d.eps12m.toFixed(4):'',d.pe12m?d.pe12m.toFixed(2):''];
         const key=`${today}|${tk}`;
         if(existingMap[key]!=null){
           // Replace existing row
@@ -2136,25 +2136,29 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
         // Update in-memory fundHistory
         if(!fundHistory[tk])fundHistory[tk]=[];
         const memIdx=fundHistory[tk].findIndex(h=>h.date===today);
-        const memEntry={date:today,epsNorm:d.epsNorm,revNorm:d.revNorm,targetPrice:d.targetPrice,pe12m:d.pe12m,epsFwd:d.epsFwd,peFwd:d.peFwd};
+        const memEntry={date:today,epsDec:d.epsDec,revNorm:d.revNorm,targetPrice:d.targetPrice,peDec:d.peDec,eps12m:d.eps12m,pe12m:d.pe12m};
         if(memIdx>=0)fundHistory[tk][memIdx]=memEntry;
         else fundHistory[tk].push(memEntry);
       }
 
       if(changed){
         // Write header + all rows (clear and rewrite)
-        const header=['date','ticker','epsNorm','revNorm','targetPrice','pe12m','epsFwd','peFwd'];
+        const header=['date','ticker','EPSdec','revNorm','targetPrice','PEdec','EPS12m','PE12m'];
         if(existingRows.length>0&&existingRows[0][0]==='date')existingRows[0]=header;
         else existingRows.unshift(header);
-        // Pad short rows to 6 columns
+        // Pad short rows to 8 columns
         for(let i=0;i<existingRows.length;i++){
           while(existingRows[i].length<8)existingRows[i].push('');
         }
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:H:clear`,{
+        const clrResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A:H:clear`,{
           method:'POST',headers:{Authorization:`Bearer ${token}`}});
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:H?valueInputOption=USER_ENTERED`,{
+        if(!clrResp.ok)console.error('fund_history clear failed:',clrResp.status,await clrResp.text());
+        const fhResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_history!A1:H?valueInputOption=USER_ENTERED`,{
           method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
           body:JSON.stringify({values:existingRows})});
+        if(!fhResp.ok)console.error('fund_history write failed:',fhResp.status,await fhResp.text());
+        const sampleRow=existingRows.find(r=>r[6]&&r[6]!=='');
+        console.log('fund_history sample row with eps12m:',sampleRow);
         console.log(`fund_history: wrote ${existingRows.length-1} rows (updated today's entries)`);
         localStorage.setItem('cache_fundHistory',JSON.stringify(fundHistory));
       }else{
@@ -2659,8 +2663,8 @@ function holdingsHeader(){
   return`<div class="hold-hdr">
     <div><span>평균 / 현재가 (전일대비; 전주대비)</span><span>평가손익</span></div>
     <div><span>평가금액</span><span>매입금액</span></div>
-    <div><span>P/E 12m (YOY%)</span><span>Rev 12m (YOY%)</span></div>
-    <div><span>PER now&gt;1w&gt;1m</span><span>EPS now&gt;1w&gt;1m</span></div>
+    <div><span>PE12m (YOY%)</span><span>Rev 12m (YOY%)</span></div>
+    <div><span>PEdec now&gt;1w&gt;1m</span><span>EPSdec now&gt;1w&gt;1m</span></div>
     <div><span>TP now&gt;1w&gt;1m</span><span>B/H/S</span></div>
     <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
   </div>`;
@@ -2686,7 +2690,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   let fiscalLabel='';
   // Col3: P/E row + Revenue row
   let peRow=dash, revRow=dash;
-  // Col4: PER now > 1w > 1m (upper) + EPS estimate now > 1w > 1m (lower)
+  // Col4: PEdec now > 1w > 1m (upper) + EPSdec now > 1w > 1m (lower)
   let perCol=dash;
   let epsCol=dash;
   // Col5: Target price now > 1w > 1m
@@ -2697,10 +2701,14 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     const analStr=fund.numAnalystsEps?` (${fund.numAnalystsEps} anal)`:'';
     fiscalLabel=`Dec ${(fund.targetYear||'26').slice(2)}${analStr}`;
 
-    // -- Col3: P/E with YoY + Revenue with YoY --
+    // -- Col3: PE12m (forward) with YoY + Revenue with YoY --
     if(fund.pe12m!=null){
       const yoy=fund.epsYoy12m!=null?` <span style="color:var(--text3);font-size:9px">EPS</span>${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%`:'';
       peRow=`${fund.pe12m.toFixed(1)}${yoy}`;
+    }else if(fund.peDec!=null){
+      // Fallback to PEdec if PE12m not available
+      const yoy=fund.epsYoy12m!=null?` <span style="color:var(--text3);font-size:9px">EPS</span>${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%`:'';
+      peRow=`<span style="color:var(--text3)">${fund.peDec.toFixed(1)}${yoy}</span>`;
     }
     if(fund.revNorm!=null){
       const revB=(fund.revNorm/1e9).toFixed(1);
@@ -2736,10 +2744,10 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
       }
 
       // EPS
-      if(fund.epsNorm!=null){
-        const nowEps=fund.epsNorm;
-        const eps1w=e1w?.epsNorm;
-        const eps1m=e1m?.epsNorm;
+      if(fund.epsDec!=null){
+        const nowEps=fund.epsDec;
+        const eps1w=e1w?.epsDec;
+        const eps1m=e1m?.epsDec;
         const nowStyle=valStyle(nowEps,eps1w);
         let parts=[`<span style="${nowStyle}">${nowEps.toFixed(2)}</span>`];
         if(eps1w!=null)parts.push(`<span style="color:var(--text3)">${eps1w.toFixed(2)}</span>`);
@@ -2749,11 +2757,11 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         epsCol=parts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
       }
 
-      // PER now > 1w > 1m (use underlying's price for leveraged tickers)
-      if(fund.pe12m!=null){
-        const nowPe=fund.pe12m;
-        const pe1w=e1w?.pe12m??null;
-        const pe1m=e1m?.pe12m??null;
+      // PEdec now > 1w > 1m (use underlying's price for leveraged tickers)
+      if(fund.peDec!=null){
+        const nowPe=fund.peDec;
+        const pe1w=e1w?.peDec??null;
+        const pe1m=e1m?.peDec??null;
         // PER lower = better → green when decreased
         function perStyle(now,prev){
           if(prev==null)return 'color:var(--text3)';
@@ -2986,6 +2994,7 @@ function renderWatchlist(){
     let perCell='<span class="wl-muted">—</span>';
     let epsCell='<span class="wl-muted">—</span>';
     let tpCell='<span class="wl-muted">—</span>';
+    let pe12mCell='<span class="wl-muted">—</span>';
 
     if(fund&&isFundTarget&&hist.length>=1){
       const etD1d=etDateStr(1),etD1w=etDateStr(7),etD8d=etDateStr(8),etD1m=etDateStr(30);
@@ -2994,10 +3003,10 @@ function renderWatchlist(){
       const e1m=findInRange(etD1m,etD8d);
 
       // EPS now > 1w > 1m
-      if(fund.epsNorm!=null){
-        const nowEps=fund.epsNorm;
-        const eps1w=e1w?.epsNorm;
-        const eps1m=e1m?.epsNorm;
+      if(fund.epsDec!=null){
+        const nowEps=fund.epsDec;
+        const eps1w=e1w?.epsDec;
+        const eps1m=e1m?.epsDec;
         const epsCls=valCls(nowEps,eps1w);
         let parts=[`<span class="${epsCls}">${nowEps.toFixed(2)}</span>`];
         parts.push(eps1w!=null?`<span class="wl-muted">${eps1w.toFixed(2)}</span>`:`<span class="wl-muted">—</span>`);
@@ -3005,12 +3014,12 @@ function renderWatchlist(){
         epsCell=parts.join(arw);
       }
 
-      // PER: use underlying's price (fund.price) for consistency
-      // fund.pe12m = underlyingPrice / epsNorm (correct for leveraged too)
-      if(fund.pe12m!=null){
-        const nowPe=fund.pe12m;
-        const pe1w=e1w?.pe12m??null;
-        const pe1m=e1m?.pe12m??null;
+      // PEdec: use underlying's price (fund.price) for consistency
+      // fund.peDec = underlyingPrice / epsDec (correct for leveraged too)
+      if(fund.peDec!=null){
+        const nowPe=fund.peDec;
+        const pe1w=e1w?.peDec??null;
+        const pe1m=e1m?.peDec??null;
         const perNowCls=pe1w!=null?(nowPe<pe1w*0.999?'wl-up':nowPe>pe1w*1.001?'wl-dn':'wl-muted'):'wl-muted';
         let parts=[`<span class="${perNowCls}">${nowPe.toFixed(1)}</span>`];
         parts.push(pe1w!=null?`<span class="wl-muted">${pe1w.toFixed(1)}</span>`:`<span class="wl-muted">—</span>`);
@@ -3018,7 +3027,12 @@ function renderWatchlist(){
         perCell=parts.join(arw);
       }
 
-      // Target Price
+      // PE12m (forward)
+      if(fund.pe12m!=null){
+        pe12mCell=`<span>${fund.pe12m.toFixed(1)}</span>`;
+      }
+
+      // Target Price (with 1w/1m history)
       if(fund.targetPrice!=null){
         const nowTgt=fund.targetPrice;
         const tgt1w=e1w?.targetPrice;
@@ -3033,7 +3047,7 @@ function renderWatchlist(){
         tpCell=parts.join(arw);
       }
     }
-    return{perCell,epsCell,tpCell};
+    return{perCell,epsCell,tpCell,pe12mCell};
   }
 
   function fmtC(n){return(n>=0?'':'−')+'$'+Math.round(Math.abs(n))}
@@ -3062,9 +3076,10 @@ function renderWatchlist(){
     html+=`<div class="wl-section">`;
     html+=`<div class="wl-section-hdr">${sec.name} (${sec.tickers.length})</div>`;
     html+=`<div class="tbl-wrap"><table class="wl-tbl"><thead><tr>
-      <th>Ticker</th><th>Qty</th><th>매수</th><th>평가(손익)</th>
-      <th>PER now${arw}1w${arw}1m</th>
-      <th>EPS now${arw}1w${arw}1m</th>
+      <th>Ticker</th><th>매수</th><th>평가(손익)</th>
+      <th>PE12m</th>
+      <th>PEdec now${arw}1w${arw}1m</th>
+      <th>EPSdec now${arw}1w${arw}1m</th>
       <th>Price</th>
       <th>TP now${arw}1w${arw}1m</th>
       <th>실현(YTD/Tot)</th>
@@ -3084,15 +3099,15 @@ function renderWatchlist(){
 
       secCost+=cost;secVal+=mktVal;secRealYtd+=rl.realPLYtd;secRealTot+=rl.realPL;
 
-      const{perCell,epsCell,tpCell}=computeFundCells(tk);
+      const{perCell,epsCell,tpCell,pe12mCell}=computeFundCells(tk);
 
       const rowCls=noHeld?'wl-noheld':'';
       const valCell=qty>0?fmtValPL(mktVal,upl):`<span class="wl-muted">—</span>`;
       html+=`<tr class="${rowCls}" onclick="showHistory('${tk}')">
         <td>${tk}</td>
-        <td>${qty>0?qty:'<span class="wl-muted">—</span>'}</td>
         <td>${qty>0?fmtC(cost):'<span class="wl-muted">—</span>'}</td>
         <td>${valCell}</td>
+        <td>${pe12mCell}</td>
         <td>${perCell}</td>
         <td>${epsCell}</td>
         <td>${price>0?'$'+price.toFixed(2):'—'}</td>
@@ -3109,11 +3124,10 @@ function renderWatchlist(){
     html+=`<tr style="background:var(--surface2);font-weight:600;border-top:1px solid var(--border)">
       <td style="padding:2px 4px"><input type="text" inputmode="numeric" id="wlPlan_${secId}" value="${planned||''}" placeholder="계획금액"
         style="width:70px;padding:3px 5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font:11px 'JetBrains Mono',monospace;text-align:right"
-        onclick="event.stopPropagation()" onchange="saveWatchPlan('${sec.name}',this.value);renderWatchlist()"></td>
-      <td style="color:var(--text2);font-size:10px">${pctUsed?pctUsed+'%':''}</td>
+        onclick="event.stopPropagation()" onchange="saveWatchPlan('${sec.name}',this.value);renderWatchlist()"><span style="font-size:10px;color:var(--text2);margin-left:4px">${pctUsed?pctUsed+'%':''}</span></td>
       <td>${fmtC(secCost)}</td>
       <td>${fmtValPL(secVal,secUpl)}</td>
-      <td></td><td></td><td></td><td></td>
+      <td></td><td></td><td></td><td></td><td></td>
       <td>${fmtPL(secRealYtd)} / ${fmtPL(secRealTot)}</td>
     </tr>`;
 
@@ -4840,15 +4854,15 @@ async function drawHistoryChart(ticker,period,btn){
   // Build PER12m lookup from fund_history for this ticker (or underlying)
   const perTk=getFundTicker(ticker)||ticker;
   const perHist=fundHistory[perTk]||[];
-  const perLookup={}; // YYMMDD → pe12m
-  const epsLookup={}; // YYMMDD → epsNorm
+  const perLookup={}; // YYMMDD → peDec
+  const epsLookup={}; // YYMMDD → epsDec
   for(const h of perHist){
     if(h.date){
       const parts=h.date.split('-');
       if(parts.length===3){
         const yymmdd=parts[0].slice(2)+parts[1]+parts[2];
-        if(h.pe12m!=null)perLookup[yymmdd]=h.pe12m;
-        if(h.epsNorm!=null)epsLookup[yymmdd]=h.epsNorm;
+        if(h.peDec!=null)perLookup[yymmdd]=h.peDec;
+        if(h.epsDec!=null)epsLookup[yymmdd]=h.epsDec;
       }
     }
   }
@@ -4856,16 +4870,16 @@ async function drawHistoryChart(ticker,period,btn){
   const perDates=Object.keys(perLookup).sort();
   const epsDates=Object.keys(epsLookup).sort();
   for(const d of data){
-    d.pe12m=perLookup[d.date]||null;
-    d.epsNorm=epsLookup[d.date]||null;
-    if(!d.pe12m&&perDates.length>0){
+    d.peDec=perLookup[d.date]||null;
+    d.epsDec=epsLookup[d.date]||null;
+    if(!d.peDec&&perDates.length>0){
       for(let j=perDates.length-1;j>=0;j--){
-        if(perDates[j]<=d.date){d.pe12m=perLookup[perDates[j]];break}
+        if(perDates[j]<=d.date){d.peDec=perLookup[perDates[j]];break}
       }
     }
-    if(!d.epsNorm&&epsDates.length>0){
+    if(!d.epsDec&&epsDates.length>0){
       for(let j=epsDates.length-1;j>=0;j--){
-        if(epsDates[j]<=d.date){d.epsNorm=epsLookup[epsDates[j]];break}
+        if(epsDates[j]<=d.date){d.epsDec=epsLookup[epsDates[j]];break}
       }
     }
   }
@@ -5111,14 +5125,14 @@ async function drawHistoryChart(ticker,period,btn){
   // ===== CHART 5: PER12m + EPS (dual axis) from fund_history =====
   const y5Top=H1+gap+H2+gap+H3+gap+H4+gap;
   const cH5=H5-pad.t-pad.b;
-  const perPoints=data.filter(d=>d.pe12m!=null&&d.pe12m>0);
-  const epsPoints=data.filter(d=>d.epsNorm!=null&&d.epsNorm>0);
+  const perPoints=data.filter(d=>d.peDec!=null&&d.peDec>0);
+  const epsPoints=data.filter(d=>d.epsDec!=null&&d.epsDec>0);
   if(perPoints.length>0||epsPoints.length>0){
     // PER y-axis (left)
     let y5Max=0,y5Min=Infinity;
     for(const d of perPoints){
-      if(d.pe12m>y5Max)y5Max=d.pe12m;
-      if(d.pe12m<y5Min)y5Min=d.pe12m;
+      if(d.peDec>y5Max)y5Max=d.peDec;
+      if(d.peDec<y5Min)y5Min=d.peDec;
     }
     if(y5Min===Infinity){y5Min=0;y5Max=50}
     const y5Range=y5Max-y5Min||10;
@@ -5128,8 +5142,8 @@ async function drawHistoryChart(ticker,period,btn){
     // EPS y-axis (right)
     let e5Max=0,e5Min=Infinity;
     for(const d of epsPoints){
-      if(d.epsNorm>e5Max)e5Max=d.epsNorm;
-      if(d.epsNorm<e5Min)e5Min=d.epsNorm;
+      if(d.epsDec>e5Max)e5Max=d.epsDec;
+      if(d.epsDec<e5Min)e5Min=d.epsDec;
     }
     if(e5Min===Infinity){e5Min=0;e5Max=10}
     const e5Range=e5Max-e5Min||1;
@@ -5157,9 +5171,9 @@ async function drawHistoryChart(ticker,period,btn){
       ctx.strokeStyle='#ce93d8';ctx.lineWidth=1.5;ctx.beginPath();
       let perStarted=false;
       for(let i=0;i<data.length;i++){
-        if(data[i].pe12m!=null&&data[i].pe12m>0){
-          if(!perStarted){ctx.moveTo(xPos(i),yPos5(data[i].pe12m));perStarted=true}
-          else ctx.lineTo(xPos(i),yPos5(data[i].pe12m));
+        if(data[i].peDec!=null&&data[i].peDec>0){
+          if(!perStarted){ctx.moveTo(xPos(i),yPos5(data[i].peDec));perStarted=true}
+          else ctx.lineTo(xPos(i),yPos5(data[i].peDec));
         }
       }
       ctx.stroke();
@@ -5168,15 +5182,15 @@ async function drawHistoryChart(ticker,period,btn){
       ctx.fillStyle='#ce93d8';
       for(let i=0;i<data.length;i++){
         if(perLookup[data[i].date]!=null){
-          ctx.beginPath();ctx.arc(xPos(i),yPos5(data[i].pe12m),2.5,0,Math.PI*2);ctx.fill();
+          ctx.beginPath();ctx.arc(xPos(i),yPos5(data[i].peDec),2.5,0,Math.PI*2);ctx.fill();
         }
       }
 
-      // PER end label
-      const lastPer=data[data.length-1].pe12m;
+      // PEdec end label
+      const lastPer=data[data.length-1].peDec;
       if(lastPer!=null&&lastPer>0){
         ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='right';ctx.fillStyle='#ce93d8';
-        ctx.fillText('PER '+lastPer.toFixed(1),pad.l-4,yPos5(lastPer)-6);
+        ctx.fillText('PEdec '+lastPer.toFixed(1),pad.l-4,yPos5(lastPer)-6);
       }
     }
 
@@ -5185,9 +5199,9 @@ async function drawHistoryChart(ticker,period,btn){
       ctx.strokeStyle='#4fc3f7';ctx.lineWidth=1.5;ctx.setLineDash([5,3]);ctx.beginPath();
       let epsStarted=false;
       for(let i=0;i<data.length;i++){
-        if(data[i].epsNorm!=null&&data[i].epsNorm>0){
-          if(!epsStarted){ctx.moveTo(xPos(i),yPosE(data[i].epsNorm));epsStarted=true}
-          else ctx.lineTo(xPos(i),yPosE(data[i].epsNorm));
+        if(data[i].epsDec!=null&&data[i].epsDec>0){
+          if(!epsStarted){ctx.moveTo(xPos(i),yPosE(data[i].epsDec));epsStarted=true}
+          else ctx.lineTo(xPos(i),yPosE(data[i].epsDec));
         }
       }
       ctx.stroke();ctx.setLineDash([]);
@@ -5196,28 +5210,28 @@ async function drawHistoryChart(ticker,period,btn){
       ctx.fillStyle='#4fc3f7';
       for(let i=0;i<data.length;i++){
         if(epsLookup[data[i].date]!=null){
-          ctx.beginPath();ctx.arc(xPos(i),yPosE(data[i].epsNorm),2,0,Math.PI*2);ctx.fill();
+          ctx.beginPath();ctx.arc(xPos(i),yPosE(data[i].epsDec),2,0,Math.PI*2);ctx.fill();
         }
       }
 
       // EPS end label
-      const lastEps=data[data.length-1].epsNorm;
+      const lastEps=data[data.length-1].epsDec;
       if(lastEps!=null&&lastEps>0){
         ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle='#4fc3f7';
-        ctx.fillText('EPS '+lastEps.toFixed(2),W-pad.r+4,yPosE(lastEps)-6);
+        ctx.fillText('EPSdec '+lastEps.toFixed(2),W-pad.r+4,yPosE(lastEps)-6);
       }
     }
 
     // Legend
     ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
-    ctx.fillStyle='#ce93d8';ctx.fillText('── PER 12m',pad.l,y5Top+12);
-    ctx.fillStyle='#4fc3f7';ctx.fillText('╌ EPS',pad.l+85,y5Top+12);
+    ctx.fillStyle='#ce93d8';ctx.fillText('── PEdec',pad.l,y5Top+12);
+    ctx.fillStyle='#4fc3f7';ctx.fillText('╌ EPSdec',pad.l+75,y5Top+12);
     ctx.fillStyle='#555';ctx.font='8px JetBrains Mono, monospace';ctx.textAlign='right';
     ctx.fillText(perTk,W-pad.r,y5Top+12);
   }else{
     // No data — show placeholder
     ctx.fillStyle='#444';ctx.font='11px JetBrains Mono, monospace';ctx.textAlign='center';
-    ctx.fillText('PER/EPS: no fund_history data',W/2,y5Top+cH5/2+pad.t);
+    ctx.fillText('PEdec/EPSdec: no fund_history data',W/2,y5Top+cH5/2+pad.t);
   }
 
   // X labels (shared for all charts)
@@ -5263,8 +5277,8 @@ async function drawHistoryChart(ticker,period,btn){
     const totalPL=pl+d.realized;
     html+=`<div style="color:#e0e0e0;border-top:1px solid #333;padding-top:2px;margin-top:2px">총손익: ${(totalPL>=0?'+':'')}${fmtK(totalPL)}</div>`;
     if(d.price>0)html+=`<div style="color:#26c6da">주가: $${d.price.toFixed(2)}</div>`;
-    if(d.pe12m!=null&&d.pe12m>0)html+=`<div style="color:#ce93d8">PER: ${d.pe12m.toFixed(1)}</div>`;
-    if(d.epsNorm!=null&&d.epsNorm>0)html+=`<div style="color:#4fc3f7">EPS: ${d.epsNorm.toFixed(2)}</div>`;
+    if(d.peDec!=null&&d.peDec>0)html+=`<div style="color:#ce93d8">PEdec: ${d.peDec.toFixed(1)}</div>`;
+    if(d.epsDec!=null&&d.epsDec>0)html+=`<div style="color:#4fc3f7">EPSdec: ${d.epsDec.toFixed(2)}</div>`;
     tip.innerHTML=html;
     tip.style.display='block';
     const xPx=xPos(idx);
