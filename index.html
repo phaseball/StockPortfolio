@@ -379,6 +379,7 @@ const BROKER_ICON={삼성:'🔵',키움:'🔴',메리츠:'🟢'};
 let cachedPrices={};
 let cachedFundamentals={};
 let fundHistory={}; // {ticker: [{date, epsDec, revNorm, targetPrice}]}
+const CACHE_VERSION='v4.2';
 const CACHE_KEY_TX='cache_transactions';
 
 // US Eastern Time date utilities
@@ -641,6 +642,13 @@ function updateDataInfo(){
 }
 async function restoreCache(){
   try{
+    // Invalidate stale cache from older versions
+    const cv=localStorage.getItem('cache_version');
+    if(cv!==CACHE_VERSION){
+      console.log(`Cache version mismatch: ${cv} → ${CACHE_VERSION}, clearing transaction cache`);
+      localStorage.removeItem(CACHE_KEY_TX);
+      localStorage.setItem('cache_version',CACHE_VERSION);
+    }
     const tx=localStorage.getItem(CACHE_KEY_TX);
     if(tx){allTransactions=JSON.parse(tx)}
     const pr=localStorage.getItem(CACHE_KEY_PRICES);
@@ -652,6 +660,12 @@ async function restoreCache(){
     const ic=localStorage.getItem(CACHE_KEY_CASH);
     if(ic){const c=JSON.parse(ic);initialCashSS=c.ss||0;initialCashKW=c.kw||0;initialCashMR=c.mr||0}
     populateInitCashFields();
+    if(allTransactions.length===0&&SHEET_ID&&SA_KEY){
+      // Cache was cleared (version upgrade) — auto-reload from Sheet
+      console.log('Transaction cache empty, auto-loading from Sheet...');
+      await loadAllTransactions();
+      saveCache();
+    }
     if(allTransactions.length>0){
       // Auto-fetch prices if cache is empty (first load or cleared)
       const held=getHeldTickers();
