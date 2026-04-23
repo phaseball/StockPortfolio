@@ -139,13 +139,14 @@ table.t tr:hover td{background:var(--accentBg)}
 .wl-tbl th{padding:5px 8px;font-size:10px;color:var(--text3);font-weight:500;text-align:right;white-space:nowrap;background:var(--surface2);border-bottom:1px solid var(--border);position:sticky;top:0}
 .wl-tbl th:first-child{text-align:left}
 .wl-tbl td{padding:6px 8px;text-align:right;white-space:nowrap;border-bottom:1px solid rgba(45,58,92,.3)}
-.wl-tbl td:first-child{text-align:left;font-weight:600;color:var(--text)}
+.wl-tbl td:first-child{text-align:left;font-weight:600;color:var(--text);padding-right:2px}
 .wl-tbl tr{cursor:pointer;transition:background .1s}
 .wl-tbl tr:hover{background:var(--surface2)}
 .wl-tbl tr.wl-noheld td:first-child{color:var(--text3)}
 .wl-arrow{font-size:9px;margin:0 1px}
-.wl-up{color:#fff;font-weight:600}
-.wl-dn{color:#ef5350;font-weight:600}
+.wl-up{color:#ef5350;font-weight:600}
+.wl-dn{color:#42a5f5;font-weight:600}
+.wl-flat{color:#fff;font-weight:600}
 .wl-muted{color:var(--text3)}
 
 @media(max-width:640px){
@@ -595,7 +596,7 @@ async function getAccessToken(){
 // ================ SHEETS API ================
 async function sheetsGet(range){
   const token=await getAccessToken();
-  const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}`,{headers:{Authorization:`Bearer ${token}`}});
+  const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`,{headers:{Authorization:`Bearer ${token}`}});
   if(!r.ok)throw new Error('시트 읽기 실패: '+r.status);return r.json();
 }
 async function sheetsInsertAtTop(sheet,values){
@@ -2697,54 +2698,57 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     const analStr=fund.numAnalystsEps?` (${fund.numAnalystsEps} anal)`:'';
     fiscalLabel=`Dec ${(fund.targetYear||'26').slice(2)}${analStr}`;
 
-    // -- Col3: PE12m (forward) with YoY + Revenue with YoY --
-    if(fund.pe12m!=null){
-      const yoy=fund.epsYoy12m!=null?` <span style="color:var(--text3);font-size:9px">EPS</span>${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%`:'';
-      peRow=`${fund.pe12m.toFixed(1)}${yoy}`;
-    }else if(fund.peDec!=null){
-      // Fallback to PEdec if PE12m not available
-      const yoy=fund.epsYoy12m!=null?` <span style="color:var(--text3);font-size:9px">EPS</span>${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%`:'';
-      peRow=`<span style="color:var(--text3)">${fmtF(fund.peDec)}${yoy}</span>`;
-    }
-    if(fund.eps12m!=null){
-      const eps12mYoy=fund.epsYoy12m!=null?` (${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)`:'';
-      revRow=`<span style="color:var(--text2)">${fmtF(fund.eps12m)}${eps12mYoy}</span>`;
-    }
-
-    // -- Col4 & Col5: EPS est / Target now > ~1w > ~1m --
+    // -- Lookup fund_history for 1m change (shared by col3, col4, col5) --
     const ftk=getFundTicker(ticker);
     const hist=fundHistory[ftk]||[];
+    let e1w=null,e1m=null;
     if(hist.length>=1){
       const etD1d=etDateStr(1);
       const etD1w=etDateStr(7);
       const etD8d=etDateStr(8);
       const etD1m=etDateStr(30);
-
-      // ~1w: oldest entry from yesterday back to 7 days ago (farthest for biggest change)
-      // ~1m: oldest entry from 8-30 days ago
       function findInRange(from,to){
-        for(const h of hist){
-          if(h.date>=from&&h.date<=to)return h; // first match = oldest (hist sorted by date)
-        }
-        return null;
+        let result=null;
+        for(const h of hist){if(h.date>=from&&h.date<=to)result=h}
+        return result;
       }
-      const e1w=findInRange(etD1w,etD1d);
-      const e1m=findInRange(etD1m,etD8d);
+      e1w=findInRange(etD1w,etD1d);
+      e1m=findInRange(etD1m,etD8d);
+    }
 
-      function valStyle(now,prev){
-        if(prev==null)return 'color:var(--text3)';
-        if(now>prev*1.001)return 'color:#fff;font-weight:600'; // increased → bright white
-        if(now<prev*0.999)return 'color:#ef5350;font-weight:600'; // decreased → dark red
-        return 'color:var(--text3)'; // unchanged
-      }
+    // Helper: color by 1m change (red=up, blue=down, white=flat)
+    function chgStyle(now,ref){
+      if(ref==null)return 'color:#fff;font-weight:600';
+      if(now>ref*1.001)return 'color:#ef5350;font-weight:600';
+      if(now<ref*0.999)return 'color:#42a5f5;font-weight:600';
+      return 'color:#fff;font-weight:600';
+    }
 
-      // EPS
+    // -- Col3: PE12m with YoY + EPS12m with YoY, colored by 1m change --
+    const eps12mStyle=chgStyle(fund.eps12m,e1m?.eps12m);
+    if(fund.pe12m!=null){
+      const yoy=fund.epsYoy12m!=null?` <span style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
+      peRow=`<span style="${eps12mStyle}">${fmtF(fund.pe12m)}${yoy}</span>`;
+    }else if(fund.peDec!=null){
+      const yoy=fund.epsYoy12m!=null?` <span style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
+      peRow=`<span style="color:var(--text3)">${fmtF(fund.peDec)}${yoy}</span>`;
+    }
+    if(fund.eps12m!=null){
+      const eps12mYoy=fund.epsYoy12m!=null?` (${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)`:'';
+      revRow=`<span style="${eps12mStyle}">${fmtF(fund.eps12m)}${eps12mYoy}</span>`;
+    }
+
+    // -- Col4 & Col5: EPSdec/PEdec/TP now > ~1w > ~1m --
+    if(hist.length>=1){
+
+      // EPS: color by 1m change
+      let epsStyle='color:#fff;font-weight:600';
       if(fund.epsDec!=null){
         const nowEps=fund.epsDec;
         const eps1w=e1w?.epsDec;
         const eps1m=e1m?.epsDec;
-        const nowStyle=valStyle(nowEps,eps1w);
-        let parts=[`<span style="${nowStyle}">${fmtF(nowEps)}</span>`];
+        epsStyle=chgStyle(nowEps,eps1m);
+        let parts=[`<span style="${epsStyle}">${fmtF(nowEps)}</span>`];
         if(eps1w!=null)parts.push(`<span style="color:var(--text3)">${fmtF(eps1w)}</span>`);
         else parts.push(`<span style="color:var(--text3)">—</span>`);
         if(eps1m!=null)parts.push(`<span style="color:var(--text3)">${fmtF(eps1m)}</span>`);
@@ -2752,36 +2756,27 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         epsCol=parts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
       }
 
-      // PEdec now > 1w > 1m (use underlying's price for leveraged tickers)
+      // PEdec: use same color as EPSdec
       if(fund.peDec!=null){
         const nowPe=fund.peDec;
         const pe1w=e1w?.peDec??null;
         const pe1m=e1m?.peDec??null;
-        // PER lower = better → green when decreased
-        function perStyle(now,prev){
-          if(prev==null)return 'color:var(--text3)';
-          if(now<prev*0.999)return 'color:#fff;font-weight:600'; // decreased → good
-          if(now>prev*1.001)return 'color:#ef5350;font-weight:600'; // increased → bad
-          return 'color:var(--text3)';
-        }
-        const nowStyle=perStyle(nowPe,pe1w);
-        let pParts=[`<span style="${nowStyle}">${fmtF(nowPe)}</span>`];
+        let pParts=[`<span style="${epsStyle}">${fmtF(nowPe)}</span>`];
         pParts.push(pe1w!=null?`<span style="color:var(--text3)">${fmtF(pe1w)}</span>`:`<span style="color:var(--text3)">—</span>`);
         pParts.push(pe1m!=null?`<span style="color:var(--text3)">${fmtF(pe1m)}</span>`:`<span style="color:var(--text3)">—</span>`);
         perCol=pParts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
       }
 
-      // Target price
+      // Target price: gap% uses same color as TP
       if(fund.targetPrice!=null){
         const nowTgt=fund.targetPrice;
         const tgt1w=e1w?.targetPrice;
         const tgt1m=e1m?.targetPrice;
-        const tgtStyle=valStyle(nowTgt,tgt1w);
-        // Today's TP with gap%
+        const tgtStyle=chgStyle(nowTgt,tgt1m);
         let nowPart=`<span style="${tgtStyle}">$${nowTgt.toFixed(0)}</span>`;
         if(fund.price>0){
           const gap=((nowTgt-fund.price)/fund.price*100);
-          nowPart+=`<span style="color:var(--text3);font-size:9px"> (${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`;
+          nowPart+=`<span style="${tgtStyle};font-size:9px"> (${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`;
         }
         let parts=[nowPart];
         if(tgt1w!=null)parts.push(`<span style="color:var(--text3)">$${tgt1w.toFixed(0)}</span>`);
@@ -2969,10 +2964,10 @@ function renderWatchlist(){
 
   const arw='<span class="wl-arrow">›</span>';
   function valCls(now,prev){
-    if(prev==null)return 'wl-muted';
+    if(prev==null)return 'wl-flat';
     if(now>prev*1.001)return 'wl-up';
     if(now<prev*0.999)return 'wl-dn';
-    return 'wl-muted';
+    return 'wl-flat';
   }
   function fmtPL(v){
     if(v===0)return'<span class="wl-muted">$0</span>';
@@ -2980,7 +2975,7 @@ function renderWatchlist(){
     return`<span class="${cls}">${fmtUSD(v)}</span>`;
   }
 
-  // Shared: compute PER/TP cells for a ticker (also used by Overview col4)
+  // Shared: compute PEdec/EPSdec/TP/PE12m cells for a ticker
   function computeFundCells(tk){
     const ftk=getFundTicker(tk)||tk;
     const fund=cachedFundamentals[ftk]||cachedFundamentals[tk];
@@ -2997,45 +2992,54 @@ function renderWatchlist(){
       const e1w=findInRange(etD1w,etD1d);
       const e1m=findInRange(etD1m,etD8d);
 
-      // EPS now > 1w > 1m
+      // Color by 1m change: red=up, blue=down, white=flat
+      function chg1m(now,ref){
+        if(ref==null)return 'wl-flat';
+        if(now>ref*1.001)return 'wl-up';
+        if(now<ref*0.999)return 'wl-dn';
+        return 'wl-flat';
+      }
+
+      // EPSdec: color by 1m change
+      let epsCls='wl-flat';
       if(fund.epsDec!=null){
         const nowEps=fund.epsDec;
         const eps1w=e1w?.epsDec;
         const eps1m=e1m?.epsDec;
-        const epsCls=valCls(nowEps,eps1w);
+        epsCls=chg1m(nowEps,eps1m);
         let parts=[`<span class="${epsCls}">${fmtF(nowEps)}</span>`];
         parts.push(eps1w!=null?`<span class="wl-muted">${fmtF(eps1w)}</span>`:`<span class="wl-muted">—</span>`);
         parts.push(eps1m!=null?`<span class="wl-muted">${fmtF(eps1m)}</span>`:`<span class="wl-muted">—</span>`);
         epsCell=parts.join(arw);
       }
 
-      // PEdec: use underlying's price (fund.price) for consistency
-      // fund.peDec = underlyingPrice / epsDec (correct for leveraged too)
+      // PEdec: same color as EPSdec
       if(fund.peDec!=null){
         const nowPe=fund.peDec;
         const pe1w=e1w?.peDec??null;
         const pe1m=e1m?.peDec??null;
-        const perNowCls=pe1w!=null?(nowPe<pe1w*0.999?'wl-up':nowPe>pe1w*1.001?'wl-dn':'wl-muted'):'wl-muted';
-        let parts=[`<span class="${perNowCls}">${fmtF(nowPe)}</span>`];
+        let parts=[`<span class="${epsCls}">${fmtF(nowPe)}</span>`];
         parts.push(pe1w!=null?`<span class="wl-muted">${fmtF(pe1w)}</span>`:`<span class="wl-muted">—</span>`);
         parts.push(pe1m!=null?`<span class="wl-muted">${fmtF(pe1m)}</span>`:`<span class="wl-muted">—</span>`);
         perCell=parts.join(arw);
       }
 
-      // PE12m (forward)
+      // PE12m (forward) with YOY, colored by eps12m 1m change
       if(fund.pe12m!=null){
-        pe12mCell=`<span>${fund.pe12m.toFixed(1)}</span>`;
+        const eps12mCls=chg1m(fund.eps12m,e1m?.eps12m);
+        const yoy=fund.epsYoy12m!=null?` <span class="wl-muted" style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
+        pe12mCell=`<span class="${eps12mCls}">${fmtF(fund.pe12m)}</span>${yoy}`;
       }
 
-      // Target Price (with 1w/1m history)
+      // Target Price: gap% uses same color as TP
       if(fund.targetPrice!=null){
         const nowTgt=fund.targetPrice;
         const tgt1w=e1w?.targetPrice;
         const tgt1m=e1m?.targetPrice;
-        const tgtCls=valCls(nowTgt,tgt1w);
+        const tgtCls=chg1m(nowTgt,tgt1m);
         const refPrice=fund.price||0;
         let gapStr='';
-        if(refPrice>0){const gap=((nowTgt-refPrice)/refPrice*100);gapStr=` <span class="wl-muted" style="font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`}
+        if(refPrice>0){const gap=((nowTgt-refPrice)/refPrice*100);gapStr=` <span class="${tgtCls}" style="font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`}
         let parts=[`<span class="${tgtCls}">$${nowTgt.toFixed(0)}</span>${gapStr}`];
         parts.push(tgt1w!=null?`<span class="wl-muted">$${tgt1w.toFixed(0)}</span>`:`<span class="wl-muted">—</span>`);
         parts.push(tgt1m!=null?`<span class="wl-muted">$${tgt1m.toFixed(0)}</span>`:`<span class="wl-muted">—</span>`);
@@ -4903,8 +4907,8 @@ async function drawHistoryChart(ticker,period,btn){
   }
 
   const W=Math.min(container.clientWidth||600,800);
-  const H1=130, H2=100, H3=100, H4=200, H5=120, gap=16;
-  const totalH=H1+gap+H2+gap+H3+gap+H4+gap+H5;
+  const H1=130, H2=100, H3=100, H4=200, H5=120, H6=120, gap=16;
+  const totalH=H1+gap+H2+gap+H3+gap+H4+gap+H5+gap+H6;
   const pad={t:20,r:55,b:14,l:50};
   const cW=W-pad.l-pad.r;
 
@@ -5140,136 +5144,78 @@ async function drawHistoryChart(ticker,period,btn){
   ctx.fillStyle='#555';ctx.font='8px JetBrains Mono, monospace';ctx.textAlign='right';
   ctx.fillText('log scale',W-pad.r,y4Top+12);
 
-  // ===== CHART 5: PEdec/PE12m + EPSdec/EPS12m (dual axis) from fund_history =====
-  const y5Top=H1+gap+H2+gap+H3+gap+H4+gap;
-  const cH5=H5-pad.t-pad.b;
-  const perPoints=data.filter(d=>d.peDec!=null&&d.peDec>0);
-  const epsPoints=data.filter(d=>d.epsDec!=null&&d.epsDec>0);
-  const pe12mPoints=data.filter(d=>d.pe12m!=null&&d.pe12m>0);
-  const eps12mPoints=data.filter(d=>d.eps12m!=null&&d.eps12m>0);
-  if(perPoints.length>0||epsPoints.length>0||pe12mPoints.length>0||eps12mPoints.length>0){
-    // PE y-axis (left) — include both PEdec and PE12m
-    let y5Max=0,y5Min=Infinity;
-    for(const d of perPoints){if(d.peDec>y5Max)y5Max=d.peDec;if(d.peDec<y5Min)y5Min=d.peDec}
-    for(const d of pe12mPoints){if(d.pe12m>y5Max)y5Max=d.pe12m;if(d.pe12m<y5Min)y5Min=d.pe12m}
-    if(y5Min===Infinity){y5Min=0;y5Max=50}
-    const y5Range=y5Max-y5Min||10;
-    y5Max+=y5Range*0.15;y5Min=Math.max(0,y5Min-y5Range*0.1);
-    function yPos5(v){return y5Top+pad.t+(1-(v-y5Min)/(y5Max-y5Min))*cH5}
+  // ===== Helper: draw dual-axis PE+EPS chart =====
+  function drawPeEpsChart(yTop,cH,peData,epsData,peLookup,epsLookup2,peColor,epsColor,peLabel,epsLabel){
+    const peP=data.filter(d=>d[peData]!=null&&d[peData]>0);
+    const epsP=data.filter(d=>d[epsData]!=null&&d[epsData]>0);
+    if(peP.length===0&&epsP.length===0){
+      ctx.fillStyle='#444';ctx.font='11px JetBrains Mono, monospace';ctx.textAlign='center';
+      ctx.fillText(peLabel+'/'+epsLabel+': no data',W/2,yTop+cH/2+pad.t);
+      return;
+    }
+    let peMax=0,peMin=Infinity;
+    for(const d of peP){if(d[peData]>peMax)peMax=d[peData];if(d[peData]<peMin)peMin=d[peData]}
+    if(peMin===Infinity){peMin=0;peMax=50}
+    const peRange=peMax-peMin||10;peMax+=peRange*0.15;peMin=Math.max(0,peMin-peRange*0.1);
+    function yPE(v){return yTop+pad.t+(1-(v-peMin)/(peMax-peMin))*cH}
 
-    // EPS y-axis (right) — include both EPSdec and EPS12m
-    let e5Max=0,e5Min=Infinity;
-    for(const d of epsPoints){if(d.epsDec>e5Max)e5Max=d.epsDec;if(d.epsDec<e5Min)e5Min=d.epsDec}
-    for(const d of eps12mPoints){if(d.eps12m>e5Max)e5Max=d.eps12m;if(d.eps12m<e5Min)e5Min=d.eps12m}
-    if(e5Min===Infinity){e5Min=0;e5Max=10}
-    const e5Range=e5Max-e5Min||1;
-    e5Max+=e5Range*0.15;e5Min=Math.max(0,e5Min-e5Range*0.1);
-    function yPosE(v){return y5Top+pad.t+(1-(v-e5Min)/(e5Max-e5Min))*cH5}
+    let eMax=0,eMin=Infinity;
+    for(const d of epsP){if(d[epsData]>eMax)eMax=d[epsData];if(d[epsData]<eMin)eMin=d[epsData]}
+    if(eMin===Infinity){eMin=0;eMax=10}
+    const eRange=eMax-eMin||1;eMax+=eRange*0.15;eMin=Math.max(0,eMin-eRange*0.1);
+    function yEPS(v){return yTop+pad.t+(1-(v-eMin)/(eMax-eMin))*cH}
 
-    // Grid lines (left PE axis)
+    // Grid + left PE axis
     ctx.strokeStyle='#2a2d33';ctx.lineWidth=0.5;
     for(let i=0;i<=3;i++){
-      const v=y5Min+(y5Max-y5Min)*i/3;const y=yPos5(v);
+      const v=peMin+(peMax-peMin)*i/3;const y=yPE(v);
       ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
-      ctx.fillStyle='#ce93d8';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='right';
+      ctx.fillStyle=peColor;ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='right';
       ctx.fillText(fmtF(v),pad.l-4,y+3);
     }
-    // Right EPS axis labels
+    // Right EPS axis
     for(let i=0;i<=3;i++){
-      const v=e5Min+(e5Max-e5Min)*i/3;const y=yPosE(v);
-      ctx.fillStyle='#4fc3f7';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='left';
+      const v=eMin+(eMax-eMin)*i/3;const y=yEPS(v);
+      ctx.fillStyle=epsColor;ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='left';
       ctx.fillText(fmtF(v),W-pad.r+4,y+3);
     }
-
-    // --- PEdec line (magenta, solid) ---
-    if(perPoints.length>0){
-      ctx.strokeStyle='#ce93d8';ctx.lineWidth=1.5;ctx.beginPath();
-      let s=false;
-      for(let i=0;i<data.length;i++){
-        if(data[i].peDec!=null&&data[i].peDec>0){
-          if(!s){ctx.moveTo(xPos(i),yPos5(data[i].peDec));s=true}
-          else ctx.lineTo(xPos(i),yPos5(data[i].peDec));
-        }
-      }
+    // PE line (solid)
+    if(peP.length>0){
+      ctx.strokeStyle=peColor;ctx.lineWidth=1.5;ctx.beginPath();let s=false;
+      for(let i=0;i<data.length;i++){if(data[i][peData]!=null&&data[i][peData]>0){if(!s){ctx.moveTo(xPos(i),yPE(data[i][peData]));s=true}else ctx.lineTo(xPos(i),yPE(data[i][peData]))}}
       ctx.stroke();
-      ctx.fillStyle='#ce93d8';
-      for(let i=0;i<data.length;i++){
-        if(perLookup[data[i].date]!=null){ctx.beginPath();ctx.arc(xPos(i),yPos5(data[i].peDec),2.5,0,Math.PI*2);ctx.fill()}
-      }
-      const last=data[data.length-1].peDec;
-      if(last!=null&&last>0){ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='right';ctx.fillStyle='#ce93d8';ctx.fillText('PEdec '+fmtF(last),pad.l-4,yPos5(last)-6)}
+      ctx.fillStyle=peColor;
+      for(let i=0;i<data.length;i++){if(peLookup[data[i].date]!=null){ctx.beginPath();ctx.arc(xPos(i),yPE(data[i][peData]),2.5,0,Math.PI*2);ctx.fill()}}
+      const last=data[data.length-1][peData];
+      if(last!=null&&last>0){ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='right';ctx.fillStyle=peColor;ctx.fillText(peLabel+' '+fmtF(last),pad.l-4,yPE(last)-6)}
     }
-
-    // --- PE12m line (pink, solid) ---
-    if(pe12mPoints.length>0){
-      ctx.strokeStyle='#f48fb1';ctx.lineWidth=1.5;ctx.beginPath();
-      let s=false;
-      for(let i=0;i<data.length;i++){
-        if(data[i].pe12m!=null&&data[i].pe12m>0){
-          if(!s){ctx.moveTo(xPos(i),yPos5(data[i].pe12m));s=true}
-          else ctx.lineTo(xPos(i),yPos5(data[i].pe12m));
-        }
-      }
-      ctx.stroke();
-      ctx.fillStyle='#f48fb1';
-      for(let i=0;i<data.length;i++){
-        if(pe12mLookup[data[i].date]!=null){ctx.beginPath();ctx.arc(xPos(i),yPos5(data[i].pe12m),2,0,Math.PI*2);ctx.fill()}
-      }
-      const last=data[data.length-1].pe12m;
-      if(last!=null&&last>0){ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='right';ctx.fillStyle='#f48fb1';ctx.fillText('PE12m '+fmtF(last),pad.l-4,yPos5(last)+10)}
-    }
-
-    // --- EPSdec line (cyan, dashed) ---
-    if(epsPoints.length>0){
-      ctx.strokeStyle='#4fc3f7';ctx.lineWidth=1.5;ctx.setLineDash([5,3]);ctx.beginPath();
-      let s=false;
-      for(let i=0;i<data.length;i++){
-        if(data[i].epsDec!=null&&data[i].epsDec>0){
-          if(!s){ctx.moveTo(xPos(i),yPosE(data[i].epsDec));s=true}
-          else ctx.lineTo(xPos(i),yPosE(data[i].epsDec));
-        }
-      }
+    // EPS line (dashed)
+    if(epsP.length>0){
+      ctx.strokeStyle=epsColor;ctx.lineWidth=1.5;ctx.setLineDash([5,3]);ctx.beginPath();let s=false;
+      for(let i=0;i<data.length;i++){if(data[i][epsData]!=null&&data[i][epsData]>0){if(!s){ctx.moveTo(xPos(i),yEPS(data[i][epsData]));s=true}else ctx.lineTo(xPos(i),yEPS(data[i][epsData]))}}
       ctx.stroke();ctx.setLineDash([]);
-      ctx.fillStyle='#4fc3f7';
-      for(let i=0;i<data.length;i++){
-        if(epsLookup[data[i].date]!=null){ctx.beginPath();ctx.arc(xPos(i),yPosE(data[i].epsDec),2,0,Math.PI*2);ctx.fill()}
-      }
-      const last=data[data.length-1].epsDec;
-      if(last!=null&&last>0){ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle='#4fc3f7';ctx.fillText('EPSdec '+fmtF(last),W-pad.r+4,yPosE(last)-6)}
+      ctx.fillStyle=epsColor;
+      for(let i=0;i<data.length;i++){if(epsLookup2[data[i].date]!=null){ctx.beginPath();ctx.arc(xPos(i),yEPS(data[i][epsData]),2,0,Math.PI*2);ctx.fill()}}
+      const last=data[data.length-1][epsData];
+      if(last!=null&&last>0){ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle=epsColor;ctx.fillText(epsLabel+' '+fmtF(last),W-pad.r+4,yEPS(last)-6)}
     }
-
-    // --- EPS12m line (teal, dashed) ---
-    if(eps12mPoints.length>0){
-      ctx.strokeStyle='#80cbc4';ctx.lineWidth=1.5;ctx.setLineDash([5,3]);ctx.beginPath();
-      let s=false;
-      for(let i=0;i<data.length;i++){
-        if(data[i].eps12m!=null&&data[i].eps12m>0){
-          if(!s){ctx.moveTo(xPos(i),yPosE(data[i].eps12m));s=true}
-          else ctx.lineTo(xPos(i),yPosE(data[i].eps12m));
-        }
-      }
-      ctx.stroke();ctx.setLineDash([]);
-      ctx.fillStyle='#80cbc4';
-      for(let i=0;i<data.length;i++){
-        if(eps12mLookup[data[i].date]!=null){ctx.beginPath();ctx.arc(xPos(i),yPosE(data[i].eps12m),2,0,Math.PI*2);ctx.fill()}
-      }
-      const last=data[data.length-1].eps12m;
-      if(last!=null&&last>0){ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle='#80cbc4';ctx.fillText('EPS12m '+fmtF(last),W-pad.r+4,yPosE(last)+10)}
-    }
-
     // Legend
     ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
-    ctx.fillStyle='#ce93d8';ctx.fillText('PEdec',pad.l,y5Top+12);
-    ctx.fillStyle='#f48fb1';ctx.fillText('PE12m',pad.l+48,y5Top+12);
-    ctx.fillStyle='#4fc3f7';ctx.fillText('EPSdec',pad.l+100,y5Top+12);
-    ctx.fillStyle='#80cbc4';ctx.fillText('EPS12m',pad.l+155,y5Top+12);
+    ctx.fillStyle=peColor;ctx.fillText('── '+peLabel,pad.l,yTop+12);
+    ctx.fillStyle=epsColor;ctx.fillText('╌ '+epsLabel,pad.l+80,yTop+12);
     ctx.fillStyle='#555';ctx.font='8px JetBrains Mono, monospace';ctx.textAlign='right';
-    ctx.fillText(perTk,W-pad.r,y5Top+12);
-  }else{
-    // No data — show placeholder
-    ctx.fillStyle='#444';ctx.font='11px JetBrains Mono, monospace';ctx.textAlign='center';
-    ctx.fillText('PEdec/EPSdec: no fund_history data',W/2,y5Top+cH5/2+pad.t);
+    ctx.fillText(perTk,W-pad.r,yTop+12);
   }
+
+  // ===== CHART 5: PE12m + EPS12m (forward, dual axis) =====
+  const y5Top=H1+gap+H2+gap+H3+gap+H4+gap;
+  const cH5=H5-pad.t-pad.b;
+  drawPeEpsChart(y5Top,cH5,'pe12m','eps12m',pe12mLookup,eps12mLookup,'#f48fb1','#80cbc4','PE12m','EPS12m');
+
+  // ===== CHART 6: PEdec + EPSdec (Dec-normalized, dual axis) =====
+  const y6Top=y5Top+H5+gap;
+  const cH6=H6-pad.t-pad.b;
+  drawPeEpsChart(y6Top,cH6,'peDec','epsDec',perLookup,epsLookup,'#ce93d8','#4fc3f7','PEdec','EPSdec');
 
   // X labels (shared for all charts)
   ctx.fillStyle='#888';ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='center';
@@ -5314,10 +5260,10 @@ async function drawHistoryChart(ticker,period,btn){
     const totalPL=pl+d.realized;
     html+=`<div style="color:#e0e0e0;border-top:1px solid #333;padding-top:2px;margin-top:2px">총손익: ${(totalPL>=0?'+':'')}${fmtK(totalPL)}</div>`;
     if(d.price>0)html+=`<div style="color:#26c6da">주가: $${d.price.toFixed(2)}</div>`;
-    if(d.peDec!=null&&d.peDec>0)html+=`<div style="color:#ce93d8">PEdec: ${fmtF(d.peDec)}</div>`;
     if(d.pe12m!=null&&d.pe12m>0)html+=`<div style="color:#f48fb1">PE12m: ${fmtF(d.pe12m)}</div>`;
-    if(d.epsDec!=null&&d.epsDec>0)html+=`<div style="color:#4fc3f7">EPSdec: ${fmtF(d.epsDec)}</div>`;
     if(d.eps12m!=null&&d.eps12m>0)html+=`<div style="color:#80cbc4">EPS12m: ${fmtF(d.eps12m)}</div>`;
+    if(d.peDec!=null&&d.peDec>0)html+=`<div style="color:#ce93d8">PEdec: ${fmtF(d.peDec)}</div>`;
+    if(d.epsDec!=null&&d.epsDec>0)html+=`<div style="color:#4fc3f7">EPSdec: ${fmtF(d.epsDec)}</div>`;
     tip.innerHTML=html;
     tip.style.display='block';
     const xPx=xPos(idx);
