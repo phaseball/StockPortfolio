@@ -100,18 +100,18 @@ table.t tr:hover td{background:var(--accentBg)}
 .fbtn:hover:not(.on){background:var(--surface2);color:var(--text)}
 
 /* Holdings header - sticky */
-.hold-hdr{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.6fr 1.8fr 0.8fr;gap:2px;font-size:10px;color:var(--text3);padding:6px 12px;background:var(--bg);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border);margin-bottom:4px}
+.hold-hdr{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.6fr 1.8fr 1.2fr 0.8fr;gap:2px;font-size:10px;color:var(--text3);padding:6px 12px;background:var(--bg);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border);margin-bottom:4px}
 .hold-hdr div{display:flex;flex-direction:column;gap:2px}
 .hold-hdr div:last-child{margin-left:16px}
 
 /* Holdings card v2 */
 .hold-row{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
 .hold-row:hover{border-color:var(--accent)}
-.hold-top{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.6fr 1.8fr 0.8fr;gap:2px;align-items:baseline;margin-bottom:6px}
+.hold-top{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.6fr 1.8fr 1.2fr 0.8fr;gap:2px;align-items:baseline;margin-bottom:6px}
 .hold-ticker{font-size:15px;font-weight:700;color:var(--text3);font-family:'JetBrains Mono',monospace}
-.hold-qty{font-size:12px;color:var(--text2);text-align:right;grid-column:4/7}
+.hold-qty{font-size:12px;color:var(--text2);text-align:right;grid-column:5/8}
 .hold-fiscal{font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace}
-.hold-grid{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.6fr 1.8fr 0.8fr;gap:2px;font-size:11px}
+.hold-grid{display:grid;grid-template-columns:2.5fr 1fr 1.2fr 1.6fr 1.8fr 1.2fr 0.8fr;gap:2px;font-size:11px}
 .hold-grid .lbl{color:var(--text3);font-size:10px}
 .hold-grid .val{font-family:'JetBrains Mono',monospace;font-size:12px}
 .hold-grid>div:last-child{margin-left:16px}
@@ -2422,6 +2422,32 @@ function computeOverview(){
   cachedOverviewData={holdMap,allHoldings,cashByBroker};
 }
 
+// Compute momentum & volatility from daily_value prices
+function computeMomVol(ticker){
+  const dv=dailyValueCache||{};
+  const dates=Object.keys(dv).sort();
+  const prices=[];
+  for(const d of dates){
+    const p=dv[d]?.prices?.[ticker];
+    if(p!=null&&p>0)prices.push(p);
+  }
+  if(prices.length<12)return null;
+  function calc(n){
+    const slice=prices.slice(-n-1); // need n+1 prices for n changes
+    if(slice.length<n+1)return null;
+    const chg=[];
+    for(let i=1;i<slice.length;i++)chg.push((slice[i]-slice[i-1])/slice[i-1]*100); // % daily changes
+    const sum=chg.reduce((a,b)=>a+b,0);
+    const mean=sum/chg.length;
+    const variance=chg.reduce((a,b)=>a+(b-mean)**2,0)/chg.length;
+    const std=Math.sqrt(variance);
+    const mom=std>0?sum/std:0;
+    return{mom:Math.round(mom*10)/10, vol:Math.round(std*100)/100};
+  }
+  const r10=calc(10), r20=calc(20);
+  return{mom10:r10?.mom, vol10:r10?.vol, mom20:r20?.mom, vol20:r20?.vol};
+}
+
 async function loadOverview(){
   // Legacy: full refresh (data + prices)
   if(!SHEET_ID||!SA_KEY){toast('Google Sheets 설정을 완료하세요','err');return}
@@ -2664,6 +2690,7 @@ function holdingsHeader(){
     <div><span>PE12m (YOY%)</span><span>EPS12m (YOY%)</span></div>
     <div><span>PEdec now&gt;1w&gt;1m</span><span>EPSdec now&gt;1w&gt;1m</span></div>
     <div><span>TP now&gt;1w&gt;1m</span><span>B/H/S</span></div>
+    <div><span>Mom 10/20</span><span>Vol 10/20</span></div>
     <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
   </div>`;
 }
@@ -2797,6 +2824,16 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     }
   }
 
+  // Momentum & Volatility
+  const mv=computeMomVol(ticker);
+  let momRow='<span style="color:var(--text3)">—</span>';
+  let volRow='<span style="color:var(--text3)">—</span>';
+  if(mv){
+    const mc=(v)=>v>0?'color:#4caf50':'color:#ef5350';
+    momRow=`<span style="${mc(mv.mom10)}">${mv.mom10?.toFixed(1)||'—'}</span> / <span style="${mc(mv.mom20)}">${mv.mom20?.toFixed(1)||'—'}</span>`;
+    volRow=`<span style="color:var(--text2)">${mv.vol10?.toFixed(2)||'—'}</span> / <span style="color:var(--text2)">${mv.vol20?.toFixed(2)||'—'}</span>`;
+  }
+
   return`<div class="hold-row" onclick="showHistory('${ticker}')">
     <div class="hold-top">
       <span class="hold-ticker">${ticker}</span>
@@ -2824,6 +2861,10 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
       <div>
         <div class="val">${targetCol}</div>
         <div class="val">${ratingStr}</div>
+      </div>
+      <div>
+        <div class="val">${momRow}</div>
+        <div class="val">${volRow}</div>
       </div>
       <div>
         <div class="val ${realYtdCls}">${fmtUSD(realPLYtd)}</div>
@@ -3082,6 +3123,8 @@ function renderWatchlist(){
       <th>EPSdec now${arw}1w${arw}1m</th>
       <th>Price</th>
       <th>TP now${arw}1w${arw}1m</th>
+      <th>Mom 10/20</th>
+      <th>Vol 10/20</th>
       <th>실현(YTD/Tot)</th>
     </tr></thead><tbody>`;
 
@@ -3101,6 +3144,12 @@ function renderWatchlist(){
 
       const{perCell,epsCell,tpCell,pe12mCell}=computeFundCells(tk);
 
+      // Momentum/Volatility
+      const mv=computeMomVol(tk);
+      const mc=(v)=>v>0?'color:#4caf50':'color:#ef5350';
+      const momCell=mv?`<span style="${mc(mv.mom10)}">${mv.mom10?.toFixed(1)||'—'}</span>/<span style="${mc(mv.mom20)}">${mv.mom20?.toFixed(1)||'—'}</span>`:'<span class="wl-muted">—</span>';
+      const volCell=mv?`${mv.vol10?.toFixed(2)||'—'}/${mv.vol20?.toFixed(2)||'—'}`:'<span class="wl-muted">—</span>';
+
       const rowCls=noHeld?'wl-noheld':'';
       const valCell=qty>0?fmtValPL(mktVal,upl):`<span class="wl-muted">—</span>`;
       html+=`<tr class="${rowCls}" onclick="showHistory('${tk}')">
@@ -3112,6 +3161,8 @@ function renderWatchlist(){
         <td>${epsCell}</td>
         <td>${price>0?'$'+price.toFixed(2):'—'}</td>
         <td>${tpCell}</td>
+        <td>${momCell}</td>
+        <td>${volCell}</td>
         <td>${fmtPL(rl.realPLYtd)} / ${fmtPL(rl.realPL)}</td>
       </tr>`;
     }
@@ -3127,7 +3178,7 @@ function renderWatchlist(){
         onclick="event.stopPropagation()" onchange="saveWatchPlan('${sec.name}',this.value);renderWatchlist()"><span style="font-size:10px;color:var(--text2);margin-left:4px">${pctUsed?pctUsed+'%':''}</span></td>
       <td>${fmtC(secCost)}</td>
       <td>${fmtValPL(secVal,secUpl)}</td>
-      <td></td><td></td><td></td><td></td><td></td>
+      <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
       <td>${fmtPL(secRealYtd)} / ${fmtPL(secRealTot)}</td>
     </tr>`;
 
