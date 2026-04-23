@@ -596,9 +596,10 @@ async function getAccessToken(){
 // ================ SHEETS API ================
 async function sheetsGet(range){
   const token=await getAccessToken();
-  const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`,{headers:{Authorization:`Bearer ${token}`}});
+  const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}`,{headers:{Authorization:`Bearer ${token}`}});
   if(!r.ok)throw new Error('시트 읽기 실패: '+r.status);return r.json();
 }
+function pf(v){return parseFloat(String(v).replace(/,/g,''))||0}
 async function sheetsInsertAtTop(sheet,values){
   const token=await getAccessToken();const range=`${sheet}!A:H`;
   let existing=[];try{const d=await sheetsGet(`${sheet}!A:H`);existing=d.values||[]}catch(e){}
@@ -1243,7 +1244,7 @@ async function rescaleEpsHistory(){
       const tk=(r[1]||'').trim().toUpperCase();
       if(!tk)continue;
       if(!byTicker[tk])byTicker[tk]=[];
-      byTicker[tk].push({idx:i, date:r[0], epsDec:parseFloat(r[2]), revNorm:r[3], targetPrice:r[4]});
+      byTicker[tk].push({idx:i, date:r[0], epsDec:pf(r[2]), revNorm:r[3], targetPrice:r[4]});
     }
 
     // For each ticker, fetch fiscal end month/day from FMP
@@ -1378,7 +1379,7 @@ async function repairFundHistoryPER(){
       const r=allRows[i];
       const dt=(r[0]||'').trim();
       const tk=(r[1]||'').trim().toUpperCase();
-      const eps=r[2]!=null&&r[2]!==''?parseFloat(r[2]):null;
+      const eps=r[2]!=null&&r[2]!==''?pf(r[2]):null;
       if(!dt||!tk||!eps)continue;
       if(!byTicker[tk])byTicker[tk]=[];
       byTicker[tk].push({rowIdx:i,date:dt,epsDec:eps});
@@ -1484,7 +1485,7 @@ async function _repairDVSplitsCore(){
     try{
       const parsed=JSON.parse(r[2]||'0');
       cashVal=typeof parsed==='object'?(parsed['삼성']||0)+(parsed['키움']||0)+(parsed['메리츠']||0):parseFloat(parsed)||0;
-    }catch(e){cashVal=parseFloat(r[2])||0}
+    }catch(e){cashVal=pf(r[2])||0}
     let holdTotal=0;
     for(const v of Object.values(holdings)) holdTotal+=v;
     const newTotal=Math.round((cashVal+holdTotal)*100)/100;
@@ -1557,11 +1558,11 @@ async function recalcTotals(){
       let changed=false;
       for(let i=1;i<rows.length;i++){
         const r=rows[i];
-        const qty=parseFloat(r[2])||0;
-        const price=parseFloat(r[3])||0;
-        const tax=parseFloat(r[4])||0;
+        const qty=pf(r[2])||0;
+        const price=pf(r[3])||0;
+        const tax=pf(r[4])||0;
         const newTotal=Math.round((Math.abs(qty)*price+tax)*100)/100;
-        const oldTotal=parseFloat(r[5])||0;
+        const oldTotal=pf(r[5])||0;
         if(Math.abs(newTotal-oldTotal)>0.005){
           while(rows[i].length<8)rows[i].push('');
           rows[i][5]=newTotal;
@@ -1641,12 +1642,12 @@ async function loadFundHistory(){
         if(!fundHistory[tk])fundHistory[tk]=[];
         fundHistory[tk].push({
           date:dt,
-          epsDec:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
-          revNorm:r[3]!=null&&r[3]!==''?parseFloat(r[3]):null,
-          targetPrice:r[4]!=null&&r[4]!==''?parseFloat(r[4]):null,
-          peDec:r[5]!=null&&r[5]!==''?parseFloat(r[5]):null,
-          eps12m:r[6]!=null&&r[6]!==''?parseFloat(r[6]):null,
-          pe12m:r[7]!=null&&r[7]!==''?parseFloat(r[7]):null
+          epsDec:r[2]!=null&&r[2]!==''?pf(r[2]):null,
+          revNorm:r[3]!=null&&r[3]!==''?pf(r[3]):null,
+          targetPrice:r[4]!=null&&r[4]!==''?pf(r[4]):null,
+          peDec:r[5]!=null&&r[5]!==''?pf(r[5]):null,
+          eps12m:r[6]!=null&&r[6]!==''?pf(r[6]):null,
+          pe12m:r[7]!=null&&r[7]!==''?pf(r[7]):null
         });
       }
       for(const tk of Object.keys(fundHistory)){
@@ -1694,8 +1695,8 @@ async function refreshFundamentals(){
             if(!epsActualsMap[tk])epsActualsMap[tk]={};
             if(!epsActualsMap[tk][dateKey]||source==='manual'){
               epsActualsMap[tk][dateKey]={
-                eps:r[2]!=null&&r[2]!==''?parseFloat(r[2]):null,
-                rev:r[3]!=null&&r[3]!==''?parseFloat(r[3]):null
+                eps:r[2]!=null&&r[2]!==''?pf(r[2]):null,
+                rev:r[3]!=null&&r[3]!==''?pf(r[3]):null
               };
             }
           }
@@ -2179,7 +2180,7 @@ async function saveFundamentalsToSheet(fundData,epsActualsMap){
                 const tk=String(r[0]).trim().toUpperCase();
                 const dk=String(r[1]).trim();
                 if(!existingManual[tk])existingManual[tk]={};
-                existingManual[tk][dk]={eps:parseFloat(r[2])||null,rev:parseFloat(r[3])||null};
+                existingManual[tk][dk]={eps:pf(r[2])||null,rev:pf(r[3])||null};
               }
             }
           }
@@ -2239,8 +2240,8 @@ async function loadAllTransactions(){
         const r=rows[i];
         if(r[0]&&r[0]!=='')curDate=String(r[0]);
         allTransactions.push({
-          broker,date:curDate,ticker:r[1]||'',qty:parseFloat(r[2])||0,
-          price:parseFloat(r[3])||0,tax:parseFloat(r[4])||0,total:parseFloat(r[5])||0,
+          broker,date:curDate,ticker:r[1]||'',qty:pf(r[2]),
+          price:pf(r[3]),tax:pf(r[4]),total:pf(r[5]),
           split:r[6]||'',seq:r[7]||''
         });
       }
@@ -2251,11 +2252,11 @@ async function loadAllTransactions(){
     const d=await sheetsGet('config!A1:B10');
     if(d.values){
       for(const row of d.values){
-        if(row[0]==='initial_cash_삼성')initialCashSS=parseFloat(row[1])||0;
-        if(row[0]==='initial_cash_키움')initialCashKW=parseFloat(row[1])||0;
-        if(row[0]==='initial_cash_메리츠')initialCashMR=parseFloat(row[1])||0;
+        if(row[0]==='initial_cash_삼성')initialCashSS=pf(row[1]);
+        if(row[0]==='initial_cash_키움')initialCashKW=pf(row[1]);
+        if(row[0]==='initial_cash_메리츠')initialCashMR=pf(row[1]);
         // Legacy: single initial_cash
-        if(row[0]==='initial_cash'){initialCashSS=parseFloat(row[1])||0;initialCashKW=0}
+        if(row[0]==='initial_cash'){initialCashSS=pf(row[1]);initialCashKW=0}
         if(row[0]==='watchlist'){
           const wl=row[1]||'';
           document.getElementById('watchInput').value=wl;
@@ -3472,7 +3473,7 @@ async function loadDailyValuesFromSheet(){
     const map={};
     for(const r of rows){
       if(!r[0]||r[0]==='date')continue;
-      const entry={totalValue:parseFloat(r[1])||0};
+      const entry={totalValue:pf(r[1])};
       // Cash: new format is JSON {"삼성":..,"키움":..,"메리츠":..}, old format is a single number
       if(r[2]){
         try{
@@ -3480,10 +3481,10 @@ async function loadDailyValuesFromSheet(){
           if(typeof parsed==='object'&&parsed!==null){
             entry.cash=parsed; // per-broker JSON
           }else{
-            entry.cash=parseFloat(r[2])||0; // legacy single number
+            entry.cash=pf(r[2]); // legacy single number
           }
         }catch(e){
-          entry.cash=parseFloat(r[2])||0; // legacy single number
+          entry.cash=pf(r[2]); // legacy single number
         }
       }else{entry.cash=0}
       if(r[3]){try{entry.holdings=JSON.parse(r[3])}catch(e){}}
