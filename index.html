@@ -2232,17 +2232,21 @@ function getHeldTickers(){
 // ================ LOAD ALL TRANSACTIONS ================
 async function loadAllTransactions(){
   allTransactions=[];
+  const token=await getAccessToken();
   for(const broker of['삼성','키움','메리츠']){
     try{
-      const d=await sheetsGet(`${broker}!A:H`);
+      // Use UNFORMATTED_VALUE for broker tabs (dates are 6-digit numbers, not real dates)
+      const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(broker+'!A:H')}?valueRenderOption=UNFORMATTED_VALUE`,{headers:{Authorization:`Bearer ${token}`}});
+      if(!r.ok)continue;
+      const d=await r.json();
       const rows=d.values||[];let curDate='';
       for(let i=1;i<rows.length;i++){
         const r=rows[i];
         if(r[0]&&r[0]!=='')curDate=String(r[0]);
         allTransactions.push({
-          broker,date:curDate,ticker:r[1]||'',qty:pf(r[2]),
+          broker,date:curDate,ticker:String(r[1]||'').toUpperCase(),qty:pf(r[2]),
           price:pf(r[3]),tax:pf(r[4]),total:pf(r[5]),
-          split:r[6]||'',seq:r[7]||''
+          split:String(r[6]||''),seq:String(r[7]||'')
         });
       }
     }catch(e){}
