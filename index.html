@@ -379,7 +379,7 @@ const BROKER_ICON={삼성:'🔵',키움:'🔴',메리츠:'🟢'};
 let cachedPrices={};
 let cachedFundamentals={};
 let fundHistory={}; // {ticker: [{date, epsDec, revNorm, targetPrice}]}
-const CACHE_VERSION='v4.2';
+const CACHE_VERSION='v4.3';
 const CACHE_KEY_TX='cache_transactions';
 
 // US Eastern Time date utilities
@@ -2246,13 +2246,9 @@ function getHeldTickers(){
 // ================ LOAD ALL TRANSACTIONS ================
 async function loadAllTransactions(){
   allTransactions=[];
-  const token=await getAccessToken();
   for(const broker of['삼성','키움','메리츠']){
     try{
-      // Use UNFORMATTED_VALUE for broker tabs (dates are 6-digit numbers, not real dates)
-      const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(broker+'!A:H')}?valueRenderOption=UNFORMATTED_VALUE`,{headers:{Authorization:`Bearer ${token}`}});
-      if(!r.ok)continue;
-      const d=await r.json();
+      const d=await sheetsGet(`${broker}!A:H`);
       const rows=d.values||[];let curDate='';
       for(let i=1;i<rows.length;i++){
         const r=rows[i];
