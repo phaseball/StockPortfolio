@@ -2450,13 +2450,13 @@ function computeMomVol(ticker){
     const slice=prices.slice(-n-1); // need n+1 prices for n changes
     if(slice.length<n+1)return null;
     const chg=[];
-    for(let i=1;i<slice.length;i++)chg.push((slice[i]-slice[i-1])/slice[i-1]*100); // % daily changes
+    for(let i=1;i<slice.length;i++)chg.push((slice[i]-slice[i-1])/slice[i-1]); // daily fractional returns
     const sum=chg.reduce((a,b)=>a+b,0);
     const mean=sum/chg.length;
     const variance=chg.reduce((a,b)=>a+(b-mean)**2,0)/chg.length;
     const std=Math.sqrt(variance);
-    const mom=std>0?sum/std:0;
-    return{mom:Math.round(mom*10)/10, vol:Math.round(std*100)/100};
+    const mom=std>0?(sum/std)*Math.sqrt(n):0;
+    return{mom:Math.round(mom*10)/10, vol:Math.round(std*10000)/10000};
   }
   const r10=calc(10), r20=calc(20);
   return{mom10:r10?.mom, vol10:r10?.vol, mom20:r20?.mom, vol20:r20?.vol};
@@ -2704,7 +2704,7 @@ function holdingsHeader(){
     <div><span>PE12m (YOY%)</span><span>EPS12m (YOY%)</span></div>
     <div><span>PEdec now&gt;1w&gt;1m</span><span>EPSdec now&gt;1w&gt;1m</span></div>
     <div><span>TP now&gt;1w&gt;1m</span><span>B/H/S</span></div>
-    <div><span>Mom 10/20</span><span>Vol 10/20</span></div>
+    <div><span>Mom 10/20</span><span>Vol% 10/20</span></div>
     <div><span>실현손익 (YTD)</span><span>실현손익 (total)</span></div>
   </div>`;
 }
@@ -2845,7 +2845,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   if(mv){
     const mc=(v)=>v>0?'color:#4caf50':'color:#ef5350';
     momRow=`<span style="${mc(mv.mom10)}">${mv.mom10?.toFixed(1)||'—'}</span> / <span style="${mc(mv.mom20)}">${mv.mom20?.toFixed(1)||'—'}</span>`;
-    volRow=`<span style="color:var(--text2)">${mv.vol10?.toFixed(2)||'—'}</span> / <span style="color:var(--text2)">${mv.vol20?.toFixed(2)||'—'}</span>`;
+    volRow=`<span style="color:var(--text2)">${(mv.vol10*100).toFixed(1)||'—'}</span> / <span style="color:var(--text2)">${(mv.vol20*100).toFixed(1)||'—'}</span>`;
   }
 
   return`<div class="hold-row" onclick="showHistory('${ticker}')">
@@ -3056,26 +3056,22 @@ function renderWatchlist(){
         return 'wl-flat';
       }
 
-      // EPSdec: color by 1m change
+      // EPSdec: color by 1m change, show now > 1m only
       let epsCls='wl-flat';
       if(fund.epsDec!=null){
         const nowEps=fund.epsDec;
-        const eps1w=e1w?.epsDec;
         const eps1m=e1m?.epsDec;
         epsCls=chg1m(nowEps,eps1m);
         let parts=[`<span class="${epsCls}">${fmtF(nowEps)}</span>`];
-        parts.push(eps1w!=null?`<span class="wl-muted">${fmtF(eps1w)}</span>`:`<span class="wl-muted">—</span>`);
         parts.push(eps1m!=null?`<span class="wl-muted">${fmtF(eps1m)}</span>`:`<span class="wl-muted">—</span>`);
         epsCell=parts.join(arw);
       }
 
-      // PEdec: same color as EPSdec
+      // PEdec: same color as EPSdec, show now > 1m only
       if(fund.peDec!=null){
         const nowPe=fund.peDec;
-        const pe1w=e1w?.peDec??null;
         const pe1m=e1m?.peDec??null;
         let parts=[`<span class="${epsCls}">${fmtF(nowPe)}</span>`];
-        parts.push(pe1w!=null?`<span class="wl-muted">${fmtF(pe1w)}</span>`:`<span class="wl-muted">—</span>`);
         parts.push(pe1m!=null?`<span class="wl-muted">${fmtF(pe1m)}</span>`:`<span class="wl-muted">—</span>`);
         perCell=parts.join(arw);
       }
@@ -3087,17 +3083,15 @@ function renderWatchlist(){
         pe12mCell=`<span class="${eps12mCls}">${fmtF(fund.pe12m)}</span>${yoy}`;
       }
 
-      // Target Price: gap% uses same color as TP
+      // Target Price: show now > 1m only, gap% uses same color as TP
       if(fund.targetPrice!=null){
         const nowTgt=fund.targetPrice;
-        const tgt1w=e1w?.targetPrice;
         const tgt1m=e1m?.targetPrice;
         const tgtCls=chg1m(nowTgt,tgt1m);
         const refPrice=fund.price||0;
         let gapStr='';
         if(refPrice>0){const gap=((nowTgt-refPrice)/refPrice*100);gapStr=` <span class="${tgtCls}" style="font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`}
         let parts=[`<span class="${tgtCls}">$${nowTgt.toFixed(0)}</span>${gapStr}`];
-        parts.push(tgt1w!=null?`<span class="wl-muted">$${tgt1w.toFixed(0)}</span>`:`<span class="wl-muted">—</span>`);
         parts.push(tgt1m!=null?`<span class="wl-muted">$${tgt1m.toFixed(0)}</span>`:`<span class="wl-muted">—</span>`);
         tpCell=parts.join(arw);
       }
@@ -3133,12 +3127,12 @@ function renderWatchlist(){
     html+=`<div class="tbl-wrap"><table class="wl-tbl"><thead><tr>
       <th>Ticker</th><th>매수</th><th>평가(손익)</th>
       <th>PE12m</th>
-      <th>PEdec now${arw}1w${arw}1m</th>
-      <th>EPSdec now${arw}1w${arw}1m</th>
+      <th>PEdec now${arw}1m</th>
+      <th>EPSdec now${arw}1m</th>
       <th>Price</th>
-      <th>TP now${arw}1w${arw}1m</th>
+      <th>TP now${arw}1m</th>
       <th>Mom 10/20</th>
-      <th>Vol 10/20</th>
+      <th>Vol% 10/20</th>
       <th>실현(YTD/Tot)</th>
     </tr></thead><tbody>`;
 
@@ -3162,7 +3156,7 @@ function renderWatchlist(){
       const mv=computeMomVol(tk);
       const mc=(v)=>v>0?'color:#4caf50':'color:#ef5350';
       const momCell=mv?`<span style="${mc(mv.mom10)}">${mv.mom10?.toFixed(1)||'—'}</span>/<span style="${mc(mv.mom20)}">${mv.mom20?.toFixed(1)||'—'}</span>`:'<span class="wl-muted">—</span>';
-      const volCell=mv?`${mv.vol10?.toFixed(2)||'—'}/${mv.vol20?.toFixed(2)||'—'}`:'<span class="wl-muted">—</span>';
+      const volCell=mv?`${(mv.vol10*100).toFixed(1)}/${(mv.vol20*100).toFixed(1)}`:'<span class="wl-muted">—</span>';
 
       const rowCls=noHeld?'wl-noheld':'';
       const valCell=qty>0?fmtValPL(mktVal,upl):`<span class="wl-muted">—</span>`;
