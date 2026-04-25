@@ -358,7 +358,7 @@ NVDA,2,130.5000,1"></textarea>
       <div class="card-hdr"><span class="ico">📈</span> Fundamentals 대상 종목</div>
       <p style="font-size:11px;color:var(--text2);margin-bottom:8px">Fund 버튼 클릭 시 이 종목들만 fetch/계산/저장합니다. 콤마로 구분. 레버리지 ETF는 자동으로 기초자산으로 변환됩니다 (NVDL→NVDA 등).</p>
       <div style="display:flex;gap:8px">
-        <input type="text" id="fundTickers" placeholder="NVDA, AVGO, TSLA, AMD, TSM, GOOGL, AAPL" style="flex:1"/>
+        <input type="text" id="fundTickers" placeholder="Watch 페이지에서 자동 로드" style="flex:1" readonly/>
         <button class="btn btn-p btn-sm" onclick="saveFundTickers()">저장</button>
       </div>
       <p style="font-size:11px;color:var(--text2);margin-top:6px" id="fundTickerInfo">설정 없음</p>
@@ -379,7 +379,7 @@ const BROKER_ICON={삼성:'🔵',키움:'🔴',메리츠:'🟢'};
 let cachedPrices={};
 let cachedFundamentals={};
 let fundHistory={}; // {ticker: [{date, epsDec, revNorm, targetPrice}]}
-const CACHE_VERSION='v4.3';
+const CACHE_VERSION='v4.4';
 const CACHE_KEY_TX='cache_transactions';
 
 // US Eastern Time date utilities
@@ -509,58 +509,32 @@ function loadConfig(){
 function saveSA(){try{const r=document.getElementById('saKey').value.trim();SA_KEY=JSON.parse(r);localStorage.setItem('sa_key',r);updateSt('st-gs','ok','키 저장됨');toast('저장 완료','ok')}catch(e){toast('JSON 형식 오류','err')}}
 function saveSheetId(){SHEET_ID=document.getElementById('sheetId').value.trim();localStorage.setItem('sheet_id',SHEET_ID);updateSt('st-sid','ok',SHEET_ID.slice(0,8)+'...');toast('저장 완료','ok')}
 function saveFmpKey(){FMP_KEY=document.getElementById('fmpKey').value.trim();localStorage.setItem('fmp_key',FMP_KEY);toast('FMP API Key 저장 완료','ok')}
-let fundTickerList=[]; // configured tickers for fundamentals
-async function saveFundTickers(){
-  const raw=document.getElementById('fundTickers').value.trim();
-  const tickers=raw.split(/[,\s]+/).map(s=>s.trim().toUpperCase()).filter(Boolean);
-  fundTickerList=tickers;
-  localStorage.setItem('fund_tickers',JSON.stringify(tickers));
-  document.getElementById('fundTickerInfo').textContent=`${tickers.length}종목: ${tickers.join(', ')}`;
-  // Save to Sheet (fund_tickers tab, single row)
-  if(SHEET_ID&&SA_KEY){
-    try{
-      const token=await getAccessToken();
-      // Ensure tab exists
-      const meta=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties`,{
-        headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json());
-      if(!meta.sheets?.some(s=>s.properties?.title==='fund_tickers')){
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`,{
-          method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-          body:JSON.stringify({requests:[{addSheet:{properties:{title:'fund_tickers'}}}]})});
-      }
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/fund_tickers!A1:A1?valueInputOption=USER_ENTERED`,{
-        method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-        body:JSON.stringify({values:[[tickers.join(',')]]})});
-      toast(`Fund 대상 ${tickers.length}종목 저장 (Sheet + local)`,'ok');
-    }catch(e){toast(`Fund 대상 저장 (local만): ${e.message}`,'ok')}
-  }else{
-    toast(`Fund 대상 ${tickers.length}종목 저장 (local)`,'ok');
-  }
+let fundTickerList=[]; // derived from Watch page tickers
+let momVolCache={}; // ticker → [close prices sorted oldest-first]
+
+function getWatchTickers(){
+  const input=(document.getElementById('watchInput')?.value||localStorage.getItem('watch_input')||'').trim();
+  if(!input)return[];
+  const sections=parseWatchInput(input);
+  const set=new Set();
+  for(const s of sections)for(const t of s.tickers)set.add(t);
+  return[...set];
 }
-async function loadFundTickers(){
-  // Try Sheet first
-  if(SHEET_ID&&SA_KEY){
-    try{
-      const resp=await sheetsGet('fund_tickers!A1:A1');
-      const val=resp&&resp.values&&resp.values[0]?resp.values[0][0]:'';
-      if(val){
-        const tickers=String(val).split(/[,\s]+/).map(s=>s.trim().toUpperCase()).filter(Boolean);
-        if(tickers.length>0){
-          fundTickerList=tickers;
-          localStorage.setItem('fund_tickers',JSON.stringify(tickers));
-          document.getElementById('fundTickers').value=tickers.join(', ');
-          document.getElementById('fundTickerInfo').textContent=`${tickers.length}종목: ${tickers.join(', ')}`;
-          return;
-        }
-      }
-    }catch(e){}
-  }
-  // Fallback to localStorage
-  try{
-    const s=localStorage.getItem('fund_tickers');
-    if(s){fundTickerList=JSON.parse(s);document.getElementById('fundTickers').value=fundTickerList.join(', ');
-      document.getElementById('fundTickerInfo').textContent=`${fundTickerList.length}종목: ${fundTickerList.join(', ')}`}
-  }catch(e){}
+
+function syncFundTickersFromWatch(){
+  fundTickerList=getWatchTickers();
+  localStorage.setItem('fund_tickers',JSON.stringify(fundTickerList));
+  const el=document.getElementById('fundTickers');
+  if(el)el.value=fundTickerList.join(', ');
+  const info=document.getElementById('fundTickerInfo');
+  if(info)info.textContent=`${fundTickerList.length}종목 (Watch에서 자동)`;
+}
+function saveFundTickers(){
+  syncFundTickersFromWatch();
+  toast(`Watch에서 ${fundTickerList.length}종목 로드됨`,'ok');
+}
+function loadFundTickers(){
+  syncFundTickersFromWatch();
 }
 function updateSt(id,cls,txt){const el=document.getElementById(id);el.className='status '+cls;el.textContent=txt}
 async function saveInitCash(){
@@ -659,6 +633,7 @@ async function restoreCache(){
     if(fh){fundHistory=JSON.parse(fh)}
     const ic=localStorage.getItem(CACHE_KEY_CASH);
     if(ic){const c=JSON.parse(ic);initialCashSS=c.ss||0;initialCashKW=c.kw||0;initialCashMR=c.mr||0}
+    try{const mv=localStorage.getItem('momVolCache');if(mv)momVolCache=JSON.parse(mv)}catch(e){}
     populateInitCashFields();
     if(allTransactions.length===0&&SHEET_ID&&SA_KEY){
       // Cache was cleared (version upgrade) — auto-reload from Sheet
@@ -740,6 +715,7 @@ function getAllPriceTickers(){
 }
 
 async function refreshPrices(){
+  syncFundTickersFromWatch();
   const tickers=getAllPriceTickers();
   if(!tickers.length){toast('대상 종목 없음','err');return}
   toastPersist(`💲 가격 불러오는 중... (${tickers.length}종목)`,'ok');
@@ -782,6 +758,9 @@ async function refreshPrices(){
       }
     }
   }
+
+  // Step 3: Fetch mom/vol historical prices
+  await fetchMomVolPrices();
 
   saveCache();
   savePriceTimestamp();
@@ -1675,14 +1654,13 @@ async function loadFundHistory(){
 
 async function refreshFundamentals(){
   if(!FMP_KEY){toast('⚙️ 설정에서 FMP API Key를 입력하세요','err');return}
+  syncFundTickersFromWatch();
   const toastEl=document.getElementById('toast');
   function showFetching(msg){
     toastEl.textContent=msg;toastEl.className='toast ok show';
-    // Don't auto-hide
   }
   try{
-    // Use configured fund tickers (from 설정), mapped through UNDERLYING_MAP
-    if(fundTickerList.length===0){toast('⚙️ 설정에서 Fundamentals 대상 종목을 설정하세요','err');return}
+    if(fundTickerList.length===0){toast('Watch 페이지에 종목을 설정하세요','err');return}
     const fundTickers=[...new Set(fundTickerList.map(t=>getFundTicker(t)||t).filter(t=>t!==null))];
     console.log('Fund tickers to fetch:',fundTickers);
     showFetching(`📊 Fetching: ${fundTickers.join(', ')} (${fundTickers.length*4} API calls)`);
@@ -2436,30 +2414,73 @@ function computeOverview(){
   cachedOverviewData={holdMap,allHoldings,cashByBroker};
 }
 
-// Compute momentum & volatility from daily_value prices
+// Compute momentum & volatility from momVolCache (FMP historical prices)
+// momVolCache = {ticker: [{date:'YYMMDD', close:123.45}, ...]} sorted oldest-first
 function computeMomVol(ticker){
-  const dv=dailyValueCache||{};
-  const dates=Object.keys(dv).sort();
-  const prices=[];
-  for(const d of dates){
-    const p=dv[d]?.prices?.[ticker];
-    if(p!=null&&p>0)prices.push(p);
-  }
-  if(prices.length<12)return null;
+  const entries=momVolCache[ticker];
+  if(!entries||entries.length<12)return null;
   function calc(n){
-    const slice=prices.slice(-n-1); // need n+1 prices for n changes
+    const slice=entries.slice(-(n+1)); // need n+1 prices for n daily changes
     if(slice.length<n+1)return null;
     const chg=[];
-    for(let i=1;i<slice.length;i++)chg.push((slice[i]-slice[i-1])/slice[i-1]); // daily fractional returns
+    for(let i=1;i<slice.length;i++)chg.push((slice[i].close-slice[i-1].close)/slice[i-1].close);
     const sum=chg.reduce((a,b)=>a+b,0);
     const mean=sum/chg.length;
     const variance=chg.reduce((a,b)=>a+(b-mean)**2,0)/chg.length;
     const std=Math.sqrt(variance);
-    const mom=std>0?(sum/std)*Math.sqrt(n):0;
-    return{mom:Math.round(mom*10)/10, vol:Math.round(std*10000)/10000};
+    // Momentum = mean/std * sqrt(N) = sum/(std*sqrt(N))
+    const mom=std>0?(mean/std)*Math.sqrt(n):0;
+    return{mom:Math.round(mom*100)/100, vol:std};
   }
   const r10=calc(10), r20=calc(20);
   return{mom10:r10?.mom, vol10:r10?.vol, mom20:r20?.mom, vol20:r20?.vol};
+}
+
+// Incremental fetch: always re-fetch from last cached date (to correct intraday → final close)
+async function fetchMomVolPrices(){
+  if(!FMP_KEY)return;
+  // Restore from localStorage
+  try{const s=localStorage.getItem('momVolCache');if(s)momVolCache=JSON.parse(s)}catch(e){}
+
+  const tickers=getAllPriceTickers();
+  if(!tickers.length)return;
+
+  let fetched=0;
+  for(let i=0;i<tickers.length;i++){
+    const tk=tickers[i];
+    const existing=momVolCache[tk]||[];
+    const lastDate=existing.length>0?existing[existing.length-1].date:null;
+
+    // Determine fetch range
+    let calDays=45; // default: full backfill for new tickers
+    if(lastDate&&existing.length>=21){
+      // Re-fetch from last cached date (overwrite to correct intraday prices)
+      const lastY=2000+parseInt(lastDate.slice(0,2));
+      const lastM=parseInt(lastDate.slice(2,4))-1;
+      const lastD=parseInt(lastDate.slice(4,6));
+      const diffMs=Date.now()-new Date(lastY,lastM,lastD).getTime();
+      calDays=Math.max(Math.ceil(diffMs/86400000)+2, 3); // at least 3 days
+    }
+
+    try{
+      const hist=await fetchFmpHistoryDays(tk,calDays);
+      if(hist.length>0){
+        // Merge: new entries overwrite old (corrects intraday prices), sort, trim to 30
+        const merged=new Map();
+        for(const e of existing)merged.set(e.date,e);
+        for(const e of hist)merged.set(e.date,{date:e.date,close:e.close});
+        const sorted=[...merged.values()].sort((a,b)=>a.date.localeCompare(b.date));
+        momVolCache[tk]=sorted.slice(-30);
+        fetched++;
+      }
+    }catch(e){console.warn(`momVol fetch failed for ${tk}:`,e)}
+
+    if((i+1)%5===0)await new Promise(r=>setTimeout(r,300)); // rate limit
+  }
+
+  // Save to localStorage
+  try{localStorage.setItem('momVolCache',JSON.stringify(momVolCache))}catch(e){}
+  console.log(`momVol: fetched=${fetched}/${tickers.length}, cache=${Object.keys(momVolCache).length} tickers`);
 }
 
 async function loadOverview(){
@@ -2844,8 +2865,8 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
   let volRow='<span style="color:var(--text3)">—</span>';
   if(mv){
     const mc=(v)=>v>0?'color:#4caf50':'color:#ef5350';
-    momRow=`<span style="${mc(mv.mom10)}">${mv.mom10?.toFixed(1)||'—'}</span> / <span style="${mc(mv.mom20)}">${mv.mom20?.toFixed(1)||'—'}</span>`;
-    volRow=`<span style="color:var(--text2)">${(mv.vol10*100).toFixed(1)||'—'}</span> / <span style="color:var(--text2)">${(mv.vol20*100).toFixed(1)||'—'}</span>`;
+    momRow=`<span style="${mc(mv.mom10)}">${mv.mom10!=null?mv.mom10.toFixed(1):'—'}</span> / <span style="${mc(mv.mom20)}">${mv.mom20!=null?mv.mom20.toFixed(1):'—'}</span>`;
+    volRow=`<span style="color:var(--text2)">${mv.vol10!=null?(mv.vol10*100).toFixed(1):'—'}</span> / <span style="color:var(--text2)">${mv.vol20!=null?(mv.vol20*100).toFixed(1):'—'}</span>`;
   }
 
   return`<div class="hold-row" onclick="showHistory('${ticker}')">
@@ -2994,6 +3015,7 @@ function renderWatchlist(){
   const input=document.getElementById('watchInput').value.trim();
   localStorage.setItem(WATCH_STORAGE_KEY,input);
   saveWatchlistToSheet(input);
+  syncFundTickersFromWatch();
   const el=document.getElementById('watchContent');
   if(!input){el.innerHTML='<p style="color:var(--text2);text-align:center;padding:24px">섹션:종목 형식으로 입력하세요</p>';return}
 
@@ -3155,8 +3177,8 @@ function renderWatchlist(){
       // Momentum/Volatility
       const mv=computeMomVol(tk);
       const mc=(v)=>v>0?'color:#4caf50':'color:#ef5350';
-      const momCell=mv?`<span style="${mc(mv.mom10)}">${mv.mom10?.toFixed(1)||'—'}</span>/<span style="${mc(mv.mom20)}">${mv.mom20?.toFixed(1)||'—'}</span>`:'<span class="wl-muted">—</span>';
-      const volCell=mv?`${(mv.vol10*100).toFixed(1)}/${(mv.vol20*100).toFixed(1)}`:'<span class="wl-muted">—</span>';
+      const momCell=mv?`<span style="${mc(mv.mom10)}">${mv.mom10!=null?mv.mom10.toFixed(1):'—'}</span>/<span style="${mc(mv.mom20)}">${mv.mom20!=null?mv.mom20.toFixed(1):'—'}</span>`:'<span class="wl-muted">—</span>';
+      const volCell=mv?`${mv.vol10!=null?(mv.vol10*100).toFixed(1):'—'}/${mv.vol20!=null?(mv.vol20*100).toFixed(1):'—'}`:'<span class="wl-muted">—</span>';
 
       const rowCls=noHeld?'wl-noheld':'';
       const valCell=qty>0?fmtValPL(mktVal,upl):`<span class="wl-muted">—</span>`;
