@@ -354,15 +354,6 @@ NVDA,2,130.5000,1"></textarea>
       </div>
       <p style="font-size:11px;color:var(--text2);margin-top:6px">무료 플랜: 일 250회 요청. 로컬 브라우저에만 저장됩니다.</p>
     </div>
-    <div class="card">
-      <div class="card-hdr"><span class="ico">📈</span> Fundamentals 대상 종목</div>
-      <p style="font-size:11px;color:var(--text2);margin-bottom:8px">Fund 버튼 클릭 시 이 종목들만 fetch/계산/저장합니다. 콤마로 구분. 레버리지 ETF는 자동으로 기초자산으로 변환됩니다 (NVDL→NVDA 등).</p>
-      <div style="display:flex;gap:8px">
-        <input type="text" id="fundTickers" placeholder="Watch 페이지에서 자동 로드" style="flex:1" readonly/>
-        <button class="btn btn-p btn-sm" onclick="saveFundTickers()">저장</button>
-      </div>
-      <p style="font-size:11px;color:var(--text2);margin-top:6px" id="fundTickerInfo">설정 없음</p>
-    </div>
   </div>
 </div>
 
@@ -524,10 +515,6 @@ function getWatchTickers(){
 function syncFundTickersFromWatch(){
   fundTickerList=getWatchTickers();
   localStorage.setItem('fund_tickers',JSON.stringify(fundTickerList));
-  const el=document.getElementById('fundTickers');
-  if(el)el.value=fundTickerList.join(', ');
-  const info=document.getElementById('fundTickerInfo');
-  if(info)info.textContent=`${fundTickerList.length}종목 (Watch에서 자동)`;
 }
 function saveFundTickers(){
   syncFundTickersFromWatch();
@@ -761,6 +748,19 @@ async function refreshPrices(){
 
   // Step 3: Fetch mom/vol historical prices
   await fetchMomVolPrices();
+
+  // Step 3b: Compute chgDay/chgWeek from momVolCache (more reliable than FMP quote)
+  for(const tk of tickers){
+    const entries=momVolCache[tk];
+    if(!entries||entries.length<2)continue;
+    const cur=entries[entries.length-1].close;
+    const prev=entries.length>=2?entries[entries.length-2].close:cur;
+    const week=entries.length>=6?entries[entries.length-6].close:(entries[0].close);
+    if(cachedPrices[tk]){
+      cachedPrices[tk].chgDay=prev>0?((cur-prev)/prev*100):0;
+      cachedPrices[tk].chgWeek=week>0?((cur-week)/week*100):0;
+    }
+  }
 
   saveCache();
   savePriceTimestamp();
