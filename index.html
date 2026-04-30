@@ -188,7 +188,6 @@ table.t tr:hover td{background:var(--accentBg)}
       </div>
       <div style="display:flex;gap:4px;align-items:center;flex-shrink:0">
         <button class="btn btn-s btn-sm" onclick="refreshPrices()" title="현재가 업데이트">🔄 Price</button>
-        <button class="btn btn-s btn-sm" id="btnExtHrs" onclick="toggleExtHours()" title="Pre/After Market 가격 포함">EXT</button>
         <button class="btn btn-s btn-sm" onclick="refreshFundamentals()" title="P/E, EPS 업데이트">🔄 Fund.</button>
       </div>
     </div>
@@ -412,7 +411,6 @@ document.addEventListener('DOMContentLoaded',async()=>{
   updateVerInfo();
   loadConfig();
   loadWatchInput();
-  initExtHoursBtn();
   document.getElementById('watchInput').addEventListener('keydown',e=>{if(e.key==='Enter')renderWatchlist()});
   await restoreCache();
   updateDataInfo();
@@ -504,26 +502,6 @@ function saveSheetId(){SHEET_ID=document.getElementById('sheetId').value.trim();
 function saveFmpKey(){FMP_KEY=document.getElementById('fmpKey').value.trim();localStorage.setItem('fmp_key',FMP_KEY);toast('FMP API Key 저장 완료','ok')}
 let fundTickerList=[]; // derived from Watch page tickers
 let momVolCache={}; // ticker → [{date, close}]
-let useExtHours=localStorage.getItem('useExtHours')==='true';
-
-function toggleExtHours(){
-  useExtHours=!useExtHours;
-  localStorage.setItem('useExtHours',String(useExtHours));
-  const btn=document.getElementById('btnExtHrs');
-  if(btn){
-    btn.style.background=useExtHours?'var(--accent)':'';
-    btn.style.color=useExtHours?'#fff':'';
-    btn.textContent=useExtHours?'EXT 🟢':'EXT';
-  }
-  toast(useExtHours?'EXT ON — FMP 최신가(시간외 포함) 사용, daily_value 저장 안함':'EXT OFF — 정규시장 종가 사용','ok');
-}
-function initExtHoursBtn(){
-  const btn=document.getElementById('btnExtHrs');
-  if(btn&&useExtHours){
-    btn.style.background='var(--accent)';btn.style.color='#fff';
-    btn.textContent='EXT 🟢';
-  }
-}
 
 function getWatchTickers(){
   const input=(document.getElementById('watchInput')?.value||localStorage.getItem('watch_input')||'').trim();
@@ -735,18 +713,6 @@ async function refreshPrices(){
     if(Object.keys(fmpPrices).length>0){
       cachedPrices={...cachedPrices,...fmpPrices};
     }
-    // Step 1b: When EXT on, fetch aftermarket prices and override
-    if(useExtHours){
-      const extPrices=await fetchFmpAftermarket(tickers);
-      for(const[tk,ep] of Object.entries(extPrices)){
-        if(cachedPrices[tk]){
-          cachedPrices[tk].regularPrice=cachedPrices[tk].current;
-          cachedPrices[tk].current=ep.price;
-          cachedPrices[tk].chgDay=cachedPrices[tk].prevClose>0?((ep.price-cachedPrices[tk].prevClose)/cachedPrices[tk].prevClose*100):0;
-        }
-      }
-      console.log(`EXT aftermarket: ${Object.keys(extPrices).length}/${tickers.length} tickers updated`);
-    }
   }
 
   // Step 2: Update daily_value with regular market prices
@@ -758,8 +724,7 @@ async function refreshPrices(){
   }
 
   // Step 3: Sync cachedPrices FROM daily_value's latest entry
-  // Only for tickers without live FMP data; skip if EXT mode is on (keep live prices)
-  if(dailyValueCache&&!useExtHours){
+  if(dailyValueCache){
     const dvDates=Object.keys(dailyValueCache).sort();
     if(dvDates.length>0){
       const latestEntry=dailyValueCache[dvDates[dvDates.length-1]];
@@ -821,7 +786,7 @@ async function refreshPrices(){
   if(lastDailyValues){
     redrawChart();
   }
-  toast(useExtHours?'✅ 가격 갱신 완료 (EXT — 시간외 포함)':'✅ 가격 갱신 완료','ok');
+  toast('✅ 가격 갱신 완료','ok');
 }
 
 // FMP quote: fetch current prices for all tickers via individual /stable/quote calls
@@ -858,63 +823,6 @@ async function fetchFmpBatchQuote(tickers){
     if(i+batchSize<tickers.length)await new Promise(r=>setTimeout(r,200));
   }
   console.log(`FMP quote: ${Object.keys(prices).length}/${tickers.length} tickers`);
-  return prices;
-}
-
-// FMP: fetch aftermarket/pre-market prices
-async function fetchFmpAftermarket(tickers){
-  const prices={};
-  if(!FMP_KEY||tickers.length===0)return prices;
-  const tkSet=new Set(tickers);
-
-  // Try multiple endpoint formats
-  const endpoints=[
-    'aftermarket-trade',           // /stable/ batch
-    'pre-post-market-trade',       // /stable/ batch
-  ];
-
-  for(const ep of endpoints){
-    try{
-      const data=await fmpGet(ep);
-      if(Array.isArray(data)){
-        for(const q of data){
-          if(q.symbol&&tkSet.has(q.symbol)&&q.price>0){
-            prices[q.symbol]={price:q.price};
-          }
-        }
-        if(Object.keys(prices).length>0){
-          console.log(`FMP ${ep}: ${Object.keys(prices).length} tickers matched`);
-          return prices;
-        }
-      }
-    }catch(e){console.warn(`${ep} failed:`,e)}
-  }
-
-  // Fallback: per-ticker via /api/v4/ (different base URL)
-  const batchSize=5;
-  for(let i=0;i<tickers.length;i+=batchSize){
-    const batch=tickers.slice(i,i+batchSize);
-    await Promise.all(batch.map(async tk=>{
-      for(const path of [
-        `https://financialmodelingprep.com/api/v4/pre-post-market-trade/${tk}?apikey=${FMP_KEY}`,
-        `https://financialmodelingprep.com/stable/pre-post-market-trade?symbol=${tk}&apikey=${FMP_KEY}`
-      ]){
-        try{
-          const r=await fetch(path,{signal:AbortSignal.timeout(8000)});
-          if(!r.ok)continue;
-          const data=await r.json();
-          const arr=Array.isArray(data)?data:(data?[data]:[]);
-          if(arr.length>0&&arr[0]&&arr[0].price>0){
-            prices[tk]={price:arr[0].price};
-            console.log(`EXT ${tk}: $${arr[0].price}`);
-            break;
-          }
-        }catch(e){}
-      }
-    }));
-    if(i+batchSize<tickers.length)await new Promise(r=>setTimeout(r,200));
-  }
-  console.log(`FMP aftermarket total: ${Object.keys(prices).length}/${tickers.length} tickers`);
   return prices;
 }
 
