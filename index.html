@@ -835,8 +835,14 @@ async function fetchFmpBatchQuote(tickers){
       if(q){
         const regPrice=q.price||0;
         let extPrice=regPrice;
-        if(q.afterHoursPrice&&q.afterHoursPrice>0)extPrice=q.afterHoursPrice;
-        else if(q.preMarketPrice&&q.preMarketPrice>0)extPrice=q.preMarketPrice;
+        // FMP field names vary: try all known variants
+        const ah=q.afterHoursPrice||q.postMarketPrice||q.extendedPrice||0;
+        const pm=q.preMarketPrice||0;
+        if(ah>0)extPrice=ah;
+        else if(pm>0)extPrice=pm;
+        if(useExtHours&&i===0&&batch[0]===tk){
+          console.log(`EXT debug ${tk}:`,{price:q.price,previousClose:q.previousClose,afterHoursPrice:q.afterHoursPrice,preMarketPrice:q.preMarketPrice,postMarketPrice:q.postMarketPrice,extendedPrice:q.extendedPrice,keys:Object.keys(q).filter(k=>k.toLowerCase().includes('market')||k.toLowerCase().includes('after')||k.toLowerCase().includes('pre')||k.toLowerCase().includes('ext'))});
+        }
         const livePrice=useExtHours?extPrice:regPrice;
         prices[tk]={
           current:livePrice,
