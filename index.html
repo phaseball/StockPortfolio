@@ -179,15 +179,16 @@ table.t tr:hover td{background:var(--accentBg)}
 
   <!-- ==================== OVERVIEW ==================== -->
   <div id="p-overview" class="panel on">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
       <div class="filter-btns">
         <button class="fbtn" onclick="setFilter('삼성',this)">🔵 삼성</button>
         <button class="fbtn" onclick="setFilter('키움',this)">🔴 키움</button>
         <button class="fbtn" onclick="setFilter('메리츠',this)">🟢 메리츠</button>
         <button class="fbtn on" onclick="setFilter('all',this)">Total</button>
       </div>
-      <div style="display:flex;gap:4px;align-items:center">
+      <div style="display:flex;gap:4px;align-items:center;flex-shrink:0">
         <button class="btn btn-s btn-sm" onclick="refreshPrices()" title="현재가 업데이트">🔄 Price</button>
+        <button class="btn btn-s btn-sm" id="btnExtHrs" onclick="toggleExtHours()" title="Pre/After Market 가격 포함">EXT</button>
         <button class="btn btn-s btn-sm" onclick="refreshFundamentals()" title="P/E, EPS 업데이트">🔄 Fund.</button>
       </div>
     </div>
@@ -411,6 +412,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
   updateVerInfo();
   loadConfig();
   loadWatchInput();
+  initExtHoursBtn();
   document.getElementById('watchInput').addEventListener('keydown',e=>{if(e.key==='Enter')renderWatchlist()});
   await restoreCache();
   updateDataInfo();
@@ -501,7 +503,27 @@ function saveSA(){try{const r=document.getElementById('saKey').value.trim();SA_K
 function saveSheetId(){SHEET_ID=document.getElementById('sheetId').value.trim();localStorage.setItem('sheet_id',SHEET_ID);updateSt('st-sid','ok',SHEET_ID.slice(0,8)+'...');toast('저장 완료','ok')}
 function saveFmpKey(){FMP_KEY=document.getElementById('fmpKey').value.trim();localStorage.setItem('fmp_key',FMP_KEY);toast('FMP API Key 저장 완료','ok')}
 let fundTickerList=[]; // derived from Watch page tickers
-let momVolCache={}; // ticker → [close prices sorted oldest-first]
+let momVolCache={}; // ticker → [{date, close}]
+let useExtHours=localStorage.getItem('useExtHours')==='true';
+
+function toggleExtHours(){
+  useExtHours=!useExtHours;
+  localStorage.setItem('useExtHours',String(useExtHours));
+  const btn=document.getElementById('btnExtHrs');
+  if(btn){
+    btn.style.background=useExtHours?'var(--accent)':'';
+    btn.style.color=useExtHours?'#fff':'';
+    btn.textContent=useExtHours?'EXT 🟢':'EXT';
+  }
+  toast(useExtHours?'Extended Hours ON — Price 눌러 적용':'Extended Hours OFF','ok');
+}
+function initExtHoursBtn(){
+  const btn=document.getElementById('btnExtHrs');
+  if(btn&&useExtHours){
+    btn.style.background='var(--accent)';btn.style.color='#fff';
+    btn.textContent='EXT 🟢';
+  }
+}
 
 function getWatchTickers(){
   const input=(document.getElementById('watchInput')?.value||localStorage.getItem('watch_input')||'').trim();
@@ -809,11 +831,18 @@ async function fetchFmpBatchQuote(tickers){
     }));
     for(const{tk,q} of results){
       if(q){
+        let curPrice=q.price||0;
+        // Extended hours: prefer after/pre market price if available
+        if(useExtHours){
+          if(q.afterHoursPrice&&q.afterHoursPrice>0)curPrice=q.afterHoursPrice;
+          else if(q.preMarketPrice&&q.preMarketPrice>0)curPrice=q.preMarketPrice;
+        }
         prices[tk]={
-          current:q.price||0,
+          current:curPrice,
           prevClose:q.previousClose||q.price||0,
-          chgDay:q.changesPercentage||0,
-          chgWeek:0
+          chgDay:q.previousClose?((curPrice-q.previousClose)/q.previousClose*100):0,
+          chgWeek:0,
+          extHours:useExtHours&&(curPrice!==q.price)
         };
       }
     }
