@@ -747,8 +747,8 @@ async function refreshPrices(){
   }
 
   // Step 3: Sync cachedPrices FROM daily_value's latest entry
-  // This ensures Overview uses the EXACT SAME prices as the chart
-  if(dailyValueCache){
+  // Only for tickers without live FMP data; skip if EXT mode is on (keep live prices)
+  if(dailyValueCache&&!useExtHours){
     const dvDates=Object.keys(dailyValueCache).sort();
     if(dvDates.length>0){
       const latestEntry=dailyValueCache[dvDates[dvDates.length-1]];
@@ -757,7 +757,9 @@ async function refreshPrices(){
           if(price>0){
             const existing=cachedPrices[tk]||{};
             cachedPrices[tk]={
+              ...existing,
               current:price,
+              regularPrice:price,
               prevClose:existing.prevClose||price,
               chgDay:existing.chgDay||0,
               chgWeek:existing.chgWeek||0
@@ -831,18 +833,19 @@ async function fetchFmpBatchQuote(tickers){
     }));
     for(const{tk,q} of results){
       if(q){
-        let curPrice=q.price||0;
-        // Extended hours: prefer after/pre market price if available
-        if(useExtHours){
-          if(q.afterHoursPrice&&q.afterHoursPrice>0)curPrice=q.afterHoursPrice;
-          else if(q.preMarketPrice&&q.preMarketPrice>0)curPrice=q.preMarketPrice;
-        }
+        const regPrice=q.price||0;
+        let extPrice=regPrice;
+        if(q.afterHoursPrice&&q.afterHoursPrice>0)extPrice=q.afterHoursPrice;
+        else if(q.preMarketPrice&&q.preMarketPrice>0)extPrice=q.preMarketPrice;
+        const livePrice=useExtHours?extPrice:regPrice;
         prices[tk]={
-          current:curPrice,
-          prevClose:q.previousClose||q.price||0,
-          chgDay:q.previousClose?((curPrice-q.previousClose)/q.previousClose*100):0,
+          current:livePrice,
+          regularPrice:regPrice,
+          extPrice:extPrice,
+          prevClose:q.previousClose||regPrice||0,
+          chgDay:q.previousClose?((livePrice-q.previousClose)/q.previousClose*100):0,
           chgWeek:0,
-          extHours:useExtHours&&(curPrice!==q.price)
+          isExt:useExtHours&&(extPrice!==regPrice)
         };
       }
     }
@@ -994,11 +997,10 @@ async function updateDailyValuesIncremental(){
 
   // --- Price lookup function ---
   function getPrice(tk,date){
-    // For today (or latest): use live cachedPrices first
-    if(cachedPrices[tk]&&cachedPrices[tk].current){
-      // Use live price if this is the latest date being computed
+    // For today (or latest): use regular market price (not EXT) for daily_value
+    if(cachedPrices[tk]){
       if(date>=todayYymmdd||date===marketDays[marketDays.length-1]){
-        return cachedPrices[tk].current;
+        return cachedPrices[tk].regularPrice||cachedPrices[tk].current;
       }
     }
     // FMP historical
@@ -1849,10 +1851,10 @@ async function refreshFundamentals(){
         console.log(`${tk} using eps_actuals from sheet:`,epsActualsMap[tk]);
       }
 
-      // Price: use cached price (user clicks Price before Fund)
+      // Price: use regular market price (not EXT) for stored PE calculations
       let price=0;
-      if(cachedPrices[tk]&&cachedPrices[tk].current){
-        price=cachedPrices[tk].current;
+      if(cachedPrices[tk]){
+        price=cachedPrices[tk].regularPrice||cachedPrices[tk].current||0;
       }
       console.log(`${tk} price from cache: ${price}`);
 
@@ -2825,13 +2827,18 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     }
 
     // -- Col3: PE12m with YoY + EPS12m with YoY, colored by 1m change --
+    // When EXT/live, recalculate PE using current underlying price
+    const liveUndPrice=cachedPrices[ftk]?cachedPrices[ftk].current:(fund.price||0);
+    const livePe12m=(fund.eps12m&&fund.eps12m>0&&liveUndPrice)?liveUndPrice/fund.eps12m:fund.pe12m;
+    const livePeDec=(fund.epsDec&&fund.epsDec>0&&liveUndPrice)?liveUndPrice/fund.epsDec:fund.peDec;
+
     const eps12mStyle=chgStyle(fund.eps12m,e1m?.eps12m);
-    if(fund.pe12m!=null){
+    if(livePe12m!=null){
       const yoy=fund.epsYoy12m!=null?` <span style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
-      peRow=`<span style="${eps12mStyle}">${fmtF(fund.pe12m)}${yoy}</span>`;
-    }else if(fund.peDec!=null){
+      peRow=`<span style="${eps12mStyle}">${fmtF(livePe12m)}${yoy}</span>`;
+    }else if(livePeDec!=null){
       const yoy=fund.epsYoy12m!=null?` <span style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
-      peRow=`<span style="color:var(--text3)">${fmtF(fund.peDec)}${yoy}</span>`;
+      peRow=`<span style="color:var(--text3)">${fmtF(livePeDec)}${yoy}</span>`;
     }
     if(fund.eps12m!=null){
       const eps12mYoy=fund.epsYoy12m!=null?` (${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)`:'';
@@ -2856,9 +2863,9 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         epsCol=parts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
       }
 
-      // PEdec: use same color as EPSdec
-      if(fund.peDec!=null){
-        const nowPe=fund.peDec;
+      // PEdec: use same color as EPSdec, live price for "now"
+      if(livePeDec!=null){
+        const nowPe=livePeDec;
         const pe1w=e1w?.peDec??null;
         const pe1m=e1m?.peDec??null;
         let pParts=[`<span style="${epsStyle}">${fmtF(nowPe)}</span>`];
@@ -3107,6 +3114,11 @@ function renderWatchlist(){
       const e1w=findInRange(etD1w,etD1d);
       const e1m=findInRange(etD1m,etD8d);
 
+      // Live PE using current underlying price
+      const liveUndP=cachedPrices[ftk]?cachedPrices[ftk].current:(fund.price||0);
+      const livePeDec=(fund.epsDec&&fund.epsDec>0&&liveUndP)?liveUndP/fund.epsDec:fund.peDec;
+      const livePe12m=(fund.eps12m&&fund.eps12m>0&&liveUndP)?liveUndP/fund.eps12m:fund.pe12m;
+
       // Color by 1m change: red=up, blue=down, white=flat
       function chg1m(now,ref){
         if(ref==null)return 'wl-flat';
@@ -3126,28 +3138,27 @@ function renderWatchlist(){
         epsCell=parts.join(arw);
       }
 
-      // PEdec: same color as EPSdec, show now > 1m only
-      if(fund.peDec!=null){
-        const nowPe=fund.peDec;
+      // PEdec: live price, same color as EPSdec
+      if(livePeDec!=null){
         const pe1m=e1m?.peDec??null;
-        let parts=[`<span class="${epsCls}">${fmtF(nowPe)}</span>`];
+        let parts=[`<span class="${epsCls}">${fmtF(livePeDec)}</span>`];
         parts.push(pe1m!=null?`<span class="wl-muted">${fmtF(pe1m)}</span>`:`<span class="wl-muted">—</span>`);
         perCell=parts.join(arw);
       }
 
-      // PE12m (forward) with YOY, colored by eps12m 1m change
-      if(fund.pe12m!=null){
+      // PE12m: live price, colored by eps12m 1m change
+      if(livePe12m!=null){
         const eps12mCls=chg1m(fund.eps12m,e1m?.eps12m);
         const yoy=fund.epsYoy12m!=null?` <span class="wl-muted" style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
-        pe12mCell=`<span class="${eps12mCls}">${fmtF(fund.pe12m)}</span>${yoy}`;
+        pe12mCell=`<span class="${eps12mCls}">${fmtF(livePe12m)}</span>${yoy}`;
       }
 
-      // Target Price: show now > 1m only, gap% uses same color as TP
+      // Target Price: gap% uses live underlying price
       if(fund.targetPrice!=null){
         const nowTgt=fund.targetPrice;
         const tgt1m=e1m?.targetPrice;
         const tgtCls=chg1m(nowTgt,tgt1m);
-        const refPrice=fund.price||0;
+        const refPrice=liveUndP||fund.price||0;
         let gapStr='';
         if(refPrice>0){const gap=((nowTgt-refPrice)/refPrice*100);gapStr=` <span class="${tgtCls}" style="font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`}
         let parts=[`<span class="${tgtCls}">$${nowTgt.toFixed(0)}</span>${gapStr}`];
