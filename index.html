@@ -515,7 +515,7 @@ function toggleExtHours(){
     btn.style.color=useExtHours?'#fff':'';
     btn.textContent=useExtHours?'EXT 🟢':'EXT';
   }
-  toast(useExtHours?'Extended Hours ON — Price 눌러 적용':'Extended Hours OFF','ok');
+  toast(useExtHours?'EXT ON — FMP 최신가(시간외 포함) 사용, daily_value 저장 안함':'EXT OFF — 정규시장 종가 사용','ok');
 }
 function initExtHoursBtn(){
   const btn=document.getElementById('btnExtHrs');
@@ -729,16 +729,27 @@ async function refreshPrices(){
   if(!tickers.length){toast('대상 종목 없음','err');return}
   toastPersist(`💲 가격 불러오는 중... (${tickers.length}종목)`,'ok');
 
-  // Step 1: Fetch live prices from FMP (needed for today's daily_value row)
+  // Step 1: Fetch live prices from FMP
   if(FMP_KEY){
     const fmpPrices=await fetchFmpBatchQuote(tickers);
     if(Object.keys(fmpPrices).length>0){
       cachedPrices={...cachedPrices,...fmpPrices};
     }
+    // Step 1b: When EXT on, fetch aftermarket prices and override
+    if(useExtHours){
+      const extPrices=await fetchFmpAftermarket(tickers);
+      for(const[tk,ep] of Object.entries(extPrices)){
+        if(cachedPrices[tk]){
+          cachedPrices[tk].regularPrice=cachedPrices[tk].current;
+          cachedPrices[tk].current=ep.price;
+          cachedPrices[tk].chgDay=cachedPrices[tk].prevClose>0?((ep.price-cachedPrices[tk].prevClose)/cachedPrices[tk].prevClose*100):0;
+        }
+      }
+      console.log(`EXT aftermarket: ${Object.keys(extPrices).length}/${tickers.length} tickers updated`);
+    }
   }
 
-  // Step 2: Update daily_value — this is the SINGLE SOURCE OF TRUTH
-  // Uses cachedPrices for today, FMP historical for past days
+  // Step 2: Update daily_value with regular market prices
   if(SHEET_ID&&SA_KEY&&allTransactions.length>0){
     try{
       await updateDailyValuesIncremental();
@@ -773,16 +784,17 @@ async function refreshPrices(){
   // Step 3: Fetch mom/vol historical prices
   await fetchMomVolPrices();
 
-  // Step 3b: Compute chgDay/chgWeek from momVolCache (more reliable than FMP quote)
+  // Step 3b: Compute chgDay/chgWeek from momVolCache
   for(const tk of tickers){
     const entries=momVolCache[tk];
     if(!entries||entries.length<2)continue;
-    const cur=entries[entries.length-1].close;
-    const prev=entries.length>=2?entries[entries.length-2].close:cur;
+    const prev=entries.length>=2?entries[entries.length-2].close:0;
     const week=entries.length>=6?entries[entries.length-6].close:(entries[0].close);
     if(cachedPrices[tk]){
-      cachedPrices[tk].chgDay=prev>0?((cur-prev)/prev*100):0;
-      cachedPrices[tk].chgWeek=week>0?((cur-week)/week*100):0;
+      // When EXT, use live FMP price for today's change (includes after-hours)
+      const todayPrice=cachedPrices[tk].current||entries[entries.length-1].close;
+      cachedPrices[tk].chgDay=prev>0?((todayPrice-prev)/prev*100):0;
+      cachedPrices[tk].chgWeek=week>0?((todayPrice-week)/week*100):0;
     }
   }
 
@@ -809,7 +821,7 @@ async function refreshPrices(){
   if(lastDailyValues){
     redrawChart();
   }
-  toast('✅ 가격 갱신 완료','ok');
+  toast(useExtHours?'✅ 가격 갱신 완료 (EXT — 시간외 포함)':'✅ 가격 갱신 완료','ok');
 }
 
 // FMP quote: fetch current prices for all tickers via individual /stable/quote calls
@@ -833,31 +845,76 @@ async function fetchFmpBatchQuote(tickers){
     }));
     for(const{tk,q} of results){
       if(q){
-        const regPrice=q.price||0;
-        let extPrice=regPrice;
-        // FMP field names vary: try all known variants
-        const ah=q.afterHoursPrice||q.postMarketPrice||q.extendedPrice||0;
-        const pm=q.preMarketPrice||0;
-        if(ah>0)extPrice=ah;
-        else if(pm>0)extPrice=pm;
-        if(useExtHours&&i===0&&batch[0]===tk){
-          console.log(`EXT debug ${tk}:`,{price:q.price,previousClose:q.previousClose,afterHoursPrice:q.afterHoursPrice,preMarketPrice:q.preMarketPrice,postMarketPrice:q.postMarketPrice,extendedPrice:q.extendedPrice,keys:Object.keys(q).filter(k=>k.toLowerCase().includes('market')||k.toLowerCase().includes('after')||k.toLowerCase().includes('pre')||k.toLowerCase().includes('ext'))});
-        }
-        const livePrice=useExtHours?extPrice:regPrice;
+        const livePrice=q.price||0;
         prices[tk]={
           current:livePrice,
-          regularPrice:regPrice,
-          extPrice:extPrice,
-          prevClose:q.previousClose||regPrice||0,
+          regularPrice:livePrice, // FMP price includes ext hours already
+          prevClose:q.previousClose||livePrice||0,
           chgDay:q.previousClose?((livePrice-q.previousClose)/q.previousClose*100):0,
-          chgWeek:0,
-          isExt:useExtHours&&(extPrice!==regPrice)
+          chgWeek:0
         };
       }
     }
     if(i+batchSize<tickers.length)await new Promise(r=>setTimeout(r,200));
   }
   console.log(`FMP quote: ${Object.keys(prices).length}/${tickers.length} tickers`);
+  return prices;
+}
+
+// FMP: fetch aftermarket/pre-market prices
+async function fetchFmpAftermarket(tickers){
+  const prices={};
+  if(!FMP_KEY||tickers.length===0)return prices;
+  const tkSet=new Set(tickers);
+
+  // Try multiple endpoint formats
+  const endpoints=[
+    'aftermarket-trade',           // /stable/ batch
+    'pre-post-market-trade',       // /stable/ batch
+  ];
+
+  for(const ep of endpoints){
+    try{
+      const data=await fmpGet(ep);
+      if(Array.isArray(data)){
+        for(const q of data){
+          if(q.symbol&&tkSet.has(q.symbol)&&q.price>0){
+            prices[q.symbol]={price:q.price};
+          }
+        }
+        if(Object.keys(prices).length>0){
+          console.log(`FMP ${ep}: ${Object.keys(prices).length} tickers matched`);
+          return prices;
+        }
+      }
+    }catch(e){console.warn(`${ep} failed:`,e)}
+  }
+
+  // Fallback: per-ticker via /api/v4/ (different base URL)
+  const batchSize=5;
+  for(let i=0;i<tickers.length;i+=batchSize){
+    const batch=tickers.slice(i,i+batchSize);
+    await Promise.all(batch.map(async tk=>{
+      for(const path of [
+        `https://financialmodelingprep.com/api/v4/pre-post-market-trade/${tk}?apikey=${FMP_KEY}`,
+        `https://financialmodelingprep.com/stable/pre-post-market-trade?symbol=${tk}&apikey=${FMP_KEY}`
+      ]){
+        try{
+          const r=await fetch(path,{signal:AbortSignal.timeout(8000)});
+          if(!r.ok)continue;
+          const data=await r.json();
+          const arr=Array.isArray(data)?data:(data?[data]:[]);
+          if(arr.length>0&&arr[0]&&arr[0].price>0){
+            prices[tk]={price:arr[0].price};
+            console.log(`EXT ${tk}: $${arr[0].price}`);
+            break;
+          }
+        }catch(e){}
+      }
+    }));
+    if(i+batchSize<tickers.length)await new Promise(r=>setTimeout(r,200));
+  }
+  console.log(`FMP aftermarket total: ${Object.keys(prices).length}/${tickers.length} tickers`);
   return prices;
 }
 
