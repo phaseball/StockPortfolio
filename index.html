@@ -232,6 +232,10 @@ table.t tr:hover td{background:var(--accentBg)}
       </div>
     </div>
     <div id="chartContent" style="padding-bottom:40px"><p style="color:var(--text2);text-align:center;padding:32px">로딩 중...</p></div>
+    <div style="margin-top:8px">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:4px">카테고리: "NAME: ticker1, ticker2." 형식. 마침표(.)로 구분.</div>
+      <input id="holdGroupsInput" type="text" style="width:100%;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font:12px 'JetBrains Mono',monospace;outline:none" spellcheck="false">
+    </div>
   </div>
 
   <!-- ==================== WATCHLIST ==================== -->
@@ -412,6 +416,9 @@ document.addEventListener('DOMContentLoaded',async()=>{
   loadConfig();
   loadWatchInput();
   document.getElementById('watchInput').addEventListener('keydown',e=>{if(e.key==='Enter')renderWatchlist()});
+  // Init hold groups input
+  const hgEl=document.getElementById('holdGroupsInput');
+  if(hgEl){hgEl.value=localStorage.getItem('hold_groups')||DEFAULT_GROUPS;hgEl.addEventListener('keydown',e=>{if(e.key==='Enter')saveHoldGroups()})}
   await restoreCache();
   updateDataInfo();
   updatePriceInfo();
@@ -1996,6 +2003,33 @@ async function refreshFundamentals(){
       for(const q of qData){
         if(q.reportDate>=today&&!q.isActual){nextEarnings=q.reportDate;break}
       }
+      // Fallback: estimate from last year's same-quarter date
+      if(!nextEarnings&&qData.length>=4){
+        // Find the most recent actual, then look for same quarter last year + 1 year
+        const actuals=qData.filter(q=>q.isActual).sort((a,b)=>b.reportDate.localeCompare(a.reportDate));
+        if(actuals.length>=1){
+          const lastActual=actuals[0].reportDate; // most recent actual e.g. 2026-01-28
+          const lastY=parseInt(lastActual.slice(0,4));
+          const lastM=parseInt(lastActual.slice(5,7));
+          // Find a report ~3 months after lastActual from prior year data
+          const targetM=((lastM-1+3)%12)+1; // next quarter month
+          const sameQLastYear=qData.find(q=>{
+            const y=parseInt(q.reportDate.slice(0,4));
+            const m=parseInt(q.reportDate.slice(5,7));
+            return y===lastY-1&&Math.abs(m-targetM)<=1;
+          });
+          if(sameQLastYear){
+            // Same date + 1 year
+            const est=sameQLastYear.reportDate.replace(/^\d{4}/,String(lastY));
+            if(est>=today)nextEarnings=est;
+            else{
+              // Try +1 more year
+              const est2=sameQLastYear.reportDate.replace(/^\d{4}/,String(lastY+1));
+              nextEarnings=est2;
+            }
+          }
+        }
+      }
 
       newFund[tk]={
         price, targetYear:`${targetYear}`,
@@ -3204,7 +3238,13 @@ function renderWatchlist(){
       const ftk2=getFundTicker(tk)||tk;
       const fundData=cachedFundamentals[ftk2]||cachedFundamentals[tk];
       const ne=fundData?.nextEarnings;
-      const neCell=ne?`<span style="color:var(--text2)">${ne.slice(5)}</span>`:'<span class="wl-muted">—</span>';
+      let neCell='<span class="wl-muted">—</span>';
+      if(ne){
+        const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const m=parseInt(ne.slice(5,7))-1;
+        const d=ne.slice(8,10);
+        neCell=`<span style="color:var(--text2)">${months[m]} ${d}</span>`;
+      }
 
       const rowCls=noHeld?'wl-noheld':'';
       const valCell=qty>0?fmtValPL(mktVal,upl):`<span class="wl-muted">—</span>`;
@@ -3262,16 +3302,30 @@ const BENCH_META={
   IWM:{color:'#ffa726',label:'Russell'}
 };
 const HOLD_COLORS=['#4fc3f7','#ff7043','#ab47bc','#66bb6a','#ffa726','#ef5350','#78909c','#fff176'];
-const HOLD_GROUPS=[
-  {label:'tsla',tickers:['TSLL','TSLA','TER','XPEV']},
-  {label:'nvd+amd',tickers:['AMDL','AMD','NVDL','NVDA']},
-  {label:'tqqq',tickers:['TQQQ']},
-  {label:'soxl+mu',tickers:['SOXL','MU','SNDK','TSM']},
-  {label:'ggll+avgo',tickers:['GGLL','GOOGL','AVGO','AVL']},
-  {label:'cls',tickers:['CLS','CRDO','LITE','COHR']},
-  {label:'fslr+gev',tickers:['FSLR','CAT','GEV','BE','XOM']},
-  {label:'mid+small',tickers:['TNA','UGE','XLP','RSP']},
-];
+const DEFAULT_GROUPS='tsla: tsll, tsla, ter, xpev. nvd+amd: amdl, amd, nvdl, nvda. tqqq: tqqq. soxl+mu: soxl, mu, sndk, tsm. ggll+avgo: ggll, googl, avgo, avl. cls: cls, crdo, lite, cohr. fslr+gev: fslr, cat, gev, be, xom. mid+small: tna, uge, xlp, rsp.';
+function parseHoldGroups(text){
+  if(!text)text=DEFAULT_GROUPS;
+  const groups=[];
+  const parts=text.split('.');
+  for(const part of parts){
+    const ci=part.indexOf(':');
+    if(ci<0)continue;
+    const name=part.slice(0,ci).trim();
+    const tickers=part.slice(ci+1).split(',').map(t=>t.trim().toUpperCase()).filter(Boolean);
+    if(name&&tickers.length>0)groups.push({label:name,tickers});
+  }
+  return groups;
+}
+function getHoldGroups(){
+  const saved=localStorage.getItem('hold_groups');
+  return parseHoldGroups(saved||DEFAULT_GROUPS);
+}
+function saveHoldGroups(){
+  const el=document.getElementById('holdGroupsInput');
+  if(!el)return;
+  localStorage.setItem('hold_groups',el.value);
+  redrawChart();
+}
 let chartBottomMode='pct'; // 'abs' or 'pct'
 
 function setChartPeriod(p,btn){
@@ -4096,6 +4150,7 @@ function redrawChart(dailyValues){
   const tqqqLookup=chartBenchData['TQQQ']?makeLookup(chartBenchData['TQQQ']):null;
 
   // Build chart data for each market day
+  const HOLD_GROUPS=getHoldGroups();
   const groupLabels=HOLD_GROUPS.map(g=>g.label);
   const chartData=[];
   let prevTotalValue=null;
