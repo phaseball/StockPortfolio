@@ -4298,6 +4298,7 @@ function redrawChart(dailyValues){
 }
 
 function renderCharts(container,data,benchKeys,groupLabels,baseValue,allMasterDates,actualTotalAsset,dv){
+  const HOLD_GROUPS=getHoldGroups();
   const W=Math.min(container.clientWidth||800,1200);
   const H1=350, H2=200, gap=30;
   const totalH=H1+gap+H2;
