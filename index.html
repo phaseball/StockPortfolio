@@ -136,9 +136,9 @@ table.t tr:hover td{background:var(--accentBg)}
 .wl-section{margin-bottom:16px}
 .wl-section-hdr{font-size:13px;font-weight:700;color:var(--accent);padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;border-bottom:none}
 .wl-tbl{width:100%;border-collapse:collapse;font:12px 'JetBrains Mono',monospace;background:var(--surface);border:1px solid var(--border);border-radius:0 0 var(--radius) var(--radius);overflow:hidden}
-.wl-tbl th{padding:5px 8px;font-size:10px;color:var(--text3);font-weight:500;text-align:right;white-space:nowrap;background:var(--surface2);border-bottom:1px solid var(--border);position:sticky;top:0}
+.wl-tbl th{padding:4px 4px;font-size:10px;color:var(--text3);font-weight:500;text-align:right;white-space:nowrap;background:var(--surface2);border-bottom:1px solid var(--border);position:sticky;top:0}
 .wl-tbl th:first-child{text-align:left}
-.wl-tbl td{padding:6px 8px;text-align:right;white-space:nowrap;border-bottom:1px solid rgba(45,58,92,.3)}
+.wl-tbl td{padding:4px 4px;text-align:right;white-space:nowrap;border-bottom:1px solid rgba(45,58,92,.3)}
 .wl-tbl td:first-child{text-align:left;font-weight:600;color:var(--text);padding-right:2px}
 .wl-tbl tr{cursor:pointer;transition:background .1s}
 .wl-tbl tr:hover{background:var(--surface2)}
@@ -3102,7 +3102,7 @@ function renderWatchlist(){
     return`<span class="${cls}">${fmtUSD(v)}</span>`;
   }
 
-  // Shared: compute PEdec/EPSdec/TP/PE12m cells for a ticker
+  // Shared: compute fund cells for Watch page
   function computeFundCells(tk){
     const ftk=getFundTicker(tk)||tk;
     const fund=cachedFundamentals[ftk]||cachedFundamentals[tk];
@@ -3110,8 +3110,9 @@ function renderWatchlist(){
     const hist=(fundHistory[ftk]||[]);
     let perCell='<span class="wl-muted">—</span>';
     let epsCell='<span class="wl-muted">—</span>';
-    let tpCell='<span class="wl-muted">—</span>';
     let pe12mCell='<span class="wl-muted">—</span>';
+    let eps12mCell='<span class="wl-muted">—</span>';
+    let tpCell='<span class="wl-muted">—</span>';
 
     if(fund&&isFundTarget&&hist.length>=1){
       const etD1d=etDateStr(1),etD1w=etDateStr(7),etD8d=etDateStr(8),etD1m=etDateStr(30);
@@ -3124,7 +3125,6 @@ function renderWatchlist(){
       const livePeDec=(fund.epsDec&&fund.epsDec>0&&liveUndP)?liveUndP/fund.epsDec:fund.peDec;
       const livePe12m=(fund.eps12m&&fund.eps12m>0&&liveUndP)?liveUndP/fund.eps12m:fund.pe12m;
 
-      // Color by 1m change: red=up, blue=down, white=flat
       function chg1m(now,ref){
         if(ref==null)return 'wl-flat';
         if(now>ref*1.001)return 'wl-up';
@@ -3132,30 +3132,44 @@ function renderWatchlist(){
         return 'wl-flat';
       }
 
-      // EPSdec: color by 1m change, show now > 1m only
-      let epsCls='wl-flat';
-      if(fund.epsDec!=null){
-        const nowEps=fund.epsDec;
-        const eps1m=e1m?.epsDec;
-        epsCls=chg1m(nowEps,eps1m);
-        let parts=[`<span class="${epsCls}">${fmtF(nowEps)}</span>`];
-        parts.push(eps1m!=null?`<span class="wl-muted">${fmtF(eps1m)}</span>`:`<span class="wl-muted">—</span>`);
-        epsCell=parts.join(arw);
-      }
-
-      // PEdec: live price, same color as EPSdec
-      if(livePeDec!=null){
-        const pe1m=e1m?.peDec??null;
-        let parts=[`<span class="${epsCls}">${fmtF(livePeDec)}</span>`];
-        parts.push(pe1m!=null?`<span class="wl-muted">${fmtF(pe1m)}</span>`:`<span class="wl-muted">—</span>`);
-        perCell=parts.join(arw);
-      }
-
-      // PE12m: live price, colored by eps12m 1m change
+      // PE12m: now > 1w > 1m (no YOY), colored by eps12m 1m change
       if(livePe12m!=null){
         const eps12mCls=chg1m(fund.eps12m,e1m?.eps12m);
+        const pe12m1w=e1w?.pe12m??null;
+        const pe12m1m=e1m?.pe12m??null;
+        let parts=[`<span class="${eps12mCls}">${fmtF(livePe12m)}</span>`];
+        parts.push(pe12m1w!=null?`<span class="wl-muted">${fmtF(pe12m1w)}</span>`:`<span class="wl-muted">—</span>`);
+        parts.push(pe12m1m!=null?`<span class="wl-muted">${fmtF(pe12m1m)}</span>`:`<span class="wl-muted">—</span>`);
+        pe12mCell=parts.join(arw);
+      }
+
+      // EPS12m: now (YOY%) > 1w > 1m, colored by 1m change
+      if(fund.eps12m!=null){
+        const eps12mCls=chg1m(fund.eps12m,e1m?.eps12m);
         const yoy=fund.epsYoy12m!=null?` <span class="wl-muted" style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
-        pe12mCell=`<span class="${eps12mCls}">${fmtF(livePe12m)}</span>${yoy}`;
+        const eps12m1w=e1w?.eps12m??null;
+        const eps12m1m=e1m?.eps12m??null;
+        let parts=[`<span class="${eps12mCls}">${fmtF(fund.eps12m)}</span>${yoy}`];
+        parts.push(eps12m1w!=null?`<span class="wl-muted">${fmtF(eps12m1w)}</span>`:`<span class="wl-muted">—</span>`);
+        parts.push(eps12m1m!=null?`<span class="wl-muted">${fmtF(eps12m1m)}</span>`:`<span class="wl-muted">—</span>`);
+        eps12mCell=parts.join(arw);
+      }
+
+      // PEdec: now only, colored by EPSdec 1m change
+      let epsCls='wl-flat';
+      if(fund.epsDec!=null){
+        epsCls=chg1m(fund.epsDec,e1m?.epsDec);
+      }
+      if(livePeDec!=null){
+        perCell=`<span class="${epsCls}">${fmtF(livePeDec)}</span>`;
+      }
+
+      // EPSdec: now > 1m
+      if(fund.epsDec!=null){
+        const eps1m=e1m?.epsDec;
+        let parts=[`<span class="${epsCls}">${fmtF(fund.epsDec)}</span>`];
+        parts.push(eps1m!=null?`<span class="wl-muted">${fmtF(eps1m)}</span>`:`<span class="wl-muted">—</span>`);
+        epsCell=parts.join(arw);
       }
 
       // Target Price: gap% uses live underlying price
@@ -3171,7 +3185,7 @@ function renderWatchlist(){
         tpCell=parts.join(arw);
       }
     }
-    return{perCell,epsCell,tpCell,pe12mCell};
+    return{perCell,epsCell,tpCell,pe12mCell,eps12mCell};
   }
 
   function fmtC(n){return(n>=0?'':'−')+'$'+Math.round(Math.abs(n))}
@@ -3201,14 +3215,15 @@ function renderWatchlist(){
     html+=`<div class="wl-section-hdr">${sec.name} (${sec.tickers.length})</div>`;
     html+=`<div class="tbl-wrap"><table class="wl-tbl"><thead><tr>
       <th>Ticker</th><th>매수</th><th>평가(손익)</th>
-      <th>PE12m</th>
-      <th>PEdec now${arw}1m</th>
+      <th>PE12m now${arw}1w${arw}1m</th>
+      <th>EPS12m now(YOY%)${arw}1w${arw}1m</th>
+      <th>PEdec</th>
       <th>EPSdec now${arw}1m</th>
-      <th>Price</th>
+      <th>Price(%일/%주)</th>
       <th>TP now${arw}1m</th>
       <th>Mom 10/20</th>
       <th>Vol% 10/20</th>
-      <th>실현(YTD/Tot)</th>
+      <th>실현</th>
       <th>Next ER</th>
     </tr></thead><tbody>`;
 
@@ -3218,6 +3233,8 @@ function renderWatchlist(){
       const mg=merged[tk];
       const rl=realLookup[tk]||{realPL:0,realPLYtd:0};
       const price=cachedPrices[tk]?cachedPrices[tk].current:0;
+      const chgD=cachedPrices[tk]?cachedPrices[tk].chgDay:0;
+      const chgW=cachedPrices[tk]?cachedPrices[tk].chgWeek:0;
       const qty=mg?mg.qty:0;
       const mktVal=mg?mg.marketValue:0;
       const cost=mg?mg.purchasedAmt:0;
@@ -3226,13 +3243,23 @@ function renderWatchlist(){
 
       secCost+=cost;secVal+=mktVal;secRealYtd+=rl.realPLYtd;secRealTot+=rl.realPL;
 
-      const{perCell,epsCell,tpCell,pe12mCell}=computeFundCells(tk);
+      const{perCell,epsCell,tpCell,pe12mCell,eps12mCell}=computeFundCells(tk);
 
       // Momentum/Volatility
       const mv=computeMomVol(tk);
       const mc=(v)=>v>0?'color:#4caf50':'color:#ef5350';
       const momCell=mv?`<span style="${mc(mv.mom10)}">${mv.mom10!=null?mv.mom10.toFixed(1):'—'}</span>/<span style="${mc(mv.mom20)}">${mv.mom20!=null?mv.mom20.toFixed(1):'—'}</span>`:'<span class="wl-muted">—</span>';
       const volCell=mv?`${mv.vol10!=null?(mv.vol10*100).toFixed(1):'—'}/${mv.vol20!=null?(mv.vol20*100).toFixed(1):'—'}`:'<span class="wl-muted">—</span>';
+
+      // Price with %day/%week
+      const fmtChgS=(v)=>{const c=v>0?'c-up':v<0?'c-dn':'c-flat';return`<span class="${c}">${v>=0?'+':''}${v.toFixed(1)}%</span>`};
+      const priceCell=price>0?`$${price.toFixed(2)} <span style="font-size:9px">(${fmtChgS(chgD)}/${fmtChgS(chgW)})</span>`:'—';
+
+      // 실현 rounded
+      const realYtdR=Math.round(rl.realPLYtd);
+      const realTotR=Math.round(rl.realPL);
+      const fmtR=(v)=>{const c=v>=0?'c-up':'c-dn';return`<span class="${c}">${v>=0?'+':''}${v.toLocaleString()}</span>`};
+      const realCell=`${fmtR(realYtdR)}/${fmtR(realTotR)}`;
 
       // Next Earnings date
       const ftk2=getFundTicker(tk)||tk;
@@ -3253,13 +3280,14 @@ function renderWatchlist(){
         <td>${qty>0?fmtC(cost):'<span class="wl-muted">—</span>'}</td>
         <td>${valCell}</td>
         <td>${pe12mCell}</td>
+        <td>${eps12mCell}</td>
         <td>${perCell}</td>
         <td>${epsCell}</td>
-        <td>${price>0?'$'+price.toFixed(2):'—'}</td>
+        <td>${priceCell}</td>
         <td>${tpCell}</td>
         <td>${momCell}</td>
         <td>${volCell}</td>
-        <td>${fmtPL(rl.realPLYtd)} / ${fmtPL(rl.realPL)}</td>
+        <td>${realCell}</td>
         <td>${neCell}</td>
       </tr>`;
     }
@@ -3267,16 +3295,18 @@ function renderWatchlist(){
     // Summary row with planned amount input
     const secUpl=secVal-secCost;
     const planned=watchPlans[sec.name]||0;
-    const pctUsed=planned>0?((secCost/planned)*100).toFixed(0):'';
     const secId=sec.name.replace(/[^A-Za-z0-9]/g,'_');
+    const secRealYtdR=Math.round(secRealYtd);
+    const secRealTotR=Math.round(secRealTot);
+    const fmtRs=(v)=>{const c=v>=0?'c-up':'c-dn';return`<span class="${c}">${v>=0?'+':''}${v.toLocaleString()}</span>`};
     html+=`<tr style="background:var(--surface2);font-weight:600;border-top:1px solid var(--border)">
-      <td style="padding:2px 4px"><input type="text" inputmode="numeric" id="wlPlan_${secId}" value="${planned||''}" placeholder="계획금액"
+      <td style="padding:2px 4px"><input type="text" inputmode="numeric" id="wlPlan_${secId}" value="${planned||''}" placeholder="계획"
         style="width:50px;padding:3px 4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font:11px 'JetBrains Mono',monospace;text-align:right"
-        onclick="event.stopPropagation()" onchange="saveWatchPlan('${sec.name}',this.value);renderWatchlist()"><span style="font-size:10px;color:var(--text2);margin-left:4px">${pctUsed?pctUsed+'%':''}</span></td>
+        onclick="event.stopPropagation()" onchange="saveWatchPlan('${sec.name}',this.value);renderWatchlist()"></td>
       <td>${fmtC(secCost)}</td>
       <td>${fmtValPL(secVal,secUpl)}</td>
-      <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
-      <td>${fmtPL(secRealYtd)} / ${fmtPL(secRealTot)}</td>
+      <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+      <td>${fmtRs(secRealYtdR)}/${fmtRs(secRealTotR)}</td>
       <td></td>
     </tr>`;
 
