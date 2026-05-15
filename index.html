@@ -4786,7 +4786,67 @@ function showHistory(ticker){
       </div>
       <div id="historyChartArea"></div>
     </div>`;
-    html+=`<div class="tbl-wrap"><table class="t"><tr><th>날짜</th><th>증권사</th><th>매매</th><th>수량</th><th>단가</th><th>금액</th><th>실현</th></tr>`;
+    // Broker filter
+    const brokers=[...new Set(txs.map(t=>t.broker))];
+    html+=`<div style="margin-bottom:8px;display:flex;gap:4px;align-items:center">
+      <span style="font-size:11px;color:var(--text3)">증권사:</span>
+      <button class="fbtn on" onclick="filterHistBroker('${ticker}','all',this)">전체</button>`;
+    const bIcon={'삼성':'🔵','키움':'🔴','메리츠':'🟢'};
+    for(const b of brokers){
+      html+=`<button class="fbtn" onclick="filterHistBroker('${ticker}','${b}',this)">${bIcon[b]||'⚪'} ${b}</button>`;
+    }
+    html+=`</div>`;
+    html+=`<div id="histTxTable"></div>`;
+
+    el.innerHTML=html;
+    switchTab('tickerhistory');
+    setTimeout(()=>drawHistoryChart(ticker,'total'),50);
+    renderHistTxTable(ticker,'all');
+  }else{
+    showTotalValueChart();
+  }
+}
+
+// Global for current broker filter
+let histBrokerFilter='all';
+function filterHistBroker(ticker,broker,btn){
+  histBrokerFilter=broker;
+  if(btn){btn.parentElement.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on')}
+  renderHistTxTable(ticker,broker);
+}
+
+function renderHistTxTable(ticker,broker){
+  const el=document.getElementById('histTxTable');
+  if(!el)return;
+  let txs=allTransactions.filter(t=>t.ticker===ticker);
+  if(broker!=='all')txs=txs.filter(t=>t.broker===broker);
+
+  // Running avg & realized PL (always computed from ALL txs for accuracy)
+  const tkTxs=allTransactions.filter(t=>t.ticker===ticker).sort((a,b)=>{
+    const dc=a.date.localeCompare(b.date);if(dc!==0)return dc;
+    return(parseInt(a.seq)||0)-(parseInt(b.seq)||0);
+  });
+  let runningAvgs={},txRealizedPL={};
+  let qty=0,cost=0;
+  for(const tx of tkTxs){
+    const k=`${tx.date}|${tx.seq}|${tx.broker}`;
+    if(tx.qty>0){cost+=tx.qty*tx.price;qty+=tx.qty}
+    else if(tx.qty<0){
+      const sellQty=Math.abs(tx.qty);
+      const avgAtSale=qty>0?cost/qty:0;
+      txRealizedPL[k]=sellQty*(tx.price-avgAtSale)-tx.tax;
+      if(qty>0)cost-=cost/qty*sellQty;
+      qty-=sellQty;
+    }
+    runningAvgs[k]=qty>0?cost/qty:0;
+  }
+
+  const dateGroups={};
+  for(const tx of txs){if(!dateGroups[tx.date])dateGroups[tx.date]=[];dateGroups[tx.date].push(tx)}
+  const dates=Object.keys(dateGroups).sort((a,b)=>b.localeCompare(a));
+  for(const date of dates)dateGroups[date].sort((a,b)=>(parseInt(b.seq)||0)-(parseInt(a.seq)||0));
+
+  let html=`<div class="tbl-wrap"><table class="t"><tr><th>날짜</th><th>증권사</th><th>매매</th><th>수량</th><th>단가</th><th>금액</th><th>실현</th></tr>`;
     for(const date of dates){
       const dTxs=dateGroups[date];
       const buys=dTxs.filter(t=>t.qty>0);
@@ -4819,31 +4879,6 @@ function showHistory(ticker){
     }
     html+=`</table></div>`;
     el.innerHTML=html;
-    switchTab('tickerhistory');
-    setTimeout(()=>drawHistoryChart(ticker,'total'),50);
-
-  } else {
-    // Full transaction history → history panel
-    const el=document.getElementById('historyContent');
-    const titleEl=document.getElementById('historyTitle');
-
-    if(SHEET_ID&&SA_KEY){
-      el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 불러오는 중...</p>';
-      switchTab('history');
-      loadAllTransactions().then(()=>{
-        computeOverview();
-        _renderFullHistory(el,titleEl);
-      });
-      return;
-    }
-    if(allTransactions.length===0){
-      el.innerHTML='<p style="color:var(--text2);text-align:center;padding:16px">거래 내역이 없습니다</p>';
-      return;
-    }
-    _renderFullHistory(el,titleEl);
-    switchTab('history');
-
-  }
 }
 
 function _renderFullHistory(el,titleEl){
