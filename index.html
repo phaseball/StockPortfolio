@@ -4803,8 +4803,103 @@ function showHistory(ticker){
     setTimeout(()=>drawHistoryChart(ticker,'total'),50);
     renderHistTxTable(ticker,'all');
   }else{
-    showTotalValueChart();
+    // Full transaction history with broker filter
+    const el=document.getElementById('historyContent');
+    const titleEl=document.getElementById('historyTitle');
+
+    if(allTransactions.length===0&&SHEET_ID&&SA_KEY){
+      el.innerHTML='<p style="color:var(--text2);text-align:center;padding:32px"><span class="spinner"></span> 불러오는 중...</p>';
+      switchTab('history');
+      loadAllTransactions().then(()=>{
+        computeOverview();
+        _showFullHistory(el,titleEl);
+      });
+      return;
+    }
+    _showFullHistory(el,titleEl);
+    switchTab('history');
   }
+}
+
+function _showFullHistory(el,titleEl){
+  titleEl.textContent='전체 거래 내역';
+  // Broker filter buttons
+  const brokers=['삼성','키움','메리츠'];
+  const bIcon={'삼성':'🔵','키움':'🔴','메리츠':'🟢'};
+  let html=`<div style="margin-bottom:8px;display:flex;gap:4px;align-items:center">
+    <span style="font-size:11px;color:var(--text3)">증권사:</span>
+    <button class="fbtn on" onclick="renderFullHistTable('all',this)">전체</button>`;
+  for(const b of brokers){
+    html+=`<button class="fbtn" onclick="renderFullHistTable('${b}',this)">${bIcon[b]} ${b}</button>`;
+  }
+  html+=`</div><div id="fullHistTable"></div>`;
+  el.innerHTML=html;
+  renderFullHistTable('all');
+}
+
+function renderFullHistTable(broker,btn){
+  if(btn){btn.parentElement.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on')}
+  const el=document.getElementById('fullHistTable');
+  if(!el)return;
+  let txs=[...allTransactions];
+  if(broker!=='all')txs=txs.filter(t=>t.broker===broker);
+
+  // Running avg & realized PL (always from ALL txs)
+  const tickersInView=[...new Set(txs.map(t=>t.ticker).filter(Boolean))];
+  let runningAvgs={},txRealizedPL={};
+  for(const tk of tickersInView){
+    const tkTxs=allTransactions.filter(t=>t.ticker===tk).sort((a,b)=>{
+      const dc=a.date.localeCompare(b.date);if(dc!==0)return dc;
+      return(parseInt(a.seq)||0)-(parseInt(b.seq)||0);
+    });
+    let qty=0,cost=0;
+    for(const tx of tkTxs){
+      const k=`${tx.date}|${tx.seq}|${tx.broker}`;
+      if(tx.qty>0){cost+=tx.qty*tx.price;qty+=tx.qty}
+      else if(tx.qty<0){
+        const sellQty=Math.abs(tx.qty);
+        const avgAtSale=qty>0?cost/qty:0;
+        txRealizedPL[k]=sellQty*(tx.price-avgAtSale)-tx.tax;
+        if(qty>0)cost-=cost/qty*sellQty;
+        qty-=sellQty;
+      }
+      runningAvgs[k]=qty>0?cost/qty:0;
+    }
+  }
+
+  const dateGroups={};
+  for(const tx of txs){if(!dateGroups[tx.date])dateGroups[tx.date]=[];dateGroups[tx.date].push(tx)}
+  const dates=Object.keys(dateGroups).sort((a,b)=>b.localeCompare(a));
+  for(const date of dates)dateGroups[date].sort((a,b)=>(parseInt(b.seq)||0)-(parseInt(a.seq)||0));
+
+  let thtml=`<div class="tbl-wrap"><table class="t"><tr><th>날짜</th><th>증권사</th><th>종목</th><th>매매</th><th>수량</th><th>단가</th><th>금액</th><th>실현</th></tr>`;
+  for(const date of dates){
+    const dTxs=dateGroups[date];
+    const buys=dTxs.filter(t=>t.qty>0);
+    const sells=dTxs.filter(t=>t.qty<0);
+    const buyAmt=buys.reduce((s,t)=>s+t.qty*t.price,0);
+    const sellAmt=sells.reduce((s,t)=>s+Math.abs(t.qty)*t.price,0);
+    let daySummary=[];
+    if(buys.length>0){const bq=buys.reduce((s,t)=>s+t.qty,0);daySummary.push(`<span class="c-buy">매수(+${bq}) ${fmtUSD(buyAmt)}</span>`)}
+    if(sells.length>0){const sq=sells.reduce((s,t)=>s+Math.abs(t.qty),0);daySummary.push(`<span class="c-sell">매도(-${sq}) ${fmtUSD(sellAmt)}</span>`)}
+    thtml+=`<tr style="background:var(--surface2)"><td colspan="8" style="padding:8px;font-weight:600;color:var(--text)">${fmtDate(date)} <span style="font-weight:400;color:var(--text2);font-size:11px">(${dTxs.length}건)</span> <span style="font-weight:400;font-size:11px;margin-left:8px">${daySummary.join(' · ')}</span></td></tr>`;
+    for(const tx of dTxs){
+      const cls=tx.qty>0?'c-buy':'c-sell';
+      const side=tx.qty>0?'매수':'매도';
+      const bk=`${BROKER_ICON[tx.broker]||'⚪'}${tx.broker}`;
+      const amt=Math.abs(tx.qty)*tx.price;
+      let priceStr=tx.price.toFixed(2);
+      const k=`${tx.date}|${tx.seq}|${tx.broker}`;
+      let plStr='';
+      if(tx.qty<0&&txRealizedPL[k]!==undefined){
+        const pl=txRealizedPL[k];
+        plStr=`<span class="${pl>=0?'c-buy':'c-sell'}">${fmtUSD(pl)}</span>`;
+      }
+      thtml+=`<tr><td></td><td>${bk}</td><td><b style="cursor:pointer;color:#d0d4dc" onclick="event.stopPropagation();showHistory('${tx.ticker}')">${tx.ticker}</b></td><td class="${cls}">${side}</td><td class="${cls}">${tx.qty>0?'+':''}${tx.qty}</td><td>${priceStr}</td><td>${fmtUSD(amt)}</td><td>${plStr}</td></tr>`;
+    }
+  }
+  thtml+=`</table></div>`;
+  el.innerHTML=thtml;
 }
 
 // Global for current broker filter
@@ -4881,75 +4976,6 @@ function renderHistTxTable(ticker,broker){
     el.innerHTML=html;
 }
 
-function _renderFullHistory(el,titleEl){
-    titleEl.textContent='전체 거래 내역';
-    const txs=[...allTransactions];
-
-    let runningAvgs={},txRealizedPL={};
-    const tickersInView=[...new Set(txs.map(t=>t.ticker).filter(Boolean))];
-    for(const tk of tickersInView){
-      const tkTxs=allTransactions.filter(t=>t.ticker===tk).sort((a,b)=>{
-        const dc=a.date.localeCompare(b.date);if(dc!==0)return dc;
-        return(parseInt(a.seq)||0)-(parseInt(b.seq)||0);
-      });
-      let qty=0,cost=0;
-      for(const tx of tkTxs){
-        const k=`${tx.date}|${tx.seq}|${tx.broker}`;
-        if(tx.qty>0){cost+=tx.qty*tx.price;qty+=tx.qty}
-        else if(tx.qty<0){
-          const sellQty=Math.abs(tx.qty);
-          const avgAtSale=qty>0?cost/qty:0;
-          txRealizedPL[k]=sellQty*(tx.price-avgAtSale)-tx.tax;
-          if(qty>0)cost-=cost/qty*sellQty;
-          qty-=sellQty;
-        }
-        runningAvgs[k]=qty>0?cost/qty:0;
-      }
-    }
-
-    const dateGroups={};
-    for(const tx of txs){if(!dateGroups[tx.date])dateGroups[tx.date]=[];dateGroups[tx.date].push(tx)}
-    const dates=Object.keys(dateGroups).sort((a,b)=>b.localeCompare(a));
-    for(const date of dates)dateGroups[date].sort((a,b)=>(parseInt(b.seq)||0)-(parseInt(a.seq)||0));
-
-    let html=`<div class="tbl-wrap"><table class="t"><tr><th>날짜</th><th>증권사</th><th>종목</th><th>매매</th><th>수량</th><th>단가</th><th>금액</th><th>실현</th></tr>`;
-    for(const date of dates){
-      const dTxs=dateGroups[date];
-      html+=`<tr style="background:var(--surface2)"><td colspan="8" style="padding:8px;font-weight:600;color:var(--text)">${fmtDate(date)} <span style="font-weight:400;color:var(--text2);font-size:11px">(${dTxs.length}건)</span></td></tr>`;
-      for(const tx of dTxs){
-        const cls=tx.qty>0?'c-buy':'c-sell';
-        const side=tx.qty>0?'매수':'매도';
-        const bk=`${BROKER_ICON[tx.broker]||'⚪'}${tx.broker}`;
-        const amt=Math.abs(tx.qty)*tx.price;
-        let priceStr=tx.price.toFixed(2);
-        const k=`${tx.date}|${tx.seq}|${tx.broker}`;
-        let plStr='';
-        if(tx.qty<0&&txRealizedPL[k]!==undefined){
-          const pl=txRealizedPL[k];
-          plStr=`<span class="${pl>=0?'c-buy':'c-sell'}">${fmtUSD(pl)}</span>`;
-        }
-        html+=`<tr><td></td><td>${bk}</td><td><b style="cursor:pointer;color:#d0d4dc" onclick="event.stopPropagation();showHistory('${tx.ticker}')">${tx.ticker}</b></td><td class="${cls}">${side}</td><td class="${cls}">${tx.qty>0?'+':''}${tx.qty}</td><td>${priceStr}</td><td>${fmtUSD(amt)}</td><td>${plStr}</td></tr>`;
-      }
-      const buys=dTxs.filter(t=>t.qty>0);
-      const sells=dTxs.filter(t=>t.qty<0);
-      const buyQty=buys.reduce((s,t)=>s+t.qty,0);
-      const sellQty=sells.reduce((s,t)=>s+Math.abs(t.qty),0);
-      const buyAmt=buys.reduce((s,t)=>s+t.qty*t.price,0);
-      const sellAmt=sells.reduce((s,t)=>s+Math.abs(t.qty)*t.price,0);
-      const buyAvg=buyQty>0?(buyAmt/buyQty):0;
-      const sellAvg=sellQty>0?(sellAmt/sellQty):0;
-      let dayPL=0;
-      for(const tx of dTxs){if(tx.qty<0){const k=`${tx.date}|${tx.seq}|${tx.broker}`;if(txRealizedPL[k]!==undefined)dayPL+=txRealizedPL[k]}}
-      const dayPLStr=sells.length>0?`<span class="${dayPL>=0?'c-buy':'c-sell'}">${fmtUSD(dayPL)}</span>`:'';
-      let sumParts=[];
-      if(buyQty>0)sumParts.push(`<span class="c-buy">매수 ${buyQty}주 avg ${buyAvg.toFixed(2)} = ${fmtUSD(buyAmt)}</span>`);
-      if(sellQty>0)sumParts.push(`<span class="c-sell">매도 ${sellQty}주 avg ${sellAvg.toFixed(2)} = ${fmtUSD(sellAmt)}</span>`);
-      html+=`<tr style="background:var(--surface)"><td></td><td></td><td></td><td colspan="4" style="padding:6px 8px;font-size:11px;color:var(--text2)">${sumParts.join(' · ')}</td><td style="font-size:11px">${dayPLStr}</td></tr>`;
-    }
-    html+=`</table></div>`;
-    el.innerHTML=html;
-    switchTab('history');
-}
 
 // historyPriceCache defined above (line ~886)
 async function drawHistoryChart(ticker,period,btn){
