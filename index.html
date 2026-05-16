@@ -2766,7 +2766,7 @@ function holdingsHeader(){
   return`<div class="hold-hdr">
     <div><span>평균 / 현재가 (전일대비; 전주대비)</span><span>평가손익</span></div>
     <div><span>평가금액</span><span>매입금액</span></div>
-    <div><span>PE12m (YOY%)</span><span>EPS12m (YOY%)</span></div>
+    <div><span>PE12m</span><span>EPS12m (YOY%)</span></div>
     <div><span>PEdec now&gt;1w&gt;1m</span><span>EPSdec now&gt;1w&gt;1m</span></div>
     <div><span>TP now&gt;1w&gt;1m</span><span>B/H/S</span></div>
     <div><span>Mom 10/20</span><span>Vol% 10/20</span></div>
@@ -2839,11 +2839,9 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
 
     const eps12mStyle=chgStyle(fund.eps12m,e1m?.eps12m);
     if(livePe12m!=null){
-      const yoy=fund.epsYoy12m!=null?` <span style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
-      peRow=`<span style="${eps12mStyle}">${fmtF(livePe12m)}${yoy}</span>`;
+      peRow=`<span style="${eps12mStyle}">${fmtF(livePe12m)}</span>`;
     }else if(livePeDec!=null){
-      const yoy=fund.epsYoy12m!=null?` <span style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
-      peRow=`<span style="color:var(--text3)">${fmtF(livePeDec)}${yoy}</span>`;
+      peRow=`<span style="color:var(--text3)">${fmtF(livePeDec)}</span>`;
     }
     if(fund.eps12m!=null){
       const eps12mYoy=fund.epsYoy12m!=null?` (${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)`:'';
@@ -2888,7 +2886,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         let nowPart=`<span style="${tgtStyle}">$${nowTgt.toFixed(0)}</span>`;
         if(fund.price>0){
           const gap=((nowTgt-fund.price)/fund.price*100);
-          nowPart+=`<span style="${tgtStyle};font-size:9px"> (${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`;
+          nowPart+=`<span style="${tgtStyle};font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`;
         }
         let parts=[nowPart];
         if(tgt1w!=null)parts.push(`<span style="color:var(--text3)">$${tgt1w.toFixed(0)}</span>`);
@@ -3146,7 +3144,7 @@ function renderWatchlist(){
       // EPS12m: now (YOY%) > 1w > 1m, colored by 1m change
       if(fund.eps12m!=null){
         const eps12mCls=chg1m(fund.eps12m,e1m?.eps12m);
-        const yoy=fund.epsYoy12m!=null?` <span class="${eps12mCls}" style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
+        const yoy=fund.epsYoy12m!=null?`<span class="${eps12mCls}" style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
         const eps12m1w=e1w?.eps12m??null;
         const eps12m1m=e1m?.eps12m??null;
         let parts=[`<span class="${eps12mCls}">${fmtE(fund.eps12m)}</span>${yoy}`];
@@ -3179,7 +3177,7 @@ function renderWatchlist(){
         const tgtCls=chg1m(nowTgt,tgt1m);
         const refPrice=liveUndP||fund.price||0;
         let gapStr='';
-        if(refPrice>0){const gap=((nowTgt-refPrice)/refPrice*100);gapStr=` <span class="${tgtCls}" style="font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`}
+        if(refPrice>0){const gap=((nowTgt-refPrice)/refPrice*100);gapStr=`<span class="${tgtCls}" style="font-size:9px">(${gap>=0?'+':''}${gap.toFixed(0)}%)</span>`}
         let parts=[`<span class="${tgtCls}">$${nowTgt.toFixed(0)}</span>${gapStr}`];
         parts.push(tgt1m!=null?`<span class="wl-muted">$${tgt1m.toFixed(0)}</span>`:`<span class="wl-muted">—</span>`);
         tpCell=parts.join(arw);
@@ -3192,7 +3190,7 @@ function renderWatchlist(){
   function fmtValPL(val,pl){
     const plSign=pl>=0?'+':'';
     const plCls=pl>=0?'c-up':'c-dn';
-    return`${fmtC(val)} <span class="${plCls}" style="font-size:10px">(${plSign}${Math.round(pl)})</span>`;
+    return`${fmtC(val)}<span class="${plCls}" style="font-size:10px">(${plSign}${Math.round(pl)})</span>`;
   }
 
   let html='';
@@ -3253,7 +3251,7 @@ function renderWatchlist(){
 
       // Price with %day/%week
       const fmtChgS=(v)=>{const c=v>0?'c-up':v<0?'c-dn':'c-flat';return`<span class="${c}">${v>=0?'+':''}${v.toFixed(1)}%</span>`};
-      const priceCell=price>0?`$${price.toFixed(2)} <span style="font-size:9px">(${fmtChgS(chgD)}/${fmtChgS(chgW)})</span>`:'—';
+      const priceCell=price>0?`$${price.toFixed(2)}<span style="font-size:9px">(${fmtChgS(chgD)}/${fmtChgS(chgW)})</span>`:'—';
 
       // 실현 rounded
       const realYtdR=Math.round(rl.realPLYtd);
@@ -3285,8 +3283,8 @@ function renderWatchlist(){
         <td>${epsCell}</td>
         <td>${priceCell}</td>
         <td>${tpCell}</td>
-        <td>${momCell}</td>
-        <td>${volCell}</td>
+        <td style="font-size:9px">${momCell}</td>
+        <td style="font-size:9px">${volCell}</td>
         <td>${realCell}</td>
         <td>${neCell}</td>
       </tr>`;
