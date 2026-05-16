@@ -2847,7 +2847,7 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
     }
     if(fund.eps12m!=null){
       const eps12mYoy=fund.epsYoy12m!=null?` (${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)`:'';
-      revRow=`<span style="${eps12mStyle}">${fmtF(fund.eps12m)}${eps12mYoy}</span>`;
+      revRow=`<span style="${eps12mStyle}">${fmtE(fund.eps12m)}${eps12mYoy}</span>`;
     }
 
     // -- Col4 & Col5: EPSdec/PEdec/TP now > ~1w > ~1m --
@@ -2860,10 +2860,10 @@ function renderHoldCard(ticker,qtyStr,avgPrice,currentPrice,chgDay,chgWeek,unrea
         const eps1w=e1w?.epsDec;
         const eps1m=e1m?.epsDec;
         epsStyle=chgStyle(nowEps,eps1m);
-        let parts=[`<span style="${epsStyle}">${fmtF(nowEps)}</span>`];
-        if(eps1w!=null)parts.push(`<span style="color:var(--text3)">${fmtF(eps1w)}</span>`);
+        let parts=[`<span style="${epsStyle}">${fmtE(nowEps)}</span>`];
+        if(eps1w!=null)parts.push(`<span style="color:var(--text3)">${fmtE(eps1w)}</span>`);
         else parts.push(`<span style="color:var(--text3)">—</span>`);
-        if(eps1m!=null)parts.push(`<span style="color:var(--text3)">${fmtF(eps1m)}</span>`);
+        if(eps1m!=null)parts.push(`<span style="color:var(--text3)">${fmtE(eps1m)}</span>`);
         else parts.push(`<span style="color:var(--text3)">—</span>`);
         epsCol=parts.join('<span style="color:var(--text3);font-size:9px"> › </span>');
       }
@@ -3146,12 +3146,12 @@ function renderWatchlist(){
       // EPS12m: now (YOY%) > 1w > 1m, colored by 1m change
       if(fund.eps12m!=null){
         const eps12mCls=chg1m(fund.eps12m,e1m?.eps12m);
-        const yoy=fund.epsYoy12m!=null?` <span class="wl-muted" style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
+        const yoy=fund.epsYoy12m!=null?` <span class="${eps12mCls}" style="font-size:9px">(${fund.epsYoy12m>=0?'+':''}${fund.epsYoy12m.toFixed(0)}%)</span>`:'';
         const eps12m1w=e1w?.eps12m??null;
         const eps12m1m=e1m?.eps12m??null;
-        let parts=[`<span class="${eps12mCls}">${fmtF(fund.eps12m)}</span>${yoy}`];
-        parts.push(eps12m1w!=null?`<span class="wl-muted">${fmtF(eps12m1w)}</span>`:`<span class="wl-muted">—</span>`);
-        parts.push(eps12m1m!=null?`<span class="wl-muted">${fmtF(eps12m1m)}</span>`:`<span class="wl-muted">—</span>`);
+        let parts=[`<span class="${eps12mCls}">${fmtE(fund.eps12m)}</span>${yoy}`];
+        parts.push(eps12m1w!=null?`<span class="wl-muted">${fmtE(eps12m1w)}</span>`:`<span class="wl-muted">—</span>`);
+        parts.push(eps12m1m!=null?`<span class="wl-muted">${fmtE(eps12m1m)}</span>`:`<span class="wl-muted">—</span>`);
         eps12mCell=parts.join(arw);
       }
 
@@ -3167,8 +3167,8 @@ function renderWatchlist(){
       // EPSdec: now > 1m
       if(fund.epsDec!=null){
         const eps1m=e1m?.epsDec;
-        let parts=[`<span class="${epsCls}">${fmtF(fund.epsDec)}</span>`];
-        parts.push(eps1m!=null?`<span class="wl-muted">${fmtF(eps1m)}</span>`:`<span class="wl-muted">—</span>`);
+        let parts=[`<span class="${epsCls}">${fmtE(fund.epsDec)}</span>`];
+        parts.push(eps1m!=null?`<span class="wl-muted">${fmtE(eps1m)}</span>`:`<span class="wl-muted">—</span>`);
         epsCell=parts.join(arw);
       }
 
@@ -5741,6 +5741,7 @@ function dvCashTotal(c){
 }
 function rd(n){return Math.round(n*100)/100}
 function fmtF(v){const p=parseFloat(v.toPrecision(3));return Math.abs(p)>=100?Math.round(p).toString():p.toFixed(1)}
+function fmtE(v){if(v==null)return'—';return v.toFixed(2)}
 function fmtDate(d){d=String(d);return d.length===6?`20${d.slice(0,2)}-${d.slice(2,4)}-${d.slice(4,6)}`:d}
 function fmtUSD(n){return(n>=0?'':'-')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function addLog(el,msg,cls=''){const d=document.createElement('div');d.className=cls;d.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;el.appendChild(d);el.scrollTop=el.scrollHeight}
