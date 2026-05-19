@@ -2641,11 +2641,12 @@ function renderOverview(){
   </div>`;
 
   // Top-right: Cash
+  const daySign=totalDayChgAmt>=0?'+':'';
   html+=`<div class="sum-card">
     <div class="label">💵 Cash</div>
     <div style="display:flex;align-items:center;gap:20px">
       <div class="value" style="white-space:nowrap">${fmtUSD(cash)}</div>
-      <div style="font-size:14px;color:var(--text2);font-family:'JetBrains Mono',monospace;white-space:nowrap;font-weight:600">(${cashPct.toFixed(0)}% of asset)</div>
+      <div style="font-size:14px;color:var(--text2);font-family:'JetBrains Mono',monospace;white-space:nowrap;font-weight:600">(${cashPct.toFixed(0)}% of asset) <span class="${dayChgCls}" style="font-size:11px">${dayTriangle}${fmtUSD(Math.abs(totalDayChgAmt))}</span></div>
     </div>
   </div>`;
 
