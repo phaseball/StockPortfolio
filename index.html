@@ -2646,9 +2646,12 @@ function renderOverview(){
   if(dailyValueCache){
     const dvDates=Object.keys(dailyValueCache).sort();
     if(dvDates.length>=2){
-      const latestCash=typeof dailyValueCache[dvDates[dvDates.length-1]].cash==='object'?dvCashTotal(dailyValueCache[dvDates[dvDates.length-1]].cash):(dailyValueCache[dvDates[dvDates.length-1]].cash||0);
-      const prevCash=typeof dailyValueCache[dvDates[dvDates.length-2]].cash==='object'?dvCashTotal(dailyValueCache[dvDates[dvDates.length-2]].cash):(dailyValueCache[dvDates[dvDates.length-2]].cash||0);
-      cashDayChg=latestCash-prevCash;
+      const latestDvEntry=dailyValueCache[dvDates[dvDates.length-1]];
+      const prevDvEntry=dailyValueCache[dvDates[dvDates.length-2]];
+      const latestCash=dvCashTotal(latestDvEntry.cash);
+      const prevCash=dvCashTotal(prevDvEntry.cash);
+      cashDayChg=Math.round((latestCash-prevCash)*100)/100;
+      console.log(`Cash change: ${dvDates[dvDates.length-2]}=${prevCash.toFixed(2)} → ${dvDates[dvDates.length-1]}=${latestCash.toFixed(2)} = ${cashDayChg.toFixed(2)}`);
     }
   }
   const cashChgCls=cashDayChg>=0?'c-up':'c-dn';
