@@ -2641,17 +2641,19 @@ function renderOverview(){
   </div>`;
 
   // Top-right: Cash
-  // Compute today's cash change from transactions
-  const todayYY=etNow().yymmdd;
+  // Cash change: difference between two latest daily_value cash entries
   let cashDayChg=0;
-  for(const tx of allTransactions){
-    if(tx.date!==todayYY)continue;
-    const amt=Math.abs(tx.origQty)*tx.origPrice;
-    if(tx.origQty>0)cashDayChg-=(amt+tx.tax); // buy → cash out
-    else if(tx.origQty<0)cashDayChg+=(amt-tx.tax); // sell → cash in
+  if(dailyValueCache){
+    const dvDates=Object.keys(dailyValueCache).sort();
+    if(dvDates.length>=2){
+      const latestCash=typeof dailyValueCache[dvDates[dvDates.length-1]].cash==='object'?dvCashTotal(dailyValueCache[dvDates[dvDates.length-1]].cash):(dailyValueCache[dvDates[dvDates.length-1]].cash||0);
+      const prevCash=typeof dailyValueCache[dvDates[dvDates.length-2]].cash==='object'?dvCashTotal(dailyValueCache[dvDates[dvDates.length-2]].cash):(dailyValueCache[dvDates[dvDates.length-2]].cash||0);
+      cashDayChg=latestCash-prevCash;
+    }
   }
   const cashChgCls=cashDayChg>=0?'c-up':'c-dn';
-  const cashChgStr=cashDayChg!==0?` <span class="${cashChgCls}" style="font-size:11px">${cashDayChg>=0?'▲':'▼'}${fmtUSD(Math.abs(cashDayChg))}</span>`:'';
+  const cashChgTri=cashDayChg>0?'▲':cashDayChg<0?'▼':'';
+  const cashChgStr=` <span class="${cashChgCls}" style="font-size:11px">${cashChgTri}${fmtUSD(Math.abs(cashDayChg))}</span>`;
   html+=`<div class="sum-card">
     <div class="label">💵 Cash</div>
     <div style="display:flex;align-items:center;gap:20px">
