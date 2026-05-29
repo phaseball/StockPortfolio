@@ -5442,7 +5442,7 @@ async function drawHistoryChart(ticker,period,btn){
     for(let i=0;i<=3;i++){
       const v=eMin+(eMax-eMin)*i/3;const y=yEPS(v);
       ctx.fillStyle=epsColor;ctx.font='9px JetBrains Mono, monospace';ctx.textAlign='left';
-      ctx.fillText(fmtF(v),W-pad.r+4,y+3);
+      ctx.fillText(fmtE(v),W-pad.r+4,y+3);
     }
     // PE line (solid)
     if(peP.length>0){
@@ -5462,7 +5462,7 @@ async function drawHistoryChart(ticker,period,btn){
       ctx.fillStyle=epsColor;
       for(let i=0;i<data.length;i++){if(epsLookup2[data[i].date]!=null){ctx.beginPath();ctx.arc(xPos(i),yEPS(data[i][epsData]),2,0,Math.PI*2);ctx.fill()}}
       const last=data[data.length-1][epsData];
-      if(last!=null&&last>0){ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle=epsColor;ctx.fillText(epsLabel+' '+fmtF(last),W-pad.r+4,yEPS(last)-6)}
+      if(last!=null&&last>0){ctx.font='bold 9px JetBrains Mono, monospace';ctx.textAlign='left';ctx.fillStyle=epsColor;ctx.fillText(epsLabel+' '+fmtE(last),W-pad.r+4,yEPS(last)-6)}
     }
     // Legend
     ctx.font='10px JetBrains Mono, monospace';ctx.textAlign='left';
@@ -5526,9 +5526,9 @@ async function drawHistoryChart(ticker,period,btn){
     html+=`<div style="color:#e0e0e0;border-top:1px solid #333;padding-top:2px;margin-top:2px">총손익: ${(totalPL>=0?'+':'')}${fmtK(totalPL)}</div>`;
     if(d.price>0)html+=`<div style="color:#26c6da">주가: $${d.price.toFixed(2)}</div>`;
     if(d.pe12m!=null&&d.pe12m>0)html+=`<div style="color:#f48fb1">PE12m: ${fmtF(d.pe12m)}</div>`;
-    if(d.eps12m!=null&&d.eps12m>0)html+=`<div style="color:#80cbc4">EPS12m: ${fmtF(d.eps12m)}</div>`;
+    if(d.eps12m!=null&&d.eps12m>0)html+=`<div style="color:#80cbc4">EPS12m: ${fmtE(d.eps12m)}</div>`;
     if(d.peDec!=null&&d.peDec>0)html+=`<div style="color:#ce93d8">PEdec: ${fmtF(d.peDec)}</div>`;
-    if(d.epsDec!=null&&d.epsDec>0)html+=`<div style="color:#4fc3f7">EPSdec: ${fmtF(d.epsDec)}</div>`;
+    if(d.epsDec!=null&&d.epsDec>0)html+=`<div style="color:#4fc3f7">EPSdec: ${fmtE(d.epsDec)}</div>`;
     tip.innerHTML=html;
     tip.style.display='block';
     const xPx=xPos(idx);
