@@ -5806,16 +5806,18 @@ function renderHoldingsView(){
       const qty=holdings[tk]||0;
       const price=prices[tk]||0;
 
-      // Color: changed from previous day
+      // Color: changed from previous day (compare rounded to avoid float noise)
       let bgColor='';
-      if(prevQty!==null&&qty!==prevQty){
-        bgColor=qty>prevQty?'background:rgba(76,175,80,0.15)':'background:rgba(239,83,80,0.15)';
+      const qtyR=Math.round(qty*100)/100;
+      if(prevQty!==null&&Math.abs(qtyR-prevQty)>0.01){
+        bgColor=qtyR>prevQty?'background:rgba(76,175,80,0.15)':'background:rgba(239,83,80,0.15)';
       }
-      prevQty=qty;
+      prevQty=qtyR;
 
       if(qty>0){
         const val=qty*price;
-        html+=`<td style="text-align:center;white-space:nowrap;${bgColor}">${qty} x $${price.toFixed(1)}<br><span style="color:var(--text2);font-size:9px">= $${Math.round(val).toLocaleString()}</span></td>`;
+        const qtyInt=Math.round(qty);
+        html+=`<td style="text-align:center;white-space:nowrap;${bgColor}">${qtyInt} x $${price.toFixed(1)}<br><span style="color:var(--text2);font-size:9px">= $${Math.round(val).toLocaleString()}</span></td>`;
       }else{
         html+=`<td style="text-align:center;color:var(--text3)">—</td>`;
       }
