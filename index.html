@@ -504,6 +504,12 @@ function switchTab(p){
   document.getElementById('p-'+p).classList.add('on');
   if(p==='history'){
     document.getElementById('navHistory').style.display='';
+    // Auto-render full history if empty
+    const hc=document.getElementById('historyContent');
+    if(hc&&!hc.innerHTML.trim())showHistory(null);
+  }
+  if(p==='holdings'){
+    renderHoldingsView();
   }
   if(p==='watch'){
     loadWatchFromSheet().then(()=>{if(cachedOverviewData)renderWatchlist()});
