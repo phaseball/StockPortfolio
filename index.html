@@ -5814,7 +5814,8 @@ function renderHoldingsView(){
       prevQty=qty;
 
       if(qty>0){
-        html+=`<td style="text-align:center;${bgColor}">${qty}<br><span style="color:var(--text3);font-size:9px">$${price.toFixed(1)}</span></td>`;
+        const val=qty*price;
+        html+=`<td style="text-align:center;white-space:nowrap;${bgColor}">${qty} x $${price.toFixed(1)}<br><span style="color:var(--text2);font-size:9px">= $${Math.round(val).toLocaleString()}</span></td>`;
       }else{
         html+=`<td style="text-align:center;color:var(--text3)">—</td>`;
       }
