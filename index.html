@@ -5797,15 +5797,15 @@ function renderHoldingsView(){
   html+=`</tr>`;
 
   for(const tk of tickers){
-    // Pre-compute raw qty (exact Sheet values) per day from transactions
+    // Qty per day: same as Overview — split-adjusted tx.qty summed
     const tkTxs=allTransactions.filter(t=>t.ticker===tk).sort((a,b)=>a.date.localeCompare(b.date));
     function rawQtyAt(date){
       let q=0;
       for(const tx of tkTxs){
-        if(tx.date<=date)q+=(tx.origQty!=null?tx.origQty:tx.qty);
+        if(tx.date<=date)q+=tx.qty;
         else break;
       }
-      return q;
+      return Math.round(q*1000)/1000; // strip float noise
     }
 
     html+=`<tr><td style="position:sticky;left:0;background:var(--surface);z-index:1;font-weight:600;cursor:pointer;color:var(--text)" onclick="showHistory('${tk}')">${tk}</td>`;
