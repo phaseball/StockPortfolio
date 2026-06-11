@@ -5797,27 +5797,35 @@ function renderHoldingsView(){
   html+=`</tr>`;
 
   for(const tk of tickers){
+    // Pre-compute raw qty (exact Sheet values) per day from transactions
+    const tkTxs=allTransactions.filter(t=>t.ticker===tk).sort((a,b)=>a.date.localeCompare(b.date));
+    function rawQtyAt(date){
+      let q=0;
+      for(const tx of tkTxs){
+        if(tx.date<=date)q+=(tx.origQty!=null?tx.origQty:tx.qty);
+        else break;
+      }
+      return q;
+    }
+
     html+=`<tr><td style="position:sticky;left:0;background:var(--surface);z-index:1;font-weight:600;cursor:pointer;color:var(--text)" onclick="showHistory('${tk}')">${tk}</td>`;
     let prevQty=null;
     for(const d of cols){
       const entry=dv[d];
-      const holdings=entry?.holdings||{};
       const prices=entry?.prices||{};
-      const qty=holdings[tk]||0;
+      const qty=rawQtyAt(d); // exact Sheet qty sum
       const price=prices[tk]||0;
 
-      // Color: changed from previous day (compare rounded to avoid float noise)
+      // Color: changed from previous day
       let bgColor='';
-      const qtyR=Math.round(qty*100)/100;
-      if(prevQty!==null&&Math.abs(qtyR-prevQty)>0.01){
-        bgColor=qtyR>prevQty?'background:rgba(76,175,80,0.15)':'background:rgba(239,83,80,0.15)';
+      if(prevQty!==null&&qty!==prevQty){
+        bgColor=qty>prevQty?'background:rgba(76,175,80,0.15)':'background:rgba(239,83,80,0.15)';
       }
-      prevQty=qtyR;
+      prevQty=qty;
 
       if(qty>0){
         const val=qty*price;
-        const qtyInt=Math.round(qty);
-        html+=`<td style="text-align:center;white-space:nowrap;${bgColor}">${qtyInt} x $${price.toFixed(1)}<br><span style="color:var(--text2);font-size:9px">= $${Math.round(val).toLocaleString()}</span></td>`;
+        html+=`<td style="text-align:center;white-space:nowrap;${bgColor}">${qty} x $${price.toFixed(1)}<br><span style="color:var(--text2);font-size:9px">= $${Math.round(val).toLocaleString()}</span></td>`;
       }else{
         html+=`<td style="text-align:center;color:var(--text3)">—</td>`;
       }
