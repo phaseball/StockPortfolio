@@ -2665,16 +2665,19 @@ function renderOverview(){
     </div>
   </div>`;
 
-  // Top-right: Cash — show daily total value change
-  const dvDebugDates=dailyValueCache?Object.keys(dailyValueCache).sort():[];
-  if(dvDebugDates.length>=2){
-    const d1=dvDebugDates[dvDebugDates.length-2],d2=dvDebugDates[dvDebugDates.length-1];
-    const dv1=dailyValueCache[d1],dv2=dailyValueCache[d2];
-    console.log(`DV debug: ${d1} tv=${dv1.totalValue} cash=${dvCashTotal(dv1.cash)} | ${d2} tv=${dv2.totalValue} cash=${dvCashTotal(dv2.cash)} | chg=${dv2.totalValue-dv1.totalValue}`);
+  // Top-right: Cash — daily cash change from stored daily_value (column C)
+  let cashDayChg=0;
+  if(dailyValueCache){
+    const dvDates=Object.keys(dailyValueCache).sort();
+    if(dvDates.length>=2){
+      const latestCash=dvCashTotal(dailyValueCache[dvDates[dvDates.length-1]].cash);
+      const prevCash=dvCashTotal(dailyValueCache[dvDates[dvDates.length-2]].cash);
+      cashDayChg=Math.round((latestCash-prevCash)*100)/100;
+    }
   }
-  const cashChgCls=totalDayChgAmt>=0?'c-up':'c-dn';
-  const cashChgTri=totalDayChgAmt>0?'▲':totalDayChgAmt<0?'▼':'';
-  const cashChgStr=` <span class="${cashChgCls}" style="font-size:11px">${cashChgTri}${fmtUSD(Math.abs(totalDayChgAmt))}</span>`;
+  const cashChgCls=cashDayChg>=0?'c-up':'c-dn';
+  const cashChgTri=cashDayChg>0?'▲':cashDayChg<0?'▼':'';
+  const cashChgStr=cashDayChg!==0?` <span class="${cashChgCls}" style="font-size:11px">${cashChgTri}${fmtUSD(Math.abs(cashDayChg))}</span>`:'';
   html+=`<div class="sum-card">
     <div class="label">💵 Cash</div>
     <div style="display:flex;align-items:center;gap:20px">
