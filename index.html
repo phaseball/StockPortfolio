@@ -5195,6 +5195,16 @@ async function drawHistoryChart(ticker,period,btn){
     }
   }
 
+  // Override the latest data point's PE with live-price PE (matches Watch/Overview)
+  if(data.length>0){
+    const liveUndPrice=cachedPrices[perTk]?cachedPrices[perTk].current:0;
+    const last=data[data.length-1];
+    if(liveUndPrice>0){
+      if(last.epsDec&&last.epsDec>0)last.peDec=liveUndPrice/last.epsDec;
+      if(last.eps12m&&last.eps12m>0)last.pe12m=liveUndPrice/last.eps12m;
+    }
+  }
+
   const W=Math.min(container.clientWidth||600,800);
   const H1=130, H2=100, H3=100, H4=200, H5=120, H6=120, gap=16;
   const totalH=H1+gap+H2+gap+H3+gap+H4+gap+H5+gap+H6;
