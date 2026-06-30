@@ -358,6 +358,18 @@ NVDA,2,130.5000,1"></textarea>
       </div>
     </div>
     <div class="card">
+      <div class="card-hdr"><span class="ico">✂️</span> 액면분할 (Stock Splits)</div>
+      <p style="font-size:11px;color:var(--text2);margin-bottom:8px">분할 발생 시 입력. 형식: <b style="color:var(--text)">TICKER 날짜(YYMMDD) 배수</b> (한 줄에 하나).<br>
+      배수 = 가격 곱하기 값: 정방향 2:1분할(가격 ½)은 <b>1/2</b>, 역방향 1:3분할(가격 ×3)은 <b>3</b>, 1:20역분할은 <b>20</b>.<br>
+      입력 날짜 <b>이전</b>의 모든 거래에 split 마크가 추가됩니다.</p>
+      <textarea id="splitInput" rows="4" placeholder="NVDA 260601 1/10&#10;SOXS 260615 20" style="width:100%;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font:12px 'JetBrains Mono',monospace;outline:none;resize:vertical"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-p btn-sm" onclick="applySplitInput()">거래내역에 split 마크 추가</button>
+        <button class="btn btn-s btn-sm" onclick="recalcDailyValues()" title="daily_value 재계산">🔄 daily_value 재계산</button>
+      </div>
+      <p style="font-size:11px;color:var(--text2);margin-top:6px">적용 후 <b>🔄 daily_value 재계산</b>을 눌러 일별 가치를 다시 계산하세요.</p>
+    </div>
+    <div class="card">
       <div class="card-hdr"><span class="ico">💰</span> Initial Cash (초기 투자금)</div>
       <div class="g2" style="margin-bottom:8px">
         <label class="f"><span>🔵 삼성</span><input type="number" id="initCashSS" placeholder="30000" step="100"/></label>
@@ -1606,6 +1618,64 @@ async function recalcTotals(){
     if(totalFixed===0){toast('변경 없음','ok');return}
     toast(`✅ ${totalFixed}개 행 total 재계산 완료`,'ok');
     console.log(`recalcTotals: ${totalFixed} rows updated`);
+  }catch(e){toast('오류: '+e.message,'err');console.error(e)}
+}
+
+async function applySplitInput(){
+  if(!SHEET_ID||!SA_KEY){toast('Sheet 설정 필요','err');return}
+  const raw=(document.getElementById('splitInput').value||'').trim();
+  if(!raw){toast('분할 정보를 입력하세요','err');return}
+  // Parse lines: TICKER YYMMDD MULTIPLIER
+  const rules=[];
+  for(const line of raw.split('\n')){
+    const parts=line.trim().split(/\s+/);
+    if(parts.length<3)continue;
+    const ticker=parts[0].toUpperCase();
+    const before=parts[1].replace(/[^0-9]/g,'');
+    const split=parts[2];
+    if(ticker&&before.length===6&&split)rules.push({ticker,before,split});
+  }
+  if(rules.length===0){toast('올바른 형식이 없습니다 (TICKER YYMMDD 배수)','err');return}
+  const desc=rules.map(r=>`• ${r.ticker} <${r.before}: ×${r.split}`).join('\n');
+  if(!confirm(`아래 split 마크를 거래내역(column G)에 추가합니다.\n기존 split 값이 있는 행은 건너뜁니다.\n\n${desc}\n\n계속?`))return;
+  try{
+    const token=await getAccessToken();
+    let totalFixed=0;
+    for(const broker of['삼성','키움','메리츠']){
+      const resp=await sheetsGet(`${broker}!A:H`);
+      const rows=resp?.values||[];
+      if(rows.length<=1)continue;
+      let changed=false,curDate='';
+      for(let i=1;i<rows.length;i++){
+        const r=rows[i];
+        if(r[0]&&r[0]!=='')curDate=String(r[0]);
+        const ticker=String(r[1]||'').toUpperCase();
+        if(r[6])continue; // don't overwrite existing split
+        for(const rule of rules){
+          if(ticker===rule.ticker&&curDate<rule.before){
+            while(rows[i].length<8)rows[i].push('');
+            rows[i][6]=rule.split;
+            changed=true;totalFixed++;
+            break;
+          }
+        }
+      }
+      if(changed){
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(broker+'!A:H')}?valueInputOption=USER_ENTERED`,{
+          method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+          body:JSON.stringify({values:rows})});
+        console.log(`${broker}: ${totalFixed} split marks added`);
+      }
+    }
+    if(totalFixed===0){toast('추가할 마커 없음 (이미 적용되었거나 해당 거래 없음)','ok');return}
+    toast(`✅ ${totalFixed}개 행에 split 마크 추가됨. 거래 재로드 중...`,'ok');
+    // Reload transactions and recompute
+    await loadAllTransactions();
+    saveCache();
+    computeOverview();
+    renderOverview();
+    document.getElementById('splitInput').value='';
+    toast(`✅ 완료. 🔄 daily_value 재계산을 눌러주세요`,'ok');
   }catch(e){toast('오류: '+e.message,'err');console.error(e)}
 }
 
