@@ -181,11 +181,12 @@ table.t tr:hover td{background:var(--accentBg)}
   <!-- ==================== OVERVIEW ==================== -->
   <div id="p-overview" class="panel on">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-      <div class="filter-btns">
+      <div class="filter-btns" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <button class="fbtn" onclick="setFilter('삼성',this)">🔵 삼성</button>
         <button class="fbtn" onclick="setFilter('키움',this)">🔴 키움</button>
         <button class="fbtn" onclick="setFilter('메리츠',this)">🟢 메리츠</button>
         <button class="fbtn on" onclick="setFilter('all',this)">Total</button>
+        <span id="qqqSignalMsg"></span>
       </div>
       <div style="display:flex;gap:4px;align-items:center;flex-shrink:0">
         <button class="btn btn-s btn-sm" onclick="refreshPrices()" title="현재가 업데이트">🔄 Price</button>
@@ -467,6 +468,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
     // Preload benchmarks from Sheet
     loadBenchmarksFromSheet().catch(()=>{});
   }
+  if(FMP_KEY)checkQqqSignal();
 });
 
 function updateVerInfo(){
@@ -829,6 +831,10 @@ async function refreshPrices(){
   if(lastDailyValues){
     redrawChart();
   }
+
+  // Check QQQ signal
+  checkQqqSignal();
+
   toast('✅ 가격 갱신 완료','ok');
 }
 
@@ -900,6 +906,63 @@ async function fetchFmpHistoryRange(ticker,fromYMD,toYMD){
   }catch(e){
     console.warn(`FMP history failed for ${ticker}:`,e.message);
     return [];
+  }
+}
+
+// ================ QQQ SIGNAL DETECTION ================
+// Fetch OHLC history for QQQ (includes today's partial-day data during market hours)
+async function fetchQqqOHLC(){
+  if(!FMP_KEY)return null;
+  try{
+    const to=new Date();
+    const from=new Date(to.getTime()-30*86400000);
+    const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const data=await fmpGet(`historical-price-eod/full?symbol=QQQ&from=${fmt(from)}&to=${fmt(to)}`);
+    const historical=Array.isArray(data)?data:(data?.historical||[]);
+    const rows=[];
+    for(const d of historical){
+      if(!d.date||d.open==null||d.high==null||d.low==null||d.close==null)continue;
+      rows.push({date:d.date,open:d.open,high:d.high,low:d.low,close:d.close});
+    }
+    rows.sort((a,b)=>a.date.localeCompare(b.date));
+    return rows;
+  }catch(e){console.warn('QQQ OHLC fetch failed:',e);return null}
+}
+
+// Detect signal from OHLC rows (ascending, last = most recent/today)
+function computeQqqSignal(rows){
+  if(!rows||rows.length<11)return null;
+  const today=rows[rows.length-1];
+  const prev=rows[rows.length-2];
+
+  // (1) 'my': today closed lower than prev close, but high touched above prev close
+  // and low touched below prev close (both sides touched intraday)
+  if(today.close<prev.close && today.high>prev.close && today.low<prev.close){
+    return 'my';
+  }
+
+  // (2) 'reversal': today's open is the lowest among the last 10 closed prices
+  // (prior 10 trading days, not including today), and today closed above its open
+  const last10=rows.slice(-11,-1); // 10 entries before today
+  if(last10.length===10){
+    const minClose=Math.min(...last10.map(r=>r.close));
+    if(today.open<=minClose && today.close>today.open){
+      return 'reversal';
+    }
+  }
+  return null;
+}
+
+async function checkQqqSignal(){
+  const el=document.getElementById('qqqSignalMsg');
+  if(!el)return;
+  const rows=await fetchQqqOHLC();
+  if(!rows){el.innerHTML='';return}
+  const signal=computeQqqSignal(rows);
+  if(signal){
+    el.innerHTML=`<span style="color:#ffb300;font-weight:700;font-size:12px">⚡ QQQ possible signal '${signal}'!</span>`;
+  }else{
+    el.innerHTML='';
   }
 }
 
