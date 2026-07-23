@@ -960,7 +960,13 @@ async function checkQqqSignal(){
   if(!rows){el.innerHTML='';return}
   const signal=computeQqqSignal(rows);
   if(signal){
-    el.innerHTML=`<span style="color:#ffb300;font-weight:700;font-size:12px">⚡ QQQ possible signal '${signal}'!</span>`;
+    const today=rows[rows.length-1];
+    const prev=rows[rows.length-2];
+    const fmtD=(ymd)=>{const p=ymd.split('-');return `${p[1]}/${p[2]}`};
+    const dateNote=signal==='my'
+      ? `(${fmtD(today.date)} vs ${fmtD(prev.date)})`
+      : `(${fmtD(today.date)}, 10일 저점 기준)`;
+    el.innerHTML=`<span style="color:#ffb300;font-weight:700;font-size:12px">⚡ QQQ possible signal '${signal}'! <span style="font-weight:400;font-size:10px;color:var(--text3)">${dateNote}</span></span>`;
   }else{
     el.innerHTML='';
   }
