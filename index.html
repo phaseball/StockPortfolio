@@ -1303,20 +1303,30 @@ function debugQty(tickerArg){
   });
   if(txs.length===0){console.log(`No transactions found for ${tk}`);return}
   console.log(`=== debugQty(${tk}) — ${txs.length} transactions ===`);
-  console.table(txs.map(t=>({
-    broker:t.broker, date:t.date, seq:t.seq,
-    origQty:t.origQty, origPrice:t.origPrice,
-    split:t.split||'(none)',
-    adjQty:t.qty, adjPrice:t.price
-  })));
+  const runByBroker={};
+  const rows=txs.map(t=>{
+    runByBroker[t.broker]=(runByBroker[t.broker]||0)+t.qty;
+    const runQty=Math.round(runByBroker[t.broker]*10000)/10000;
+    return{
+      broker:t.broker, date:t.date, seq:t.seq,
+      origQty:t.origQty, origPrice:t.origPrice,
+      split:t.split||'(none)',
+      adjQty:t.qty, adjPrice:t.price,
+      runningQtyThisBroker:runQty,
+      NEGATIVE:runQty<-0.001?'⚠️ HERE':''
+    };
+  });
+  console.table(rows);
   let cumByBroker={};
   let cumTotal=0;
   for(const t of txs){
     cumByBroker[t.broker]=(cumByBroker[t.broker]||0)+t.qty;
     cumTotal+=t.qty;
   }
-  console.log('Cumulative qty by broker (sum of adjQty):', cumByBroker);
-  console.log('Cumulative qty TOTAL (sum of adjQty):', cumTotal);
+  console.log('Final cumulative qty by broker (sum of adjQty):', cumByBroker);
+  console.log('Final cumulative qty TOTAL (sum of adjQty):', cumTotal);
+  const negRow=rows.find(r=>r.NEGATIVE);
+  if(negRow)console.log('%c⚠️ First transaction where running qty went negative:','color:orange;font-weight:bold',negRow);
 
   if(cachedOverviewData){
     const{holdMap}=cachedOverviewData;
@@ -2685,7 +2695,8 @@ function computeOverview(){
       // Match ticker-history page exactly: raw cumulative sum, no clamping.
       // Clamping to 0 here would silently hide an oversell/split-boundary data
       // issue and inflate the total from that point forward.
-      if(h.totalQty<0)console.warn(`computeOverview: ${key} qty went negative (${h.totalQty.toFixed(4)}) — check split marks / transaction order for this ticker`);
+      if(h.totalQty<-0.001)console.warn(`computeOverview: ${key} qty went negative (${h.totalQty.toFixed(4)}) — check split marks / transaction order for this ticker`);
+      if(Math.abs(h.totalQty)<0.001)h.totalQty=0; // clean up floating-point noise near zero
       if(h.totalQty<=0){h.avgCost=0}
     }
   }
@@ -4300,7 +4311,11 @@ async function showTotalValueChart(){
     }else if(tx.qty<0){
       const sq=Math.abs(tx.qty);
       pos.qty-=sq;
-      if(pos.qty<=0){pos.qty=0;pos.avgCost=0}
+      // Match ticker-history / computeOverview: raw cumulative sum, no clamping
+      // (clamping here caused the "today" live-market chart override to silently
+      // drop negative dips and desync from the correct daily_value total).
+      if(Math.abs(pos.qty)<0.001)pos.qty=0;
+      if(pos.qty<=0){pos.avgCost=0}
       const cashAmt2=Math.abs(tx.origQty)*tx.origPrice;
       if(tx.broker==='삼성')cashSS+=(cashAmt2-tx.tax);
       else if(tx.broker==='키움')cashKW+=(cashAmt2-tx.tax);
