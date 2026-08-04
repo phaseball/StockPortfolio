@@ -4127,6 +4127,10 @@ async function recalcDailyValues(){
   await loadAllTransactions();
   // Full build via FMP (updateDailyValuesIncremental handles empty state)
   await updateDailyValuesIncremental();
+  // Persist corrected transactions and refresh Overview (was stale before this fix)
+  saveCache();
+  computeOverview();
+  renderOverview();
   toast('✅ Recalc 완료','ok');
   showTotalValueChart();
 }
