@@ -444,8 +444,8 @@ const CACHE_KEY_DATA_TS='cache_dataTimestamp';
 document.addEventListener('DOMContentLoaded',async()=>{
   document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.p)));
   updateVerInfo();
-  loadConfig();
   loadWatchInput();
+  loadConfig();
   document.getElementById('watchInput').addEventListener('keydown',e=>{if(e.key==='Enter')renderWatchlist()});
   // Init hold groups input
   const hgEl=document.getElementById('holdGroupsInput');
@@ -670,8 +670,10 @@ async function restoreCache(){
     if(allTransactions.length===0&&SHEET_ID&&SA_KEY){
       // Cache was cleared (version upgrade) — auto-reload from Sheet
       console.log('Transaction cache empty, auto-loading from Sheet...');
-      await loadAllTransactions();
-      saveCache();
+      try{
+        await loadAllTransactions();
+        saveCache();
+      }catch(e){console.error('loadAllTransactions failed during restore:',e)}
     }
     if(allTransactions.length>0){
       // Auto-fetch prices if cache is empty (first load or cleared)
@@ -681,7 +683,7 @@ async function restoreCache(){
           cachedPrices=await fetchPrices(held);
           localStorage.setItem(CACHE_KEY_PRICES,JSON.stringify(cachedPrices));
           savePriceTimestamp();
-        }catch(e){}
+        }catch(e){console.warn('fetchPrices failed during restore:',e)}
       }
       // Load daily_value from Sheet for accurate Overview display
       if(SHEET_ID&&SA_KEY){
@@ -691,12 +693,24 @@ async function restoreCache(){
             dailyValueCache={...(dailyValueCache||{}),...fromSheet};
             saveDVCache();
           }
-        }catch(e){}
+        }catch(e){console.warn('loadDailyValuesFromSheet failed during restore:',e)}
       }
+    }
+  }catch(e){
+    console.error('restoreCache top-level error:',e);
+  }
+  // Always attempt to render Overview, regardless of what failed above —
+  // partial/cached data is better than a blank screen.
+  try{
+    if(allTransactions.length>0){
       computeOverview();
       renderOverview();
     }
-  }catch(e){}
+  }catch(e){
+    console.error('computeOverview/renderOverview failed:',e);
+    const el=document.getElementById('overviewContent');
+    if(el)el.innerHTML=`<p style="color:#ef5350;text-align:center;padding:32px">렌더링 오류: ${e.message}<br><span style="color:var(--text3);font-size:11px">콘솔(F12)을 확인하세요</span></p>`;
+  }
   // Refresh version displays after restore
   updatePriceInfo();
   updateFundInfo();
@@ -711,26 +725,31 @@ function populateInitCashFields(){
 async function refreshData(){
   if(!SHEET_ID||!SA_KEY){toast('Google Sheets 설정을 완료하세요','err');return}
   toastPersist('📡 데이터 불러오는 중...','ok');
-  await loadAllTransactions();
-  saveCache();
-  saveDataTimestamp();
-  populateInitCashFields();
-  // Load daily_value from Sheet
-  if(SHEET_ID&&SA_KEY){
-    try{
-      const fromSheet=await loadDailyValuesFromSheet();
-      if(Object.keys(fromSheet).length>0){dailyValueCache={...(dailyValueCache||{}),...fromSheet};saveDVCache()}
-    }catch(e){}
+  try{
+    await loadAllTransactions();
+    saveCache();
+    saveDataTimestamp();
+    populateInitCashFields();
+    // Load daily_value from Sheet
+    if(SHEET_ID&&SA_KEY){
+      try{
+        const fromSheet=await loadDailyValuesFromSheet();
+        if(Object.keys(fromSheet).length>0){dailyValueCache={...(dailyValueCache||{}),...fromSheet};saveDVCache()}
+      }catch(e){console.warn('loadDailyValuesFromSheet failed:',e)}
+    }
+    computeOverview();
+    renderOverview();
+    // Trigger chart recompute if chart tab is active or has been viewed
+    if(lastDailyValues){
+      lastDailyValues=null;
+      historyPriceCache={};
+      localStorage.removeItem('dv_tx_hash');
+    }
+    toast('✅ 데이터 갱신 완료','ok');
+  }catch(e){
+    console.error('refreshData failed:',e);
+    toast('❌ 데이터 갱신 실패: '+e.message,'err');
   }
-  computeOverview();
-  renderOverview();
-  // Trigger chart recompute if chart tab is active or has been viewed
-  if(lastDailyValues){
-    lastDailyValues=null;
-    historyPriceCache={};
-    localStorage.removeItem('dv_tx_hash');
-  }
-  toast('✅ 데이터 갱신 완료','ok');
 }
 
 function getAllPriceTickers(){
@@ -752,6 +771,7 @@ async function refreshPrices(){
   if(!tickers.length){toast('대상 종목 없음','err');return}
   toastPersist(`💲 가격 불러오는 중... (${tickers.length}종목)`,'ok');
 
+  try{
   // Step 1: Fetch live prices from FMP
   if(FMP_KEY){
     const fmpPrices=await fetchFmpBatchQuote(tickers);
@@ -792,7 +812,9 @@ async function refreshPrices(){
   }
 
   // Step 3: Fetch mom/vol historical prices
-  await fetchMomVolPrices();
+  try{
+    await fetchMomVolPrices();
+  }catch(e){console.warn('fetchMomVolPrices failed:',e)}
 
   // Step 3b: Compute chgDay/chgWeek from momVolCache
   for(const tk of tickers){
@@ -818,8 +840,10 @@ async function refreshPrices(){
     let benchUpdated=false;
     for(const tk of Object.keys(BENCH_FMP_MAP)){
       if(chartBenchData[tk]&&chartBenchData[tk].length>0){
-        const ok=await updateBenchmarkIncremental(tk);
-        if(ok)benchUpdated=true;
+        try{
+          const ok=await updateBenchmarkIncremental(tk);
+          if(ok)benchUpdated=true;
+        }catch(e){console.warn(`updateBenchmarkIncremental(${tk}) failed:`,e)}
       }
     }
     if(benchUpdated&&SHEET_ID&&SA_KEY){
@@ -836,6 +860,12 @@ async function refreshPrices(){
   checkQqqSignal();
 
   toast('✅ 가격 갱신 완료','ok');
+  }catch(e){
+    console.error('refreshPrices failed:',e);
+    // Ensure computeOverview/renderOverview still run even if something above threw
+    try{computeOverview();renderOverview()}catch(e2){console.error('renderOverview also failed:',e2)}
+    toast('❌ 가격 갱신 중 오류: '+e.message,'err');
+  }
 }
 
 // FMP quote: fetch current prices for all tickers via individual /stable/quote calls
