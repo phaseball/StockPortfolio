@@ -1199,7 +1199,13 @@ async function updateDailyValuesIncremental(){
     }
     const totalValue=cash+holdingsValue;
     stored[date]={totalValue, cash:cashObj, holdings:tickerValues, prices:tickerPrices, bkHoldings};
-    newRows.push([parseInt(date), Math.round(totalValue*100)/100, JSON.stringify(cashObj), JSON.stringify(tickerValues), JSON.stringify(tickerPrices)]);
+    const dateNum=parseInt(date);
+    const roundedTotal=Math.round(totalValue*100)/100;
+    if(!Number.isFinite(dateNum)||!Number.isFinite(roundedTotal)){
+      console.error(`updateDailyValuesIncremental: invalid row for date="${date}" — dateNum=${dateNum}, totalValue=${totalValue} (cash=${cash}, holdingsValue=${holdingsValue}). Skipping this row.`);
+      continue;
+    }
+    newRows.push([dateNum, roundedTotal, JSON.stringify(cashObj), JSON.stringify(tickerValues), JSON.stringify(tickerPrices)]);
   }
 
   // --- Write to Sheet ---
@@ -1220,12 +1226,23 @@ async function updateDailyValuesIncremental(){
           }
           if(rowIdx>0){
             // Overwrite existing row
+            for(let ci=0;ci<row.length;ci++){
+              if(typeof row[ci]==='number'&&!Number.isFinite(row[ci])){
+                console.error(`daily_value overwrite: non-finite value at row date=${dateNum}, col=${ci}, row=`,row);
+                row[ci]=0;
+              }
+            }
             const rowRange=`daily_value!A${rowIdx}:E${rowIdx}`;
-            await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(rowRange)}?valueInputOption=USER_ENTERED`,{
+            const wr=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(rowRange)}?valueInputOption=USER_ENTERED`,{
               method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
               body:JSON.stringify({range:rowRange,majorDimension:'ROWS',values:[row]})
             });
-            console.log(`daily_value: overwrote row ${dateNum}`);
+            if(!wr.ok){
+              const eb=await wr.text().catch(()=>'(no body)');
+              console.error(`daily_value overwrite failed (${wr.status}) for date=${dateNum}, row=${rowIdx}:`,eb,'row data:',row);
+            }else{
+              console.log(`daily_value: overwrote row ${dateNum}`);
+            }
           }else{
             toAppend.push(row);
           }
@@ -2665,7 +2682,11 @@ function computeOverview(){
       h.realizedPL+=pl;
       if(tx.date.startsWith('26'))h.realizedPLThisYear+=pl;
       h.totalQty-=sellQty;
-      if(h.totalQty<=0){h.avgCost=0;h.totalQty=0}
+      // Match ticker-history page exactly: raw cumulative sum, no clamping.
+      // Clamping to 0 here would silently hide an oversell/split-boundary data
+      // issue and inflate the total from that point forward.
+      if(h.totalQty<0)console.warn(`computeOverview: ${key} qty went negative (${h.totalQty.toFixed(4)}) — check split marks / transaction order for this ticker`);
+      if(h.totalQty<=0){h.avgCost=0}
     }
   }
 
@@ -3971,11 +3992,25 @@ async function writeDailyValuesToSheet(newRows){
       });
     }catch(e2){console.warn('Failed to create daily_value tab:',e2)}
   }
+  // Guard against NaN/Infinity sneaking into the write (would otherwise surface
+  // as a confusing 400 from the Sheets API with no indication of which row).
+  for(const row of newRows){
+    for(let i=0;i<row.length;i++){
+      if(typeof row[i]==='number'&&!Number.isFinite(row[i])){
+        console.error('writeDailyValuesToSheet: non-finite value detected, row:',row,'col:',i);
+        row[i]=0;
+      }
+    }
+  }
   const range='daily_value!A:E';
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{
+  const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{
     method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
     body:JSON.stringify({range,majorDimension:'ROWS',values:newRows})
   });
+  if(!r.ok){
+    const errBody=await r.text().catch(()=>'(no body)');
+    console.error(`writeDailyValuesToSheet: append failed with ${r.status}:`,errBody,'rows sample:',newRows.slice(0,2));
+  }
 }
 
 async function computeDailyValues(el){
