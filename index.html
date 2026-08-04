@@ -1275,6 +1275,50 @@ async function fmpGet(endpoint){
   }catch(e){console.warn(`FMP fetch failed for ${endpoint}: ${e.message}`);return null}
 }
 
+// Diagnostic: dump every transaction for a ticker with split adjustment detail,
+// running cumulative qty, and compare against computeOverview's holdMap result.
+function debugQty(tickerArg){
+  const tk=(tickerArg||prompt('Ticker to inspect (e.g. TQQQ):')||'').trim().toUpperCase();
+  if(!tk)return;
+  const txs=allTransactions.filter(t=>t.ticker===tk).sort((a,b)=>{
+    const dc=a.date.localeCompare(b.date);if(dc!==0)return dc;
+    return(parseInt(a.seq)||0)-(parseInt(b.seq)||0);
+  });
+  if(txs.length===0){console.log(`No transactions found for ${tk}`);return}
+  console.log(`=== debugQty(${tk}) — ${txs.length} transactions ===`);
+  console.table(txs.map(t=>({
+    broker:t.broker, date:t.date, seq:t.seq,
+    origQty:t.origQty, origPrice:t.origPrice,
+    split:t.split||'(none)',
+    adjQty:t.qty, adjPrice:t.price
+  })));
+  let cumByBroker={};
+  let cumTotal=0;
+  for(const t of txs){
+    cumByBroker[t.broker]=(cumByBroker[t.broker]||0)+t.qty;
+    cumTotal+=t.qty;
+  }
+  console.log('Cumulative qty by broker (sum of adjQty):', cumByBroker);
+  console.log('Cumulative qty TOTAL (sum of adjQty):', cumTotal);
+
+  if(cachedOverviewData){
+    const{holdMap}=cachedOverviewData;
+    console.log('--- holdMap entries (from computeOverview) ---');
+    for(const[key,h] of Object.entries(holdMap)){
+      if(h.ticker===tk)console.log(`  ${key}: totalQty=${h.totalQty}, avgCost=${h.avgCost.toFixed(4)}, purchasedAmt=${(h.avgCost*h.totalQty).toFixed(2)}`);
+    }
+  }
+  const dvDates=dailyValueCache?Object.keys(dailyValueCache).sort():[];
+  if(dvDates.length>0){
+    const latest=dailyValueCache[dvDates[dvDates.length-1]];
+    console.log(`--- daily_value latest (${dvDates[dvDates.length-1]}) ---`);
+    console.log(`  holdings[${tk}] =`, latest?.holdings?.[tk]);
+    console.log(`  prices[${tk}] =`, latest?.prices?.[tk]);
+  }
+  console.log(`--- cachedPrices[${tk}] ---`, cachedPrices[tk]);
+  console.log('=== end debugQty ===');
+}
+
 function debugFundData(){
   const tk=prompt('Ticker to inspect (e.g. MU, AMD, NVDA):');
   if(!tk)return;
@@ -2631,10 +2675,21 @@ function computeOverview(){
     purchasedAmt:h.avgCost*h.totalQty
   }));
 
-  // Apply cached prices
+  // Apply prices — prefer dailyValueCache's latest price (single source of truth,
+  // matches the Total tab and ticker history) over cachedPrices, which can go stale
+  // right after a split is added (old price paired with newly-adjusted qty → wrong value).
+  let latestDvPrices=null;
+  if(dailyValueCache){
+    const dvDates=Object.keys(dailyValueCache).sort();
+    if(dvDates.length>0){
+      const latest=dailyValueCache[dvDates[dvDates.length-1]];
+      if(latest&&latest.prices)latestDvPrices=latest.prices;
+    }
+  }
   for(const h of allHoldings){
+    const dvPrice=latestDvPrices&&latestDvPrices[h.ticker]>0?latestDvPrices[h.ticker]:null;
     const p=cachedPrices[h.ticker];
-    h.currentPrice=p&&p.current?p.current:h.avgPrice; // fallback to avg cost
+    h.currentPrice=dvPrice!=null?dvPrice:(p&&p.current?p.current:h.avgPrice); // fallback chain: daily_value → cachedPrices → avgCost
     h.chgDay=p?p.chgDay:0;
     h.chgWeek=p?p.chgWeek:0;
     h.marketValue=h.qty*h.currentPrice;
